@@ -31,6 +31,15 @@ dependencies:
   flutter:
     sdk: flutter
 
+  get: ^4.6.6                 # state management + routing (giống app Flutter movie bạn từng làm — Nhóm 4)
+  dio: ^5.4.0                 # gọi API
+  fl_chart: ^0.68.0           # thay thế recharts (bar/line/pie)
+  mobile_scanner: ^5.2.3      # quét QR điểm danh
+  google_fonts: ^6.2.1        # Nunito + Inter + JetBrains Mono (khớp index.css)
+  intl: ^0.19.0               # định dạng ngày tiếng Việt
+  shared_preferences: ^2.2.3  # lưu token, dark mode, role demo
+  flutter_secure_storage: ^9.2.2
+  cached_network_image: ^3.3.1
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
