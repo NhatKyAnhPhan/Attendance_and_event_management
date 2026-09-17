@@ -1,6 +1,42 @@
+import '../../core/theme/app_colors.dart';
+
 /// Trạng thái điểm danh của 1 sinh viên trong 1 phiên — tương ứng
 /// .badge-present / .badge-late / .badge-absent / .badge-excused / .badge-pending
 enum AttendanceStatus { present, late, absent, excused, pending }
+
+extension AttendanceStatusX on AttendanceStatus {
+  /// Nhãn tiếng Việt — tương ứng statusStyle().label trong StudentMobilePage.tsx
+  String get label {
+    switch (this) {
+      case AttendanceStatus.present:
+        return 'Có mặt';
+      case AttendanceStatus.late:
+        return 'Muộn';
+      case AttendanceStatus.absent:
+        return 'Vắng';
+      case AttendanceStatus.excused:
+        return 'Có phép';
+      case AttendanceStatus.pending:
+        return 'Chưa xác định';
+    }
+  }
+
+  /// Tên khớp với BadgeStatus trong core/theme/app_colors.dart để tái dùng badgeColors()
+  BadgeStatus get badgeStatus {
+    switch (this) {
+      case AttendanceStatus.present:
+        return BadgeStatus.present;
+      case AttendanceStatus.late:
+        return BadgeStatus.late;
+      case AttendanceStatus.absent:
+        return BadgeStatus.absent;
+      case AttendanceStatus.excused:
+        return BadgeStatus.excused;
+      case AttendanceStatus.pending:
+        return BadgeStatus.pending;
+    }
+  }
+}
 
 /// Phương thức điểm danh — tương ứng SubView "qr" | "face" trong AttendancePage.tsx
 enum AttendanceMethod { qr, face, manual }
