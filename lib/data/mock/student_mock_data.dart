@@ -29,6 +29,21 @@ class StudentClassSummary {
     required this.sessions,
     required this.rate,
   });
+
+  factory StudentClassSummary.fromJson(Map<String, dynamic> json) {
+    return StudentClassSummary(
+      id: json['code']?.toString() ?? json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      lecturer: json['lecturerName']?.toString() ?? '',
+      time: json['schedule']?.toString() ?? '',
+      room: json['room']?.toString() ?? '',
+      present: (json['present'] as num?)?.toInt() ?? 0,
+      late: (json['late'] as num?)?.toInt() ?? 0,
+      absent: (json['absent'] as num?)?.toInt() ?? 0,
+      sessions: (json['sessions'] as num?)?.toInt() ?? 0,
+      rate: (json['rate'] as num?)?.toInt() ?? 0,
+    );
+  }
 }
 
 class StudentEventSummary {
@@ -45,6 +60,16 @@ class StudentEventSummary {
     required this.org,
     required this.registered,
   });
+
+  factory StudentEventSummary.fromJson(Map<String, dynamic> json) {
+    return StudentEventSummary(
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      date: json['startTime']?.toString() ?? '',
+      org: json['organizerName']?.toString() ?? '',
+      registered: json['registrationStatus']?.toString() != 'notRegistered',
+    );
+  }
 }
 
 class StudentNotification {

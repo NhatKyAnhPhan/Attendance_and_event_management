@@ -92,7 +92,10 @@ class AppSidebar extends StatelessWidget {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(color: c.primary, borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.school, color: Colors.white, size: 20),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.asset('assets/LogoHUIT.jpg', fit: BoxFit.contain),
+                  ),
                 ),
                 if (!collapsed) ...[
                   const SizedBox(width: 12),

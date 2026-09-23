@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+
 import '../../controllers/auth_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../core/constants/admin_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../dashboard/dashboard_page.dart';
 import '../shared/placeholder_page.dart';
+import '../shared/admin_data_page.dart';
 import 'widgets/app_header.dart';
 import 'widgets/app_sidebar.dart';
 
@@ -31,6 +33,30 @@ class _AdminShellPageState extends State<AdminShellPage> {
     switch (_activePage) {
       case AdminPage.dashboard:
         return DashboardPage(role: Get.find<AuthController>().role.value);
+      case AdminPage.users:
+        return const AdminDataPage(
+          title: 'Quản lý người dùng',
+          endpoint: '/api/admin/users',
+          columns: ['Mã', 'Họ tên', 'Email', 'Vai trò', 'Trạng thái'],
+        );
+      case AdminPage.classes:
+        return const AdminDataPage(
+          title: 'Quản lý lớp học',
+          endpoint: '/api/admin/classes',
+          columns: [
+            'Mã lớp',
+            'Tên lớp',
+            'Giảng viên',
+            'Học kỳ',
+            'Số sinh viên',
+          ],
+        );
+      case AdminPage.events:
+        return const AdminDataPage(
+          title: 'Quản lý sự kiện',
+          endpoint: '/api/admin/events',
+          columns: ['Mã', 'Tên sự kiện', 'Địa điểm', 'Thời gian', 'Số đăng ký'],
+        );
       default:
         return PlaceholderPage(title: _activePage.title);
     }
@@ -46,43 +72,49 @@ class _AdminShellPageState extends State<AdminShellPage> {
       final c = AppColors.of(isDark);
       final role = auth.role.value;
 
-      return LayoutBuilder(builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 1024;
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 1024;
 
-        final sidebar = AppSidebar(
-          role: role,
-          activePage: _activePage,
-          onNavigate: _navigate,
-          onLogout: auth.logout,
-        );
+          final sidebar = AppSidebar(
+            role: role,
+            activePage: _activePage,
+            onNavigate: _navigate,
+            onLogout: auth.logout,
+          );
 
-        final header = AppHeader(
-          title: _activePage.title,
-          breadcrumb: _activePage == AdminPage.dashboard ? ['Trang chủ'] : ['Trang chủ', _activePage.title],
-          isDarkMode: isDark,
-          onToggleDark: theme.toggle,
-          onMenuTap: isWide ? null : () => _scaffoldKey.currentState?.openDrawer(),
-        );
+          final header = AppHeader(
+            title: _activePage.title,
+            breadcrumb: _activePage == AdminPage.dashboard
+                ? ['Trang chủ']
+                : ['Trang chủ', _activePage.title],
+            isDarkMode: isDark,
+            onToggleDark: theme.toggle,
+            onMenuTap: isWide
+                ? null
+                : () => _scaffoldKey.currentState?.openDrawer(),
+          );
 
-        return Scaffold(
-          key: _scaffoldKey,
-          backgroundColor: c.background,
-          drawer: isWide ? null : Drawer(child: sidebar),
-          body: Row(
-            children: [
-              if (isWide) sidebar,
-              Expanded(
-                child: Column(
-                  children: [
-                    header,
-                    Expanded(child: _buildBody(isDark)),
-                  ],
+          return Scaffold(
+            key: _scaffoldKey,
+            backgroundColor: c.background,
+            drawer: isWide ? null : Drawer(child: sidebar),
+            body: Row(
+              children: [
+                if (isWide) sidebar,
+                Expanded(
+                  child: Column(
+                    children: [
+                      header,
+                      Expanded(child: _buildBody(isDark)),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      });
+              ],
+            ),
+          );
+        },
+      );
     });
   }
 }

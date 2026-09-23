@@ -1,20 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+
 import '../../controllers/auth_controller.dart';
-import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 
 /// Tương ứng `type AuthStep` trong AuthPage.tsx
 enum _AuthStep { login, forgot, otp, newPassword, success }
-
-/// Mô tả ngắn cho từng role — tương ứng mảng `roles` (label + desc) trong AuthPage.tsx
-const Map<Role, String> _roleDescriptions = {
-  Role.admin: 'Toàn quyền quản lý hệ thống',
-  Role.lecturer: 'Quản lý lớp học & điểm danh',
-  Role.organizer: 'Quản lý sự kiện & chứng chỉ',
-  Role.student: 'Xem lịch & điểm danh cá nhân',
-};
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -28,15 +20,15 @@ class _AuthPageState extends State<AuthPage> {
   bool _showPw = false;
   bool _loading = false;
   String _error = '';
-  Role _selectedRole = Role.admin;
-
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _newPwCtrl = TextEditingController();
   final _confirmPwCtrl = TextEditingController();
 
-  final List<TextEditingController> _otpCtrls =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _otpCtrls = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _otpFocus = List.generate(6, (_) => FocusNode());
 
   @override
@@ -65,11 +57,17 @@ class _AuthPageState extends State<AuthPage> {
       _error = '';
       _loading = true;
     });
-    // TODO: thay bằng gọi AuthRepository thật khi có API.
-    await Future.delayed(const Duration(milliseconds: 900));
-    if (!mounted) return;
-    setState(() => _loading = false);
-    await Get.find<AuthController>().login(_selectedRole);
+    try {
+      await Get.find<AuthController>().login(
+        identifier: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _handleForgot() async {
@@ -145,7 +143,9 @@ class _AuthPageState extends State<AuthPage> {
       backgroundColor: c.background,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final showLeftPanel = constraints.maxWidth >= 900; // tương ứng breakpoint "lg" của Tailwind
+          final showLeftPanel =
+              constraints.maxWidth >=
+              900; // tương ứng breakpoint "lg" của Tailwind
           return Row(
             children: [
               if (showLeftPanel) _LeftPanel(c: c),
@@ -200,52 +200,6 @@ class _AuthPageState extends State<AuthPage> {
         ),
         const SizedBox(height: 24),
 
-        // Demo — chọn vai trò
-        Text('DEMO — CHỌN VAI TRÒ', style: AppTextStyles.label(c.mutedForeground)),
-        const SizedBox(height: 8),
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 2.4,
-          children: Role.values.map((r) {
-            final selected = _selectedRole == r;
-            return InkWell(
-              onTap: () => setState(() => _selectedRole = r),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: selected ? c.secondary : c.card,
-                  border: Border.all(color: selected ? c.primary : c.border),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      r.label,
-                      style: AppTextStyles.bodySm(selected ? c.primary : c.foreground)
-                          .copyWith(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _roleDescriptions[r] ?? '',
-                      style: AppTextStyles.bodyXs(c.mutedForeground),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 20),
-
         _FieldLabel('Email / Mã số', c: c),
         _AuthTextField(
           controller: _emailCtrl,
@@ -264,7 +218,10 @@ class _AuthPageState extends State<AuthPage> {
                 _step = _AuthStep.forgot;
                 _error = '';
               }),
-              child: Text('Quên mật khẩu?', style: AppTextStyles.bodySm(c.primary)),
+              child: Text(
+                'Quên mật khẩu?',
+                style: AppTextStyles.bodySm(c.primary),
+              ),
             ),
           ],
         ),
@@ -274,8 +231,11 @@ class _AuthPageState extends State<AuthPage> {
           icon: Icons.lock_outline,
           obscure: !_showPw,
           trailing: IconButton(
-            icon: Icon(_showPw ? Icons.visibility_off : Icons.visibility,
-                size: 18, color: c.mutedForeground),
+            icon: Icon(
+              _showPw ? Icons.visibility_off : Icons.visibility,
+              size: 18,
+              color: c.mutedForeground,
+            ),
             onPressed: () => setState(() => _showPw = !_showPw),
           ),
           c: c,
@@ -312,8 +272,10 @@ class _AuthPageState extends State<AuthPage> {
         const SizedBox(height: 8),
         Text('Quên mật khẩu', style: AppTextStyles.displayLg(c.foreground)),
         const SizedBox(height: 8),
-        Text('Nhập email để nhận mã OTP xác thực.',
-            style: AppTextStyles.bodyMd(c.mutedForeground)),
+        Text(
+          'Nhập email để nhận mã OTP xác thực.',
+          style: AppTextStyles.bodyMd(c.mutedForeground),
+        ),
         const SizedBox(height: 24),
         _FieldLabel('Email', c: c),
         _AuthTextField(
@@ -358,8 +320,13 @@ class _AuthPageState extends State<AuthPage> {
             children: [
               const TextSpan(text: 'Nhập mã 6 chữ số đã gửi đến '),
               TextSpan(
-                text: _emailCtrl.text.isEmpty ? 'email của bạn' : _emailCtrl.text,
-                style: TextStyle(fontWeight: FontWeight.w700, color: c.foreground),
+                text: _emailCtrl.text.isEmpty
+                    ? 'email của bạn'
+                    : _emailCtrl.text,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: c.foreground,
+                ),
               ),
             ],
           ),
@@ -415,7 +382,10 @@ class _AuthPageState extends State<AuthPage> {
                 const TextSpan(text: 'Chưa nhận được mã? '),
                 TextSpan(
                   text: 'Gửi lại (60s)',
-                  style: TextStyle(color: c.primary, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: c.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -431,8 +401,10 @@ class _AuthPageState extends State<AuthPage> {
       children: [
         Text('Tạo mật khẩu mới', style: AppTextStyles.displayLg(c.foreground)),
         const SizedBox(height: 8),
-        Text('Mật khẩu phải có ít nhất 8 ký tự.',
-            style: AppTextStyles.bodyMd(c.mutedForeground)),
+        Text(
+          'Mật khẩu phải có ít nhất 8 ký tự.',
+          style: AppTextStyles.bodyMd(c.mutedForeground),
+        ),
         const SizedBox(height: 24),
         _FieldLabel('Mật khẩu mới', c: c),
         _AuthTextField(
@@ -441,8 +413,11 @@ class _AuthPageState extends State<AuthPage> {
           icon: Icons.lock_outline,
           obscure: !_showPw,
           trailing: IconButton(
-            icon: Icon(_showPw ? Icons.visibility_off : Icons.visibility,
-                size: 18, color: c.mutedForeground),
+            icon: Icon(
+              _showPw ? Icons.visibility_off : Icons.visibility,
+              size: 18,
+              color: c.mutedForeground,
+            ),
             onPressed: () => setState(() => _showPw = !_showPw),
           ),
           c: c,
@@ -478,7 +453,10 @@ class _AuthPageState extends State<AuthPage> {
         Container(
           width: 72,
           height: 72,
-          decoration: const BoxDecoration(color: Color(0xFFDCFCE7), shape: BoxShape.circle),
+          decoration: const BoxDecoration(
+            color: Color(0xFFDCFCE7),
+            shape: BoxShape.circle,
+          ),
           child: const Icon(Icons.check, color: Color(0xFF16A34A), size: 36),
         ),
         const SizedBox(height: 24),
@@ -536,17 +514,31 @@ class _LeftPanel extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.school, color: Colors.white, size: 22),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset(
+                    'assets/LogoHUIT.jpg',
+                    fit: BoxFit.contain,
+                  ),
+                ),
               ),
               const SizedBox(width: 12),
               const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('HUIT',
-                      style: TextStyle(
-                          fontFamily: 'Nunito', fontWeight: FontWeight.w800, color: Colors.white, fontSize: 16)),
-                  Text('Khoa Công nghệ Thông tin',
-                      style: TextStyle(color: Colors.white70, fontSize: 11)),
+                  Text(
+                    'HUIT',
+                    style: TextStyle(
+                      fontFamily: 'Nunito',
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    'Khoa Công nghệ Thông tin',
+                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
                 ],
               ),
             ],
@@ -555,7 +547,12 @@ class _LeftPanel extends StatelessWidget {
           const Text(
             'Hệ thống Quản lý Điểm danh',
             style: TextStyle(
-                fontFamily: 'Nunito', fontWeight: FontWeight.w800, fontSize: 30, height: 1.2, color: Colors.white),
+              fontFamily: 'Nunito',
+              fontWeight: FontWeight.w800,
+              fontSize: 30,
+              height: 1.2,
+              color: Colors.white,
+            ),
           ),
           const SizedBox(height: 16),
           const Text(
@@ -581,18 +578,32 @@ class _LeftPanel extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(s['n']!,
-                        style: const TextStyle(
-                            fontFamily: 'Nunito', fontWeight: FontWeight.w800, color: Colors.white, fontSize: 22)),
-                    Text(s['l']!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                    Text(
+                      s['n']!,
+                      style: const TextStyle(
+                        fontFamily: 'Nunito',
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        fontSize: 22,
+                      ),
+                    ),
+                    Text(
+                      s['l']!,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
                   ],
                 ),
               );
             }).toList(),
           ),
           const SizedBox(height: 24),
-          const Text('© 2025 HUIT — Khoa Công nghệ Thông tin',
-              style: TextStyle(color: Colors.white38, fontSize: 12)),
+          const Text(
+            '© 2025 HUIT — Đại Học Công Thương TP.HCM',
+            style: TextStyle(color: Colors.white38, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -612,12 +623,20 @@ class _MobileLogo extends StatelessWidget {
           Container(
             width: 36,
             height: 36,
-            decoration: BoxDecoration(color: c.primary, borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.school, color: Colors.white, size: 18),
+            decoration: BoxDecoration(
+              color: c.primary,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.asset('assets/LogoHUIT.jpg', fit: BoxFit.contain),
+            ),
           ),
           const SizedBox(width: 8),
-          Text('HUIT Điểm Danh',
-              style: AppTextStyles.displaySm(c.primary).copyWith(fontSize: 18)),
+          Text(
+            'HUIT Điểm Danh',
+            style: AppTextStyles.displaySm(c.primary).copyWith(fontSize: 18),
+          ),
         ],
       ),
     );
@@ -633,8 +652,11 @@ class _FieldLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: Text(text,
-          style: AppTextStyles.bodySm(c.foreground).copyWith(fontWeight: FontWeight.w600)),
+      child: Text(
+        text,
+        style: AppTextStyles.bodySm(c.foreground)
+            .copyWith(fontWeight: FontWeight.w600),
+      ),
     );
   }
 }
@@ -688,7 +710,10 @@ class _ErrorBanner extends StatelessWidget {
           const Icon(Icons.error_outline, size: 16, color: Color(0xFF991B1B)),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(message, style: const TextStyle(fontSize: 13, color: Color(0xFF991B1B))),
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF991B1B)),
+            ),
           ),
         ],
       ),
@@ -719,9 +744,16 @@ class _PrimaryButton extends StatelessWidget {
             ? SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: c.primaryForeground),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: c.primaryForeground,
+                ),
               )
-            : Text(label, style: AppTextStyles.button(c.primaryForeground).copyWith(fontSize: 15)),
+            : Text(
+                label,
+                style: AppTextStyles.button(c.primaryForeground)
+                    .copyWith(fontSize: 15),
+              ),
       ),
     );
   }
@@ -731,7 +763,11 @@ class _BackButton extends StatelessWidget {
   final String label;
   final AppColors c;
   final VoidCallback onTap;
-  const _BackButton({required this.label, required this.c, required this.onTap});
+  const _BackButton({
+    required this.label,
+    required this.c,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -742,8 +778,11 @@ class _BackButton extends StatelessWidget {
         children: [
           Icon(Icons.arrow_back, size: 16, color: c.mutedForeground),
           const SizedBox(width: 8),
-          Text(label,
-              style: AppTextStyles.bodySm(c.mutedForeground).copyWith(fontWeight: FontWeight.w600)),
+          Text(
+            label,
+            style: AppTextStyles.bodySm(c.mutedForeground)
+                .copyWith(fontWeight: FontWeight.w600),
+          ),
         ],
       ),
     );

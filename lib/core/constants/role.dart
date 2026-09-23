@@ -31,9 +31,13 @@ extension RoleX on Role {
   }
 
   static Role fromString(String value) {
-    return Role.values.firstWhere(
-      (r) => r.name == value,
-      orElse: () => Role.student,
-    );
+    final normalized = value.trim().toLowerCase();
+    return switch (normalized) {
+      'admin' || 'administrator' || 'quản trị viên' => Role.admin,
+      'lecturer' || 'teacher' || 'giảng viên' => Role.lecturer,
+      'organizer' || 'event_organizer' || 'ban tổ chức' => Role.organizer,
+      'student' || 'sinh viên' => Role.student,
+      _ => Role.student,
+    };
   }
 }

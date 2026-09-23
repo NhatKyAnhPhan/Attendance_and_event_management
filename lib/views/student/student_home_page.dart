@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+
+import '../../controllers/auth_controller.dart';
+import '../../controllers/classes_controller.dart';
+import '../../controllers/events_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/mock/student_mock_data.dart';
@@ -47,14 +52,40 @@ class _StudentHomePageState extends State<StudentHomePage> {
         backgroundColor: c.card,
         selectedItemColor: c.primary,
         unselectedItemColor: c.mutedForeground,
-        selectedLabelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-        unselectedLabelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+        selectedLabelStyle: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+        unselectedLabelStyle: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+        ),
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home), label: 'Trang chủ'),
-          BottomNavigationBarItem(icon: Icon(Icons.menu_book_outlined), activeIcon: Icon(Icons.menu_book), label: 'Lớp học'),
-          BottomNavigationBarItem(icon: Icon(Icons.event_outlined), activeIcon: Icon(Icons.event), label: 'Sự kiện'),
-          BottomNavigationBarItem(icon: Icon(Icons.qr_code_scanner_outlined), activeIcon: Icon(Icons.qr_code_scanner), label: 'Điểm danh'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_outline), activeIcon: Icon(Icons.person), label: 'Cá nhân'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home_outlined),
+            activeIcon: Icon(Icons.home),
+            label: 'Trang chủ',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.menu_book_outlined),
+            activeIcon: Icon(Icons.menu_book),
+            label: 'Lớp học',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.event_outlined),
+            activeIcon: Icon(Icons.event),
+            label: 'Sự kiện',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.qr_code_scanner_outlined),
+            activeIcon: Icon(Icons.qr_code_scanner),
+            label: 'Điểm danh',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
+            label: 'Cá nhân',
+          ),
         ],
       ),
     );
@@ -72,53 +103,72 @@ class _HomeTabContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final c = AppColors.of(isDark);
+    final classesController = Get.put(ClassesController());
+    final eventsController = Get.put(EventsController());
+    final auth = Get.find<AuthController>();
 
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: [
-        _buildHeader(c),
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _sectionTitle('Thao tác nhanh', c),
-              const SizedBox(height: 12),
-              _buildQuickActions(c),
-              const SizedBox(height: 20),
+    return Obx(() {
+      final classes = classesController.items;
+      final events = eventsController.items;
+      final user = auth.currentUser.value ?? const <String, dynamic>{};
+      return ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          _buildHeader(c, user),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _sectionTitle('Thao tác nhanh', c),
+                const SizedBox(height: 12),
+                _buildQuickActions(c),
+                const SizedBox(height: 20),
 
-              _sectionTitle('Lớp học hôm nay', c),
-              const SizedBox(height: 12),
-              ...StudentMockData.myClasses.take(2).map((cls) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _TodayClassCard(cls: cls, c: c),
-                  )),
-              const SizedBox(height: 8),
+                _sectionTitle('Lớp học hôm nay', c),
+                const SizedBox(height: 12),
+                ...classes
+                    .take(2)
+                    .map(
+                      (cls) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _TodayClassCard(cls: cls, c: c),
+                      ),
+                    ),
+                const SizedBox(height: 8),
 
-              _sectionTitle('Sự kiện sắp tới', c),
-              const SizedBox(height: 12),
-              ...StudentMockData.upcomingEvents.map((e) => Padding(
+                _sectionTitle('Sự kiện sắp tới', c),
+                const SizedBox(height: 12),
+                ...events.map(
+                  (e) => Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: _EventRow(event: e, c: c),
-                  )),
-              const SizedBox(height: 8),
+                  ),
+                ),
+                const SizedBox(height: 8),
 
-              _sectionTitle('Thông báo', c),
-              const SizedBox(height: 12),
-              ...StudentMockData.notifications.take(3).map((n) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _NotificationRow(notif: n, c: c),
-                  )),
-            ],
+                _sectionTitle('Thông báo', c),
+                const SizedBox(height: 12),
+                ...StudentMockData.notifications
+                    .take(3)
+                    .map(
+                      (n) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _NotificationRow(notif: n, c: c),
+                      ),
+                    ),
+              ],
+            ),
           ),
-        ),
-      ],
-    );
+        ],
+      );
+    });
   }
 
-  Widget _sectionTitle(String text, AppColors c) => Text(text, style: AppTextStyles.displaySm(c.foreground));
+  Widget _sectionTitle(String text, AppColors c) =>
+      Text(text, style: AppTextStyles.displaySm(c.foreground));
 
-  Widget _buildHeader(AppColors c) {
+  Widget _buildHeader(AppColors c, Map<String, dynamic> user) {
     const summary = [
       {'label': 'Có mặt', 'val': '89%'},
       {'label': 'Muộn', 'val': '8%'},
@@ -134,13 +184,26 @@ class _HomeTabContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Column(
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Xin chào 👋', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                  Text('Phạm Văn Dũng',
-                      style: TextStyle(color: Colors.white, fontFamily: 'Nunito', fontWeight: FontWeight.w800, fontSize: 22)),
-                  Text('21IT042 · Khoa CNTT', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                  Text(
+                    'Xin chào',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  Text(
+                    user['name']?.toString() ?? 'Người dùng',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontFamily: 'Nunito',
+                      fontWeight: FontWeight.w800,
+                      fontSize: 22,
+                    ),
+                  ),
+                  Text(
+                    'Tài khoản dữ liệu thật',
+                    style: TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
                 ],
               ),
               Stack(
@@ -149,8 +212,15 @@ class _HomeTabContent extends StatelessWidget {
                   Container(
                     width: 44,
                     height: 44,
-                    decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
-                    child: const Icon(Icons.notifications_none, color: Colors.white, size: 20),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.notifications_none,
+                      color: Colors.white,
+                      size: 20,
+                    ),
                   ),
                   Positioned(
                     top: -2,
@@ -159,8 +229,18 @@ class _HomeTabContent extends StatelessWidget {
                       width: 16,
                       height: 16,
                       alignment: Alignment.center,
-                      decoration: const BoxDecoration(color: Color(0xFFDC2626), shape: BoxShape.circle),
-                      child: const Text('2', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFDC2626),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Text(
+                        '2',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -174,12 +254,28 @@ class _HomeTabContent extends StatelessWidget {
                 child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 4),
                   padding: const EdgeInsets.symmetric(vertical: 10),
-                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   child: Column(
                     children: [
-                      Text(s['val']!,
-                          style: const TextStyle(color: Colors.white, fontFamily: 'Nunito', fontWeight: FontWeight.w800, fontSize: 20)),
-                      Text(s['label']!, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                      Text(
+                        s['val']!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontFamily: 'Nunito',
+                          fontWeight: FontWeight.w800,
+                          fontSize: 20,
+                        ),
+                      ),
+                      Text(
+                        s['label']!,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -200,17 +296,35 @@ class _HomeTabContent extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             child: Container(
               padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: c.primary, borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(
+                color: c.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: Row(
                 children: [
-                  const Icon(Icons.qr_code_scanner, color: Colors.white, size: 24),
+                  const Icon(
+                    Icons.qr_code_scanner,
+                    color: Colors.white,
+                    size: 24,
+                  ),
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Quét QR', style: TextStyle(color: Colors.white, fontFamily: 'Nunito', fontWeight: FontWeight.w700, fontSize: 14)),
-                        Text('Điểm danh ngay', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                        Text(
+                          'Quét QR',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontFamily: 'Nunito',
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          'Điểm danh ngay',
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
                       ],
                     ),
                   ),
@@ -226,7 +340,11 @@ class _HomeTabContent extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             child: Container(
               padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: c.card, border: Border.all(color: c.border), borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(
+                color: c.card,
+                border: Border.all(color: c.border),
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: Row(
                 children: [
                   Icon(Icons.menu_book_outlined, color: c.primary, size: 24),
@@ -235,8 +353,15 @@ class _HomeTabContent extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Lớp học', style: AppTextStyles.displayXs(c.foreground).copyWith(fontSize: 14)),
-                        Text('Xem tất cả lớp', style: AppTextStyles.bodyXs(c.mutedForeground)),
+                        Text(
+                          'Lớp học',
+                          style: AppTextStyles.displayXs(c.foreground)
+                              .copyWith(fontSize: 14),
+                        ),
+                        Text(
+                          'Xem tất cả lớp',
+                          style: AppTextStyles.bodyXs(c.mutedForeground),
+                        ),
                       ],
                     ),
                   ),
@@ -259,22 +384,40 @@ class _TodayClassCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: c.card, border: Border.all(color: c.border), borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: c.card,
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Row(
         children: [
           Container(
             width: 44,
             height: 44,
-            decoration: BoxDecoration(color: const Color(0xFFDBEAFE), borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.menu_book, color: Color(0xFF1E56A0), size: 20),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDBEAFE),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.menu_book,
+              color: Color(0xFF1E56A0),
+              size: 20,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(cls.name, style: AppTextStyles.displayXs(c.foreground).copyWith(fontSize: 14)),
-                Text('${cls.time} · Phòng ${cls.room}', style: AppTextStyles.bodyXs(c.mutedForeground)),
+                Text(
+                  cls.name,
+                  style: AppTextStyles.displayXs(c.foreground)
+                      .copyWith(fontSize: 14),
+                ),
+                Text(
+                  '${cls.time} · Phòng ${cls.room}',
+                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                ),
               ],
             ),
           ),
@@ -294,14 +437,21 @@ class _EventRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: c.card, border: Border.all(color: c.border), borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: c.card,
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 44,
             height: 44,
-            decoration: BoxDecoration(color: const Color(0xFFF3E8FF), borderRadius: BorderRadius.circular(10)),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3E8FF),
+              borderRadius: BorderRadius.circular(10),
+            ),
             child: const Icon(Icons.event, color: Color(0xFF7C3AED), size: 20),
           ),
           const SizedBox(width: 12),
@@ -309,21 +459,45 @@ class _EventRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(event.name, style: AppTextStyles.displayXs(c.foreground).copyWith(fontSize: 13)),
-                Text('${event.date} · ${event.org}', style: AppTextStyles.bodyXs(c.mutedForeground)),
+                Text(
+                  event.name,
+                  style: AppTextStyles.displayXs(c.foreground)
+                      .copyWith(fontSize: 13),
+                ),
+                Text(
+                  '${event.date} · ${event.org}',
+                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                ),
               ],
             ),
           ),
-          event.registered
-              ? const AppBadge(label: 'Đã đăng ký', status: BadgeStatus.present)
-              : SizedBox(
-                  height: 28,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10)),
-                    onPressed: () {},
-                    child: const Text('Đăng ký', style: TextStyle(fontSize: 11)),
+          const SizedBox(width: 8),
+          Flexible(
+            child: event.registered
+                ? const Align(
+                    alignment: Alignment.topRight,
+                    child: AppBadge(
+                      label: 'Đã đăng ký',
+                      status: BadgeStatus.present,
+                    ),
+                  )
+                : Align(
+                    alignment: Alignment.topRight,
+                    child: SizedBox(
+                      height: 28,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                        ),
+                        onPressed: () {},
+                        child: const Text(
+                          'Đăng ký',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+          ),
         ],
       ),
     );
@@ -341,7 +515,11 @@ class _NotificationRow extends StatelessWidget {
       opacity: notif.read ? 0.6 : 1,
       child: Container(
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(color: c.card, border: Border.all(color: c.border), borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(
+          color: c.card,
+          border: Border.all(color: c.border),
+          borderRadius: BorderRadius.circular(10),
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -353,14 +531,24 @@ class _NotificationRow extends StatelessWidget {
                 children: [
                   Text(notif.text, style: AppTextStyles.bodySm(c.foreground)),
                   const SizedBox(height: 2),
-                  Text(notif.time, style: AppTextStyles.bodyXs(c.mutedForeground)),
+                  Text(
+                    notif.time,
+                    style: AppTextStyles.bodyXs(c.mutedForeground),
+                  ),
                 ],
               ),
             ),
             if (!notif.read)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Container(width: 8, height: 8, decoration: BoxDecoration(color: c.primary, shape: BoxShape.circle)),
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: c.primary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
               ),
           ],
         ),
