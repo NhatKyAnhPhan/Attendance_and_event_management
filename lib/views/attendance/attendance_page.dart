@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../widgets/app_badge.dart';
+import 'qr_generator_page.dart';
 
 class AttendancePage extends StatelessWidget {
   const AttendancePage({super.key});
@@ -45,7 +46,18 @@ class AttendancePage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text('Điểm danh', style: AppTextStyles.displayLg(c.foreground)),
+        Row(
+          children: [
+            Expanded(child: Text('Điểm danh', style: AppTextStyles.displayLg(c.foreground))),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const QrGeneratorPage()),
+              ),
+              icon: const Icon(Icons.qr_code_2),
+              label: const Text('Tạo QR'),
+            ),
+          ],
+        ),
         const SizedBox(height: 8),
         Text('Tổng quan buổi học và tình trạng tham dự', style: AppTextStyles.bodySm(c.mutedForeground)),
         const SizedBox(height: 20),

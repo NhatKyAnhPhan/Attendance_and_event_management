@@ -255,6 +255,121 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
   }
 });
 
+function makeId(prefix) {
+  return `${prefix}_${crypto.randomBytes(10).toString('hex')}`.slice(0, 30);
+}
+
+function createAttendanceQr(sessionId, expiresAt) {
+  return jwt.sign(
+    { type: 'attendance', sessionId, exp: Math.floor(expiresAt.getTime() / 1000) },
+    jwtSecret,
+  );
+}
+
+app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT b.\`Mã buổi\` AS classSessionId, b.\`Nội dung\` AS content,
+              b.\`Mã lớp\` AS classId, b.\`Thời gian bắt đầu\` AS startTime,
+              b.\`Thời gian kết thúc\` AS endTime
+       FROM \`buổi\` b
+       ORDER BY b.\`Thời gian bắt đầu\` DESC`,
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Attendance sessions error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải phiên điểm danh.' });
+  }
+});
+
+app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+  const { classSessionId, method = 'QR', durationMinutes = 15 } = request.body || {};
+  const duration = Number(durationMinutes);
+  if (!classSessionId || !['QR', 'Face', 'Both'].includes(method)
+      || !Number.isInteger(duration) || duration < 1 || duration > 180) {
+    return response.status(400).json({ message: 'Thông tin phiên điểm danh không hợp lệ.' });
+  }
+
+  try {
+    const [[classSession]] = await pool.execute(
+      `SELECT \`Mã buổi\` AS id FROM \`buổi\` WHERE \`Mã buổi\` = ? LIMIT 1`,
+      [classSessionId],
+    );
+    if (!classSession) return response.status(404).json({ message: 'Không tìm thấy buổi học.' });
+
+    const openedAt = new Date();
+    const closedAt = new Date(openedAt.getTime() + duration * 60 * 1000);
+    const id = makeId('AT');
+    await pool.execute(
+      `INSERT INTO \`buổi điểm danh\`
+       (\`Mã buổi điểm danh\`, \`Thời gian mở\`, \`Thời gian đóng\`, \`Phương thức\`, \`Trạng thái điểm danh\`, \`Mã buổi\`)
+       VALUES (?, ?, ?, ?, 'Đang mở', ?)`,
+      [id, openedAt, closedAt, method, classSessionId],
+    );
+    return response.status(201).json({
+      id,
+      method,
+      openedAt,
+      closedAt,
+      qr: method === 'Face' ? null : createAttendanceQr(id, closedAt),
+    });
+  } catch (error) {
+    console.error('Create attendance session error:', error.message);
+    return response.status(500).json({ message: 'Không thể tạo phiên điểm danh.' });
+  }
+});
+
+app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
+  const { qrToken, method = 'QR' } = request.body || {};
+  if (!qrToken || !['QR', 'Face'].includes(method)) {
+    return response.status(400).json({ message: 'Thiếu dữ liệu điểm danh.' });
+  }
+
+  try {
+    const payload = jwt.verify(qrToken, jwtSecret);
+    if (payload.type !== 'attendance') throw new Error('Invalid QR type');
+    const [[session]] = await pool.execute(
+            `SELECT bpd.\`Mã buổi điểm danh\` AS id, bpd.\`Trạng thái điểm danh\` AS status,
+              bpd.\`Thời gian đóng\` AS closedAt, bpd.\`Phương thức\` AS method
+             FROM \`buổi điểm danh\` bpd WHERE bpd.\`Mã buổi điểm danh\` = ? LIMIT 1`,
+      [payload.sessionId],
+    );
+    if (!session || session.status !== 'Đang mở' || new Date(session.closedAt) < new Date()) {
+      return response.status(410).json({ message: 'Phiên điểm danh đã đóng hoặc hết hạn.' });
+    }
+    if (session.method === 'Face' || (method === 'Face' && session.method === 'QR')) {
+      return response.status(400).json({ message: 'Phương thức điểm danh không khớp.' });
+    }
+
+    const [[existing]] = await pool.execute(
+      `SELECT \`Mã kết quả\` AS id FROM \`kết quả điểm danh\`
+       WHERE \`Mã buổi điểm danh\` = ? AND \`Mã sinh viên\` = ? LIMIT 1`,
+      [session.id, request.auth.sub],
+    );
+    if (existing) return response.status(409).json({ message: 'Bạn đã điểm danh phiên này.' });
+
+    await pool.execute(
+      `INSERT INTO \`kết quả điểm danh\`
+       (\`Mã kết quả\`, \`Thời gian điểm danh\`, \`Trạng thái kết quả\`, \`Mã buổi điểm danh\`, \`Mã sinh viên\`)
+       VALUES (?, NOW(), 'Có mặt', ?, ?)`,
+      [makeId('RS'), session.id, request.auth.sub],
+    );
+    return response.status(201).json({ message: 'Điểm danh thành công.', sessionId: session.id });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError' || error.message === 'Invalid QR type') {
+      return response.status(410).json({ message: 'Mã QR không hợp lệ hoặc đã hết hạn.' });
+    }
+    console.error('Check-in error:', error.message);
+    return response.status(500).json({ message: 'Không thể ghi nhận điểm danh.' });
+  }
+});
+
+app.post('/api/attendance/face-check-in', requireAuth, async (_request, response) => {
+  return response.status(501).json({
+    message: 'Chưa cấu hình face recognition model. ML Kit chỉ phát hiện khuôn mặt, không xác thực danh tính.',
+  });
+});
+
 app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admin'), async (_request, response) => {
   try {
     const [rows] = await pool.query(

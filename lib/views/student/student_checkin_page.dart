@@ -1,12 +1,15 @@
+import 'dart:typed_data';
+
+import 'package:camera/camera.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_text_styles.dart';
+import '../../data/api/api_client.dart';
+import '../../data/api/endpoints.dart';
 
 /// Mục 14 bản thiết kế — "Student Mobile: QR Scanner, Processing state,
 /// Success, Expired QR, Invalid QR, Already checked in".
-/// Hiện tại chỉ implement scanning → success (giống UI gốc StudentMobilePage.tsx
-/// thực tế render); các trạng thái expired/invalid/already sẽ thêm khi nối
-/// mobile_scanner + API thật.
 class StudentCheckinPage extends StatefulWidget {
   const StudentCheckinPage({super.key});
 
@@ -21,6 +24,14 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     with SingleTickerProviderStateMixin {
   _ScanState _state = _ScanState.idle;
   _ScanMethod _method = _ScanMethod.qr;
+  final _qrController = MobileScannerController();
+  final _apiClient = ApiClient();
+  CameraController? _cameraController;
+  FaceDetector? _faceDetector;
+  bool _faceBusy = false;
+  bool _faceDetected = false;
+  bool _checkInBusy = false;
+  String? _errorMessage;
   late final AnimationController _lineCtrl;
 
   @override
@@ -35,27 +46,134 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   @override
   void dispose() {
     _lineCtrl.dispose();
+    _qrController.dispose();
+    _cameraController?.dispose();
+    _faceDetector?.close();
     super.dispose();
   }
 
   void _startScan() {
-    setState(() => _state = _ScanState.scanning);
-    Future.delayed(const Duration(milliseconds: 1800), () {
-      if (!mounted) return;
-      final success = _method == _ScanMethod.face
-          ? true
-          : true; // có thể thay bằng logic thật sau này
-      setState(() => _state = success ? _ScanState.success : _ScanState.failed);
+    setState(() {
+      _state = _ScanState.scanning;
+      _errorMessage = null;
+    });
+    if (_method == _ScanMethod.qr) {
+      _qrController.start();
+    } else {
+      _startFaceCamera();
+    }
+  }
+
+  void _reset() {
+    _qrController.stop();
+    _cameraController?.stopImageStream();
+    setState(() {
+      _state = _ScanState.idle;
+      _errorMessage = null;
+      _checkInBusy = false;
+      _faceDetected = false;
     });
   }
 
-  void _reset() => setState(() => _state = _ScanState.idle);
-
   void _setMethod(_ScanMethod method) {
+    _qrController.stop();
+    _cameraController?.stopImageStream();
     setState(() {
       _method = method;
       _state = _ScanState.idle;
+      _errorMessage = null;
+      _faceDetected = false;
     });
+  }
+
+  Future<void> _startFaceCamera() async {
+    try {
+      final cameras = await availableCameras();
+      final camera = cameras.firstWhere(
+        (item) => item.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.nv21,
+      );
+      _faceDetector = FaceDetector(
+        options: FaceDetectorOptions(
+          performanceMode: FaceDetectorMode.fast,
+          enableTracking: true,
+        ),
+      );
+      await controller.initialize();
+      if (!mounted || _state != _ScanState.scanning) {
+        await controller.dispose();
+        return;
+      }
+      _cameraController = controller;
+      setState(() {});
+      await controller.startImageStream(_processFaceImage);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Không thể mở camera: $error';
+        _state = _ScanState.failed;
+      });
+    }
+  }
+
+  Future<void> _processFaceImage(CameraImage image) async {
+    if (_faceBusy || _faceDetector == null || _cameraController == null) return;
+    _faceBusy = true;
+    try {
+      final bytes = Uint8List.fromList(
+        image.planes.expand((plane) => plane.bytes).toList(),
+      );
+      final inputImage = InputImage.fromBytes(
+        bytes: bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: InputImageRotationValue.fromRawValue(
+                _cameraController!.description.sensorOrientation,
+              ) ??
+              InputImageRotation.rotation0deg,
+          format: InputImageFormatValue.fromRawValue(image.format.raw) ??
+              InputImageFormat.nv21,
+          bytesPerRow: image.planes.first.bytesPerRow,
+        ),
+      );
+      final faces = await _faceDetector!.processImage(inputImage);
+      if (mounted && faces.isNotEmpty && !_faceDetected) {
+        setState(() => _faceDetected = true);
+      }
+    } finally {
+      _faceBusy = false;
+    }
+  }
+
+  Future<void> _onQrDetected(BarcodeCapture capture) async {
+    if (_checkInBusy || _state != _ScanState.scanning) return;
+    final token = capture.barcodes
+        .map((barcode) => barcode.rawValue)
+        .whereType<String>()
+        .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+    if (token.isEmpty) return;
+
+    _checkInBusy = true;
+    await _qrController.stop();
+    try {
+      await _apiClient.post(
+        ApiEndpoints.attendanceCheckIn,
+        data: {'qrToken': token, 'method': 'QR'},
+      );
+      if (mounted) setState(() => _state = _ScanState.success);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = error.message;
+        _state = _ScanState.failed;
+      });
+    }
   }
 
   @override
@@ -183,67 +301,33 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   }
 
   Widget _buildScanningQr() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        MobileScanner(controller: _qrController, onDetect: _onQrDetected),
+        IgnorePointer(
+          child: Container(
             width: 240,
             height: 240,
-            child: Stack(
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      width: 2,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                _corner(top: 0, left: 0),
-                _corner(top: 0, right: 0),
-                _corner(bottom: 0, left: 0),
-                _corner(bottom: 0, right: 0),
-                AnimatedBuilder(
-                  animation: _lineCtrl,
-                  builder: (context, child) => Positioned(
-                    left: 4,
-                    right: 4,
-                    top: 8 + _lineCtrl.value * 224,
-                    child: Container(
-                      height: 2,
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.transparent,
-                            Color(0xFF16A34A),
-                            Colors.transparent,
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFF16A34A), width: 3),
+              borderRadius: BorderRadius.circular(16),
             ),
           ),
-          const SizedBox(height: 32),
-          Text(
+        ),
+        Positioned(
+          bottom: 32,
+          child: Text(
             'Đặt mã QR vào trong khung để điểm danh',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.7),
-              fontSize: 14,
-            ),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildScanningFace() {
+    final camera = _cameraController;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
       child: Column(
@@ -254,7 +338,13 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             height: 260,
             child: Stack(
               children: [
-                Container(
+                if (camera != null && camera.value.isInitialized)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: CameraPreview(camera),
+                  )
+                else
+                  Container(
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.04),
                     border: Border.all(
@@ -264,7 +354,21 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                     borderRadius: BorderRadius.circular(28),
                   ),
                 ),
-                Center(
+                if (_faceDetected)
+                  const Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 16,
+                    child: Text(
+                      'Đã phát hiện khuôn mặt. Đang chờ xác thực danh tính...',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ),
+                if (camera == null)
+                  const Center(child: CircularProgressIndicator(color: Colors.white)),
+                if (camera != null && !_faceDetected)
+                  Center(
                   child: Container(
                     width: 160,
                     height: 180,
@@ -321,37 +425,6 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _corner({double? top, double? bottom, double? left, double? right}) {
-    final isTop = top != null;
-    final isLeft = left != null;
-    return Positioned(
-      top: top,
-      bottom: bottom,
-      left: left,
-      right: right,
-      child: Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          border: Border(
-            top: isTop
-                ? const BorderSide(color: Color(0xFF16A34A), width: 3)
-                : BorderSide.none,
-            bottom: !isTop
-                ? const BorderSide(color: Color(0xFF16A34A), width: 3)
-                : BorderSide.none,
-            left: isLeft
-                ? const BorderSide(color: Color(0xFF16A34A), width: 3)
-                : BorderSide.none,
-            right: !isLeft
-                ? const BorderSide(color: Color(0xFF16A34A), width: 3)
-                : BorderSide.none,
-          ),
-        ),
       ),
     );
   }
@@ -441,9 +514,9 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
           ),
           const SizedBox(height: 8),
           Text(
-            _method == _ScanMethod.qr
+            _errorMessage ?? (_method == _ScanMethod.qr
                 ? 'Mã QR không hợp lệ hoặc đã hết hạn.'
-                : 'Khuôn mặt chưa rõ nét, vui lòng thử lại.',
+                : 'Khuôn mặt chưa rõ nét, vui lòng thử lại.'),
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.7),

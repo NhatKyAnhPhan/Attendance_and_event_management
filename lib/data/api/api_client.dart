@@ -53,6 +53,13 @@ class ApiClient {
     return _request(() => _dio.get<Map<String, dynamic>>(path));
   }
 
+  Future<Map<String, dynamic>> postMultipart(
+    String path,
+    FormData data,
+  ) async {
+    return _request(() => _dio.post<Map<String, dynamic>>(path, data: data));
+  }
+
   Future<Map<String, dynamic>> _request(
     Future<Response<Map<String, dynamic>>> Function() call,
   ) async {
