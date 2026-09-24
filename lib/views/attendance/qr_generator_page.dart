@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -22,6 +23,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
   bool _loading = true;
   bool _creating = false;
   String? _error;
+  Position? _lecturerPosition;
 
   @override
   void initState() {
@@ -36,7 +38,9 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
       if (!mounted) return;
       setState(() {
         _sessions = items is List
-            ? items.map((item) => Map<String, dynamic>.from(item as Map)).toList()
+            ? items
+                  .map((item) => Map<String, dynamic>.from(item as Map))
+                  .toList()
             : [];
         _loading = false;
       });
@@ -56,18 +60,22 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
       _error = null;
     });
     try {
+      final position = await _getCurrentPosition();
       final body = await _client.post(
         ApiEndpoints.attendanceSessions,
         data: {
           'classSessionId': _selectedClassSession,
-          'method': 'QR',
+          'method': 'Both',
           'durationMinutes': 15,
+          'latitude': position.latitude,
+          'longitude': position.longitude,
         },
       );
       if (!mounted) return;
       setState(() {
         _qrToken = body['qr']?.toString();
         _expiresAt = DateTime.tryParse(body['closedAt']?.toString() ?? '');
+        _lecturerPosition = position;
         _creating = false;
       });
     } on ApiException catch (error) {
@@ -77,6 +85,25 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         _creating = false;
       });
     }
+  }
+
+  Future<Position> _getCurrentPosition() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw const ApiException(
+        'Hãy bật dịch vụ vị trí trên thiết bị giảng viên.',
+      );
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      throw const ApiException('Cần cấp quyền vị trí để mở điểm danh.');
+    }
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    );
   }
 
   @override
@@ -92,7 +119,10 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
           : ListView(
               padding: const EdgeInsets.all(24),
               children: [
-                Text('Phiên học', style: AppTextStyles.displaySm(colors.foreground)),
+                Text(
+                  'Phiên học',
+                  style: AppTextStyles.displaySm(colors.foreground),
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   initialValue: _selectedClassSession,
@@ -105,21 +135,49 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
                     final label = '${session['content'] ?? 'Buổi học'} · $id';
                     return DropdownMenuItem(value: id, child: Text(label));
                   }).toList(),
-                  onChanged: (value) => setState(() => _selectedClassSession = value),
+                  onChanged: (value) =>
+                      setState(() => _selectedClassSession = value),
                 ),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: _creating || _selectedClassSession == null ? null : _createQr,
+                  onPressed: _creating || _selectedClassSession == null
+                      ? null
+                      : _createQr,
                   icon: _creating
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.qr_code_2),
                   label: const Text('Mở phiên và tạo QR'),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 16),
                   Text(_error!, style: TextStyle(color: colors.danger)),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _loading ? null : _loadSessions,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Thử kết nối lại'),
+                    ),
+                  ),
                 ],
                 if (_qrToken != null) ...[
+                  if (_lecturerPosition != null) ...[
+                    const SizedBox(height: 16),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.location_on, color: colors.success),
+                      title: const Text('Vị trí điểm danh đã được khóa'),
+                      subtitle: Text(
+                        '${_lecturerPosition!.latitude.toStringAsFixed(6)}, '
+                        '${_lecturerPosition!.longitude.toStringAsFixed(6)} · Phạm vi 150 m',
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 32),
                   Center(
                     child: Container(

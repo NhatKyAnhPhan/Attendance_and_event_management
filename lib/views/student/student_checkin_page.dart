@@ -1,9 +1,11 @@
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+
 import '../../core/theme/app_colors.dart';
 import '../../data/api/api_client.dart';
 import '../../data/api/endpoints.dart';
@@ -18,6 +20,7 @@ class StudentCheckinPage extends StatefulWidget {
 }
 
 enum _ScanState { idle, scanning, success, failed }
+
 enum _ScanMethod { qr, face }
 
 class _StudentCheckinPageState extends State<StudentCheckinPage>
@@ -133,11 +136,13 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
         bytes: bytes,
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
-          rotation: InputImageRotationValue.fromRawValue(
+          rotation:
+              InputImageRotationValue.fromRawValue(
                 _cameraController!.description.sensorOrientation,
               ) ??
               InputImageRotation.rotation0deg,
-          format: InputImageFormatValue.fromRawValue(image.format.raw) ??
+          format:
+              InputImageFormatValue.fromRawValue(image.format.raw) ??
               InputImageFormat.nv21,
           bytesPerRow: image.planes.first.bytesPerRow,
         ),
@@ -145,6 +150,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       final faces = await _faceDetector!.processImage(inputImage);
       if (mounted && faces.isNotEmpty && !_faceDetected) {
         setState(() => _faceDetected = true);
+        await _submitFaceCheckIn();
       }
     } finally {
       _faceBusy = false;
@@ -162,9 +168,15 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     _checkInBusy = true;
     await _qrController.stop();
     try {
+      final position = await _getCurrentPosition();
       await _apiClient.post(
         ApiEndpoints.attendanceCheckIn,
-        data: {'qrToken': token, 'method': 'QR'},
+        data: {
+          'qrToken': token,
+          'method': 'QR',
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+        },
       );
       if (mounted) setState(() => _state = _ScanState.success);
     } on ApiException catch (error) {
@@ -174,6 +186,46 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
         _state = _ScanState.failed;
       });
     }
+  }
+
+  Future<void> _submitFaceCheckIn() async {
+    if (_checkInBusy) return;
+    _checkInBusy = true;
+    try {
+      final position = await _getCurrentPosition();
+      await _apiClient.post(
+        ApiEndpoints.attendanceFaceCheckIn,
+        data: {
+          'faceDetected': true,
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+        },
+      );
+      if (mounted) setState(() => _state = _ScanState.success);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = error.message;
+        _state = _ScanState.failed;
+      });
+    }
+  }
+
+  Future<Position> _getCurrentPosition() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw const ApiException('Hãy bật dịch vụ vị trí để điểm danh.');
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      throw const ApiException('Cần cấp quyền vị trí để điểm danh.');
+    }
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    );
   }
 
   @override
@@ -189,7 +241,9 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: Text(
-                _method == _ScanMethod.qr ? 'Điểm danh QR' : 'Nhận diện khuôn mặt',
+                _method == _ScanMethod.qr
+                    ? 'Điểm danh QR'
+                    : 'Nhận diện khuôn mặt',
                 style: const TextStyle(
                   color: Colors.white,
                   fontFamily: 'Nunito',
@@ -206,9 +260,10 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             Expanded(
               child: switch (_state) {
                 _ScanState.idle => _buildIdle(c),
-                _ScanState.scanning => _method == _ScanMethod.qr
-                    ? _buildScanningQr()
-                    : _buildScanningFace(),
+                _ScanState.scanning =>
+                  _method == _ScanMethod.qr
+                      ? _buildScanningQr()
+                      : _buildScanningFace(),
                 _ScanState.success => _buildSuccess(c),
                 _ScanState.failed => _buildFailed(c),
               },
@@ -291,7 +346,9 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             child: ElevatedButton(
               onPressed: _startScan,
               child: Text(
-                _method == _ScanMethod.qr ? 'Bắt đầu quét QR' : 'Bắt đầu nhận diện',
+                _method == _ScanMethod.qr
+                    ? 'Bắt đầu quét QR'
+                    : 'Bắt đầu nhận diện',
               ),
             ),
           ),
@@ -319,7 +376,10 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
           bottom: 32,
           child: Text(
             'Đặt mã QR vào trong khung để điểm danh',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14),
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.8),
+              fontSize: 14,
+            ),
           ),
         ),
       ],
@@ -345,15 +405,15 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                   )
                 else
                   Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.04),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.18),
-                      width: 2,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.04),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        width: 2,
+                      ),
+                      borderRadius: BorderRadius.circular(28),
                     ),
-                    borderRadius: BorderRadius.circular(28),
                   ),
-                ),
                 if (_faceDetected)
                   const Positioned(
                     left: 16,
@@ -366,32 +426,34 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                     ),
                   ),
                 if (camera == null)
-                  const Center(child: CircularProgressIndicator(color: Colors.white)),
+                  const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
                 if (camera != null && !_faceDetected)
                   Center(
-                  child: Container(
-                    width: 160,
-                    height: 180,
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: const Color(0xFF60A5FA),
-                        width: 2,
+                    child: Container(
+                      width: 160,
+                      height: 180,
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: const Color(0xFF60A5FA),
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(80),
                       ),
-                      borderRadius: BorderRadius.circular(80),
-                    ),
-                    child: Align(
-                      alignment: Alignment.topCenter,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 16),
-                        child: Icon(
-                          Icons.face_6_rounded,
-                          color: Colors.white.withValues(alpha: 0.8),
-                          size: 82,
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: Icon(
+                            Icons.face_6_rounded,
+                            color: Colors.white.withValues(alpha: 0.8),
+                            size: 82,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
                 AnimatedBuilder(
                   animation: _lineCtrl,
                   builder: (context, child) => Positioned(
@@ -514,9 +576,10 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
           ),
           const SizedBox(height: 8),
           Text(
-            _errorMessage ?? (_method == _ScanMethod.qr
-                ? 'Mã QR không hợp lệ hoặc đã hết hạn.'
-                : 'Khuôn mặt chưa rõ nét, vui lòng thử lại.'),
+            _errorMessage ??
+                (_method == _ScanMethod.qr
+                    ? 'Mã QR không hợp lệ hoặc đã hết hạn.'
+                    : 'Khuôn mặt chưa rõ nét, vui lòng thử lại.'),
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.7),

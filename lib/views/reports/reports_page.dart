@@ -22,49 +22,78 @@ class ReportsPage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Text('Báo cáo & thống kê', style: AppTextStyles.displayLg(c.foreground)),
+        Text(
+          'Báo cáo & thống kê',
+          style: AppTextStyles.displayLg(c.foreground),
+        ),
         const SizedBox(height: 8),
         Text(
           'Tổng quan hiệu suất học tập và điểm danh theo thời gian',
           style: AppTextStyles.bodySm(c.mutedForeground),
         ),
         const SizedBox(height: 20),
-        GridView.count(
-          crossAxisCount: 4,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 2.5,
-          children: stats
-              .map((item) => Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      border: Border.all(color: c.border),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item['label'] as String, style: AppTextStyles.bodySm(c.mutedForeground)),
-                        const SizedBox(height: 8),
-                        Text(
-                          item['value'] as String,
-                          style: AppTextStyles.displayLg(item['color'] as Color).copyWith(fontSize: 22),
-                        ),
-                      ],
-                    ),
-                  ))
-              .toList(),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = constraints.maxWidth >= 900
+                ? 4
+                : constraints.maxWidth >= 560
+                ? 2
+                : 1;
+            return GridView.builder(
+              itemCount: stats.length,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                mainAxisExtent: 100,
+              ),
+              itemBuilder: (context, index) {
+                final item = stats[index];
+                return Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: c.card,
+                    border: Border.all(color: c.border),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        item['label'] as String,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.bodySm(c.mutedForeground),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        item['value'] as String,
+                        style: AppTextStyles.displayLg(item['color'] as Color)
+                            .copyWith(fontSize: 22),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
         ),
         const SizedBox(height: 20),
         LayoutBuilder(
           builder: (context, constraints) {
             final wide = constraints.maxWidth > 900;
             final charts = [
-              _ReportChartCard(title: 'Xu hướng điểm danh theo tuần', child: SizedBox(height: 220, child: _WeeklyChart(c: c))),
-              _ReportChartCard(title: 'Tỷ lệ điểm danh', child: SizedBox(height: 220, child: _PieChart(c: c))),
+              _ReportChartCard(
+                title: 'Xu hướng điểm danh theo tuần',
+                child: SizedBox(height: 220, child: _WeeklyChart(c: c)),
+              ),
+              _ReportChartCard(
+                title: 'Tỷ lệ điểm danh',
+                child: _PieChart(c: c),
+              ),
             ];
             if (wide) {
               return Row(
@@ -150,21 +179,34 @@ class _WeeklyChart extends StatelessWidget {
           );
         }),
         titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
               getTitlesWidget: (value, meta) {
                 final i = value.toInt();
                 if (i < 0 || i >= weeks.length) return const SizedBox.shrink();
-                return Text(weeks[i]['day'] as String, style: AppTextStyles.bodyXs(c.mutedForeground));
+                return Text(
+                  weeks[i]['day'] as String,
+                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                );
               },
             ),
           ),
         ),
-        gridData: FlGridData(show: true, getDrawingHorizontalLine: (value) => FlLine(color: c.border, strokeWidth: 1)),
+        gridData: FlGridData(
+          show: true,
+          getDrawingHorizontalLine: (value) =>
+              FlLine(color: c.border, strokeWidth: 1),
+        ),
         borderData: FlBorderData(show: false),
       ),
     );
@@ -210,10 +252,26 @@ class _PieChart extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 6),
             child: Row(
               children: [
-                Container(width: 10, height: 10, decoration: BoxDecoration(color: item['color'] as Color, borderRadius: BorderRadius.circular(2))),
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: item['color'] as Color,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: Text(item['label'] as String, style: AppTextStyles.bodySm(c.foreground))),
-                Text('${item['value']}%', style: AppTextStyles.bodySm(c.foreground).copyWith(fontWeight: FontWeight.w600)),
+                Expanded(
+                  child: Text(
+                    item['label'] as String,
+                    style: AppTextStyles.bodySm(c.foreground),
+                  ),
+                ),
+                Text(
+                  '${item['value']}%',
+                  style: AppTextStyles.bodySm(c.foreground)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
               ],
             ),
           ),

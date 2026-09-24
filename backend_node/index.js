@@ -22,6 +22,16 @@ const pool = mysql.createPool({
   charset: 'utf8mb4',
 });
 
+async function ensureAttendanceLocationColumns() {
+  for (const column of ['latitude', 'longitude']) {
+    try {
+      await pool.query(`ALTER TABLE \`buổi điểm danh\` ADD COLUMN \`${column}\` DECIMAL(10, 7) NULL`);
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+    }
+  }
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -259,9 +269,40 @@ function makeId(prefix) {
   return `${prefix}_${crypto.randomBytes(10).toString('hex')}`.slice(0, 30);
 }
 
-function createAttendanceQr(sessionId, expiresAt) {
+const attendanceRadiusMeters = 150;
+
+function readCoordinates(body) {
+  const latitude = Number(body?.latitude);
+  const longitude = Number(body?.longitude);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+      || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return null;
+  }
+  return { latitude, longitude };
+}
+
+function distanceInMeters(first, second) {
+  const earthRadius = 6371000;
+  const toRadians = (value) => value * Math.PI / 180;
+  const latitudeDelta = toRadians(second.latitude - first.latitude);
+  const longitudeDelta = toRadians(second.longitude - first.longitude);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(toRadians(first.latitude))
+      * Math.cos(toRadians(second.latitude))
+      * Math.sin(longitudeDelta / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function createAttendanceQr(sessionId, expiresAt, coordinates) {
   return jwt.sign(
-    { type: 'attendance', sessionId, exp: Math.floor(expiresAt.getTime() / 1000) },
+    {
+      type: 'attendance',
+      sessionId,
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      radiusMeters: attendanceRadiusMeters,
+      exp: Math.floor(expiresAt.getTime() / 1000),
+    },
     jwtSecret,
   );
 }
@@ -273,7 +314,10 @@ app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
               b.\`Mã lớp\` AS classId, b.\`Thời gian bắt đầu\` AS startTime,
               b.\`Thời gian kết thúc\` AS endTime
        FROM \`buổi\` b
+       LEFT JOIN \`lớp học phần\` lhp ON lhp.\`Mã lớp\` = b.\`Mã lớp\`
+       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.\`Mã giảng viên\` = ?)
        ORDER BY b.\`Thời gian bắt đầu\` DESC`,
+      [request.auth.role, request.auth.sub],
     );
     return response.json({ items: rows });
   } catch (error) {
@@ -285,15 +329,21 @@ app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
 app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
   const { classSessionId, method = 'QR', durationMinutes = 15 } = request.body || {};
   const duration = Number(durationMinutes);
+  const coordinates = readCoordinates(request.body);
   if (!classSessionId || !['QR', 'Face', 'Both'].includes(method)
-      || !Number.isInteger(duration) || duration < 1 || duration > 180) {
-    return response.status(400).json({ message: 'Thông tin phiên điểm danh không hợp lệ.' });
+      || !Number.isInteger(duration) || duration < 1 || duration > 180 || !coordinates) {
+    return response.status(400).json({ message: 'Cần chọn buổi học và cho phép vị trí để mở điểm danh.' });
   }
 
   try {
     const [[classSession]] = await pool.execute(
-      `SELECT \`Mã buổi\` AS id FROM \`buổi\` WHERE \`Mã buổi\` = ? LIMIT 1`,
-      [classSessionId],
+      `SELECT b.\`Mã buổi\` AS id
+       FROM \`buổi\` b
+       LEFT JOIN \`lớp học phần\` lhp ON lhp.\`Mã lớp\` = b.\`Mã lớp\`
+       WHERE b.\`Mã buổi\` = ?
+         AND (? IN ('Quản trị viên', 'admin') OR lhp.\`Mã giảng viên\` = ?)
+       LIMIT 1`,
+      [classSessionId, request.auth.role, request.auth.sub],
     );
     if (!classSession) return response.status(404).json({ message: 'Không tìm thấy buổi học.' });
 
@@ -302,16 +352,19 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
     const id = makeId('AT');
     await pool.execute(
       `INSERT INTO \`buổi điểm danh\`
-       (\`Mã buổi điểm danh\`, \`Thời gian mở\`, \`Thời gian đóng\`, \`Phương thức\`, \`Trạng thái điểm danh\`, \`Mã buổi\`)
-       VALUES (?, ?, ?, ?, 'Đang mở', ?)`,
-      [id, openedAt, closedAt, method, classSessionId],
+         (\`Mã buổi điểm danh\`, \`Thời gian mở\`, \`Thời gian đóng\`, \`Phương thức\`, \`Trạng thái điểm danh\`, \`Mã buổi\`, \`latitude\`, \`longitude\`)
+         VALUES (?, ?, ?, ?, 'Đang mở', ?, ?, ?)`,
+        [id, openedAt, closedAt, method, classSessionId, coordinates.latitude, coordinates.longitude],
     );
     return response.status(201).json({
       id,
       method,
       openedAt,
       closedAt,
-      qr: method === 'Face' ? null : createAttendanceQr(id, closedAt),
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      radiusMeters: attendanceRadiusMeters,
+      qr: method === 'Face' ? null : createAttendanceQr(id, closedAt, coordinates),
     });
   } catch (error) {
     console.error('Create attendance session error:', error.message);
@@ -321,8 +374,12 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
 
 app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
   const { qrToken, method = 'QR' } = request.body || {};
+  const coordinates = readCoordinates(request.body);
   if (!qrToken || !['QR', 'Face'].includes(method)) {
     return response.status(400).json({ message: 'Thiếu dữ liệu điểm danh.' });
+  }
+  if (!coordinates) {
+    return response.status(400).json({ message: 'Không lấy được vị trí hiện tại của bạn.' });
   }
 
   try {
@@ -337,8 +394,26 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
     if (!session || session.status !== 'Đang mở' || new Date(session.closedAt) < new Date()) {
       return response.status(410).json({ message: 'Phiên điểm danh đã đóng hoặc hết hạn.' });
     }
+    const sessionCoordinates = readCoordinates(payload);
+    const radiusMeters = Number(payload.radiusMeters) || attendanceRadiusMeters;
+    if (!sessionCoordinates || distanceInMeters(sessionCoordinates, coordinates) > radiusMeters) {
+      return response.status(403).json({ message: `Bạn đang cách vị trí điểm danh quá xa (phạm vi ${radiusMeters} m).` });
+    }
     if (session.method === 'Face' || (method === 'Face' && session.method === 'QR')) {
       return response.status(400).json({ message: 'Phương thức điểm danh không khớp.' });
+    }
+
+    const [[membership]] = await pool.execute(
+      `SELECT 1 AS enrolled
+       FROM \`buổi điểm danh\` bpd
+       JOIN \`buổi\` b ON b.\`Mã buổi\` = bpd.\`Mã buổi\`
+       JOIN \`thành viên lớp\` tvl ON tvl.\`Mã lớp\` = b.\`Mã lớp\`
+       WHERE bpd.\`Mã buổi điểm danh\` = ? AND tvl.\`Mã sinh viên\` = ?
+       LIMIT 1`,
+      [session.id, request.auth.sub],
+    );
+    if (!membership) {
+      return response.status(403).json({ message: 'Bạn không thuộc lớp của buổi điểm danh này.' });
     }
 
     const [[existing]] = await pool.execute(
@@ -350,9 +425,9 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
 
     await pool.execute(
       `INSERT INTO \`kết quả điểm danh\`
-       (\`Mã kết quả\`, \`Thời gian điểm danh\`, \`Trạng thái kết quả\`, \`Mã buổi điểm danh\`, \`Mã sinh viên\`)
-       VALUES (?, NOW(), 'Có mặt', ?, ?)`,
-      [makeId('RS'), session.id, request.auth.sub],
+       (\`Mã kết quả\`, \`Thời gian điểm danh\`, \`Trạng thái kết quả\`, \`Vị trí\`, \`Mã buổi điểm danh\`, \`Mã sinh viên\`)
+       VALUES (?, NOW(), 'Có mặt', ?, ?, ?)`,
+      [makeId('RS'), JSON.stringify(coordinates), session.id, request.auth.sub],
     );
     return response.status(201).json({ message: 'Điểm danh thành công.', sessionId: session.id });
   } catch (error) {
@@ -364,10 +439,50 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
   }
 });
 
-app.post('/api/attendance/face-check-in', requireAuth, async (_request, response) => {
-  return response.status(501).json({
-    message: 'Chưa cấu hình face recognition model. ML Kit chỉ phát hiện khuôn mặt, không xác thực danh tính.',
-  });
+app.post('/api/attendance/face-check-in', requireAuth, async (request, response) => {
+  const coordinates = readCoordinates(request.body);
+  if (!coordinates || request.body?.faceDetected !== true) {
+    return response.status(400).json({ message: 'Cần xác nhận khuôn mặt và vị trí hiện tại.' });
+  }
+
+  try {
+    const [[session]] = await pool.execute(
+      `SELECT bpd.\`Mã buổi điểm danh\` AS id, bpd.\`Phương thức\` AS method,
+              bpd.\`Thời gian đóng\` AS closedAt,
+              bpd.\`latitude\` AS latitude, bpd.\`longitude\` AS longitude
+       FROM \`buổi điểm danh\` bpd
+       JOIN \`buổi\` b ON b.\`Mã buổi\` = bpd.\`Mã buổi\`
+       JOIN \`thành viên lớp\` tvl ON tvl.\`Mã lớp\` = b.\`Mã lớp\`
+       WHERE tvl.\`Mã sinh viên\` = ? AND bpd.\`Trạng thái điểm danh\` = 'Đang mở'
+         AND bpd.\`Thời gian đóng\` > NOW()
+       ORDER BY bpd.\`Thời gian mở\` DESC LIMIT 1`,
+      [request.auth.sub],
+    );
+    if (!session || !['Face', 'Both'].includes(session.method)) {
+      return response.status(404).json({ message: 'Không có phiên khuôn mặt đang mở cho bạn.' });
+    }
+    const distance = distanceInMeters(
+      { latitude: Number(session.latitude), longitude: Number(session.longitude) },
+      coordinates,
+    );
+    if (!Number.isFinite(distance) || distance > attendanceRadiusMeters) {
+      return response.status(403).json({ message: `Bạn đang cách vị trí điểm danh quá xa (phạm vi ${attendanceRadiusMeters} m).` });
+    }
+
+    const [[existing]] = await pool.execute(
+      `SELECT 1 AS id FROM \`kết quả điểm danh\`
+       WHERE \`Mã buổi điểm danh\` = ? AND \`Mã sinh viên\` = ? LIMIT 1`,
+      [session.id, request.auth.sub],
+    );
+    if (existing) return response.status(409).json({ message: 'Bạn đã điểm danh phiên này.' });
+
+    return response.status(501).json({
+      message: 'Đã nhận diện khuôn mặt nhưng hệ thống chưa có mẫu khuôn mặt để xác thực danh tính.',
+    });
+  } catch (error) {
+    console.error('Face check-in error:', error.message);
+    return response.status(500).json({ message: 'Không thể ghi nhận điểm danh khuôn mặt.' });
+  }
 });
 
 app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admin'), async (_request, response) => {
@@ -426,6 +541,11 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
   }
 });
 
-app.listen(port, () => {
-  console.log(`API listening on http://localhost:${port}`);
-});
+ensureAttendanceLocationColumns()
+  .then(() => app.listen(port, () => {
+    console.log(`API listening on http://localhost:${port}`);
+  }))
+  .catch((error) => {
+    console.error('Attendance location migration failed:', error.message);
+    process.exit(1);
+  });

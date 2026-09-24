@@ -4,6 +4,8 @@
 <dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Ứng dụng cần camera để quét QR và xác thực khuôn mặt.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Ứng dụng cần vị trí để xác minh bạn đang ở địa điểm điểm danh.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

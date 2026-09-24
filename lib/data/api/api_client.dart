@@ -5,7 +5,7 @@ String _resolveBaseUrl(String? baseUrl) {
   final configured = (baseUrl ?? const String.fromEnvironment('API_BASE_URL'))
       .trim();
   if (configured.isNotEmpty) return configured;
-  return kIsWeb ? 'http://127.0.0.1:3000' : '';
+  return kIsWeb ? 'http://127.0.0.1:3000' : 'http://10.0.2.2:3000';
 }
 
 class ApiException implements Exception {
@@ -53,10 +53,7 @@ class ApiClient {
     return _request(() => _dio.get<Map<String, dynamic>>(path));
   }
 
-  Future<Map<String, dynamic>> postMultipart(
-    String path,
-    FormData data,
-  ) async {
+  Future<Map<String, dynamic>> postMultipart(String path, FormData data) async {
     return _request(() => _dio.post<Map<String, dynamic>>(path, data: data));
   }
 
@@ -79,7 +76,9 @@ class ApiClient {
       final responseData = error.response?.data;
       final message = responseData is Map
           ? (responseData['message']?.toString() ?? 'Yêu cầu API thất bại.')
-          : 'Không thể kết nối tới máy chủ.';
+          : error.response == null
+          ? 'Không thể kết nối tới máy chủ.'
+          : 'Máy chủ trả về lỗi HTTP ${error.response?.statusCode}.';
       throw ApiException(message);
     }
   }
