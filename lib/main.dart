@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'app.dart';
 import 'controllers/auth_controller.dart';
+import 'controllers/notification_controller.dart';
 import 'controllers/theme_controller.dart';
 
 void main() {
@@ -10,6 +11,7 @@ void main() {
   // Controller nền tảng, cần có trước khi bất kỳ trang nào build.
   Get.put(ThemeController());
   Get.put(AuthController());
+  Get.put(NotificationController());
 
   runApp(const App());
 }

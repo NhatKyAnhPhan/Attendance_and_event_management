@@ -6,8 +6,15 @@ import '../../controllers/theme_controller.dart';
 import '../../core/constants/admin_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../dashboard/dashboard_page.dart';
+import '../attendance/attendance_page.dart';
+import '../attendance/qr_scan_page.dart';
+import '../classes/classes_page.dart';
+import '../events/events_page.dart';
+import '../notifications/notifications_page.dart';
+import '../reports/reports_page.dart';
 import '../shared/placeholder_page.dart';
 import '../shared/admin_data_page.dart';
+import '../users/users_page.dart';
 import 'widgets/app_header.dart';
 import 'widgets/app_sidebar.dart';
 
@@ -34,29 +41,25 @@ class _AdminShellPageState extends State<AdminShellPage> {
       case AdminPage.dashboard:
         return DashboardPage(role: Get.find<AuthController>().role.value);
       case AdminPage.users:
-        return const AdminDataPage(
-          title: 'Quản lý người dùng',
-          endpoint: '/api/admin/users',
-          columns: ['Mã', 'Họ tên', 'Email', 'Vai trò', 'Trạng thái'],
-        );
+        return const UsersPage();
+      case AdminPage.orgUnits:
+        return const PlaceholderPage(title: 'Đơn vị tổ chức');
       case AdminPage.classes:
-        return const AdminDataPage(
-          title: 'Quản lý lớp học',
-          endpoint: '/api/admin/classes',
-          columns: [
-            'Mã lớp',
-            'Tên lớp',
-            'Giảng viên',
-            'Học kỳ',
-            'Số sinh viên',
-          ],
-        );
+        return const ClassesPage();
       case AdminPage.events:
-        return const AdminDataPage(
-          title: 'Quản lý sự kiện',
-          endpoint: '/api/admin/events',
-          columns: ['Mã', 'Tên sự kiện', 'Địa điểm', 'Thời gian', 'Số đăng ký'],
-        );
+        return const EventsPage();
+      case AdminPage.attendance:
+        return const AttendancePage();
+      case AdminPage.reports:
+        return const ReportsPage();
+      case AdminPage.feedback:
+        return const PlaceholderPage(title: 'Phản hồi');
+      case AdminPage.certificates:
+        return const PlaceholderPage(title: 'Chứng chỉ');
+      case AdminPage.notifications:
+        return NotificationsPage(role: Get.find<AuthController>().role.value);
+      case AdminPage.settings:
+        return const PlaceholderPage(title: 'Cài đặt');
       default:
         return PlaceholderPage(title: _activePage.title);
     }
@@ -88,11 +91,13 @@ class _AdminShellPageState extends State<AdminShellPage> {
             breadcrumb: _activePage == AdminPage.dashboard
                 ? ['Trang chủ']
                 : ['Trang chủ', _activePage.title],
+            role: role,
             isDarkMode: isDark,
             onToggleDark: theme.toggle,
             onMenuTap: isWide
                 ? null
                 : () => _scaffoldKey.currentState?.openDrawer(),
+            onNotificationsTap: () => _navigate(AdminPage.notifications),
           );
 
           return Scaffold(

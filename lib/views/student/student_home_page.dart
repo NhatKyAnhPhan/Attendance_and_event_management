@@ -4,10 +4,14 @@ import 'package:get/get.dart';
 import '../../controllers/auth_controller.dart';
 import '../../controllers/classes_controller.dart';
 import '../../controllers/events_controller.dart';
+import '../../controllers/notification_controller.dart';
+import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/mock/student_mock_data.dart';
+import '../../data/models/notification_model.dart';
 import '../../widgets/app_badge.dart';
+import '../notifications/notifications_page.dart';
 import 'student_checkin_page.dart';
 import 'student_classes_page.dart';
 import 'student_events_page.dart';
@@ -105,6 +109,7 @@ class _HomeTabContent extends StatelessWidget {
     final c = AppColors.of(isDark);
     final classesController = Get.put(ClassesController());
     final eventsController = Get.put(EventsController());
+    final notifications = Get.find<NotificationController>();
     final auth = Get.find<AuthController>();
 
     return Obx(() {
@@ -114,7 +119,7 @@ class _HomeTabContent extends StatelessWidget {
       return ListView(
         padding: EdgeInsets.zero,
         children: [
-          _buildHeader(c, user),
+          _buildHeader(c, user, notifications.unreadCount(Role.student)),
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -147,14 +152,40 @@ class _HomeTabContent extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
 
-                _sectionTitle('Thông báo', c),
+                Row(
+                  children: [
+                    Expanded(child: _sectionTitle('Thông báo', c)),
+                    TextButton(
+                      onPressed: () => Get.to(() => const NotificationsPage(role: Role.student)),
+                      child: Text('Xem tất cả', style: AppTextStyles.bodySm(c.primary)),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 12),
-                ...StudentMockData.notifications
+                ...notifications
+                    .notificationsFor(Role.student)
                     .take(3)
                     .map(
                       (n) => Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: _NotificationRow(notif: n, c: c),
+                        child: _NotificationRow(
+                          notif: StudentNotification(
+                            id: n.id.hashCode,
+                            type: switch (n.type) {
+                              NotificationType.attendance => 'attendance',
+                              NotificationType.classUpdate => 'class',
+                              NotificationType.event => 'event',
+                              NotificationType.certificate => 'certificate',
+                              NotificationType.system => 'class',
+                              NotificationType.approval => 'event',
+                            },
+                            text: n.message,
+                            time: n.timeLabel,
+                            read: n.read,
+                          ),
+                          c: c,
+                          onTap: () => showNotificationDetails(context, n),
+                        ),
                       ),
                     ),
               ],
@@ -168,7 +199,7 @@ class _HomeTabContent extends StatelessWidget {
   Widget _sectionTitle(String text, AppColors c) =>
       Text(text, style: AppTextStyles.displaySm(c.foreground));
 
-  Widget _buildHeader(AppColors c, Map<String, dynamic> user) {
+  Widget _buildHeader(AppColors c, Map<String, dynamic> user, int unreadCount) {
     const summary = [
       {'label': 'Có mặt', 'val': '89%'},
       {'label': 'Muộn', 'val': '8%'},
@@ -209,40 +240,45 @@ class _HomeTabContent extends StatelessWidget {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.notifications_none,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                  Positioned(
-                    top: -2,
-                    right: -2,
+                  InkWell(
+                    onTap: () => Get.to(() => const NotificationsPage(role: Role.student)),
+                    borderRadius: BorderRadius.circular(24),
                     child: Container(
-                      width: 16,
-                      height: 16,
-                      alignment: Alignment.center,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFDC2626),
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
                         shape: BoxShape.circle,
                       ),
-                      child: const Text(
-                        '2',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
+                      child: const Icon(
+                        Icons.notifications_none,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      top: -2,
+                      right: -2,
+                      child: Container(
+                        width: 16,
+                        height: 16,
+                        alignment: Alignment.center,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFDC2626),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          unreadCount > 9 ? '9+' : unreadCount.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ],
@@ -507,50 +543,55 @@ class _EventRow extends StatelessWidget {
 class _NotificationRow extends StatelessWidget {
   final StudentNotification notif;
   final AppColors c;
-  const _NotificationRow({required this.notif, required this.c});
+  final VoidCallback onTap;
+  const _NotificationRow({required this.notif, required this.c, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return Opacity(
       opacity: notif.read ? 0.6 : 1,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: c.card,
-          border: Border.all(color: c.border),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(notif.emoji, style: const TextStyle(fontSize: 20)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(notif.text, style: AppTextStyles.bodySm(c.foreground)),
-                  const SizedBox(height: 2),
-                  Text(
-                    notif.time,
-                    style: AppTextStyles.bodyXs(c.mutedForeground),
-                  ),
-                ],
-              ),
-            ),
-            if (!notif.read)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: c.primary,
-                    shape: BoxShape.circle,
-                  ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: c.card,
+            border: Border.all(color: c.border),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(notif.emoji, style: const TextStyle(fontSize: 20)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(notif.text, style: AppTextStyles.bodySm(c.foreground)),
+                    const SizedBox(height: 2),
+                    Text(
+                      notif.time,
+                      style: AppTextStyles.bodyXs(c.mutedForeground),
+                    ),
+                  ],
                 ),
               ),
-          ],
+              if (!notif.read)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: c.primary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

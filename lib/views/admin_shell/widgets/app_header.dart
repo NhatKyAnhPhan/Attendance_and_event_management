@@ -1,21 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import '../../../controllers/notification_controller.dart';
+import '../../../core/constants/role.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 
 class AppHeader extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final List<String>? breadcrumb;
+  final Role role;
   final bool isDarkMode;
   final VoidCallback onToggleDark;
   final VoidCallback? onMenuTap; // hiện nút menu khi màn hẹp (mở Drawer)
+  final VoidCallback? onNotificationsTap;
 
   const AppHeader({
     super.key,
     required this.title,
     this.breadcrumb,
+    required this.role,
     required this.isDarkMode,
     required this.onToggleDark,
     this.onMenuTap,
+    this.onNotificationsTap,
   });
 
   @override
@@ -24,6 +31,8 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(isDarkMode);
+    final notifications = Get.find<NotificationController>();
+    final unread = notifications.unreadCount(role);
 
     return Container(
       height: 64,
@@ -53,13 +62,23 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
             children: [
               IconButton(
                 icon: Icon(Icons.notifications_outlined, color: c.mutedForeground),
-                onPressed: () {},
+                onPressed: onNotificationsTap,
               ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(width: 8, height: 8, decoration: BoxDecoration(color: c.danger, shape: BoxShape.circle)),
-              ),
+              if (unread > 0)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(color: c.danger, shape: BoxShape.circle),
+                    child: Text(
+                      unread > 9 ? '9+' : unread.toString(),
+                      style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(width: 8),
