@@ -49,8 +49,19 @@ class ApiClient {
     return _request(() => _dio.post<Map<String, dynamic>>(path, data: data));
   }
 
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Map<String, dynamic>? data,
+  }) async {
+    return _request(() => _dio.put<Map<String, dynamic>>(path, data: data));
+  }
+
   Future<Map<String, dynamic>> get(String path) async {
     return _request(() => _dio.get<Map<String, dynamic>>(path));
+  }
+
+  Future<Map<String, dynamic>> delete(String path) async {
+    return _request(() => _dio.delete<Map<String, dynamic>>(path));
   }
 
   Future<Map<String, dynamic>> _request(

@@ -35,7 +35,10 @@ extension RoleX on Role {
     return switch (normalized) {
       'admin' || 'administrator' || 'quản trị viên' => Role.admin,
       'lecturer' || 'teacher' || 'giảng viên' => Role.lecturer,
-      'organizer' || 'event_organizer' || 'ban tổ chức' => Role.organizer,
+      'organizer' ||
+      'event_organizer' ||
+      'ban tổ chức' ||
+      'nhân viên' => Role.organizer,
       'student' || 'sinh viên' => Role.student,
       _ => Role.student,
     };

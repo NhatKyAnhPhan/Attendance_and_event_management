@@ -1,7 +1,6 @@
 import 'package:get/get.dart';
 import 'app_routes.dart';
 import '../../views/splash/splash_page.dart';
-import '../../views/shared/placeholder_page.dart';
 import '../../views/auth/auth_page.dart';
 import '../../views/student/student_home_page.dart';
 import '../../views/admin_shell/admin_shell_page.dart';
@@ -13,17 +12,8 @@ class AppPages {
 
   static final pages = [
     GetPage(name: AppRoutes.splash, page: () => const SplashPage()),
-    GetPage(
-      name: AppRoutes.login,
-      page: () => const AuthPage(),
-    ),
-    GetPage(
-      name: AppRoutes.studentHome,
-      page: () => const StudentHomePage(),
-    ),
-    GetPage(
-      name: AppRoutes.adminShell,
-      page: () => const AdminShellPage(),
-    ),
+    GetPage(name: AppRoutes.login, page: () => const AuthPage()),
+    GetPage(name: AppRoutes.studentHome, page: () => const StudentHomePage()),
+    GetPage(name: AppRoutes.adminShell, page: () => const AdminShellPage()),
   ];
 }

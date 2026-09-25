@@ -68,10 +68,12 @@ class AdminDataPage extends StatelessWidget {
   }
 
   List<String> get columnKeys {
-    if (endpoint.endsWith('/users'))
+    if (endpoint.endsWith('/users')) {
       return const ['id', 'name', 'email', 'role', 'status'];
-    if (endpoint.endsWith('/classes'))
+    }
+    if (endpoint.endsWith('/classes')) {
       return const ['id', 'name', 'lecturerName', 'semester', 'studentCount'];
+    }
     return const ['id', 'name', 'location', 'startTime', 'registeredCount'];
   }
 }

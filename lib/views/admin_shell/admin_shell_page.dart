@@ -6,6 +6,7 @@ import '../../controllers/theme_controller.dart';
 import '../../core/constants/admin_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../dashboard/dashboard_page.dart';
+import '../events/organizer_events_page.dart';
 import '../shared/placeholder_page.dart';
 import '../shared/admin_data_page.dart';
 import 'widgets/app_header.dart';
@@ -52,11 +53,7 @@ class _AdminShellPageState extends State<AdminShellPage> {
           ],
         );
       case AdminPage.events:
-        return const AdminDataPage(
-          title: 'Quản lý sự kiện',
-          endpoint: '/api/admin/events',
-          columns: ['Mã', 'Tên sự kiện', 'Địa điểm', 'Thời gian', 'Số đăng ký'],
-        );
+        return const OrganizerEventsPage();
       default:
         return PlaceholderPage(title: _activePage.title);
     }

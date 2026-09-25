@@ -255,6 +255,128 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
   }
 });
 
+app.get('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên'), async (_request, response) => {
+  try {
+    const [rows] = await pool.query(
+            `SELECT sk.\`Mã sự kiện\` AS id, sk.\`Tên sự kiện\` AS name,
+              sk.\`Mã đơn vị\` AS organizerId,
+              sk.\`Địa điểm\` AS location, sk.\`Thời gian bắt đầu\` AS startTime,
+              sk.\`Thời gian kết thúc\` AS endTime,
+              sk.\`Trạng thái sự kiện\` AS status,
+              COALESCE(sk.\`Số lượng tối đa\`, 0) AS capacity,
+              COUNT(dk.\`Mã sinh viên\`) AS registeredCount
+       FROM \`Sự kiện\` sk
+       LEFT JOIN \`Đăng ký sự kiện\` dk ON dk.\`Mã sự kiện\` = sk.\`Mã sự kiện\`
+      GROUP BY sk.\`Mã sự kiện\`, sk.\`Tên sự kiện\`, sk.\`Mã đơn vị\`, sk.\`Địa điểm\`,
+                sk.\`Thời gian bắt đầu\`, sk.\`Thời gian kết thúc\`,
+                sk.\`Trạng thái sự kiện\`, sk.\`Số lượng tối đa\`
+       ORDER BY sk.\`Thời gian bắt đầu\``,
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Organizer events error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải sự kiện.' });
+  }
+});
+
+app.get('/api/organizer/units', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên'), async (_request, response) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT \`Mã đơn vị\` AS id, \`Tên đơn vị\` AS name
+       FROM \`Đơn vị\` ORDER BY \`Tên đơn vị\``,
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Organizer units error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải đơn vị tổ chức.' });
+  }
+});
+
+app.post('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên'), async (request, response) => {
+  const { id, name, organizerId, startTime, endTime, location, capacity } = request.body || {};
+  const parsedCapacity = Number(capacity);
+  const parsedStart = new Date(startTime);
+  const parsedEnd = new Date(endTime);
+
+  if (!id || !name || !organizerId || !location || !Number.isInteger(parsedCapacity)
+      || parsedCapacity <= 0 || Number.isNaN(parsedStart.valueOf())
+      || Number.isNaN(parsedEnd.valueOf()) || parsedEnd <= parsedStart) {
+    return response.status(400).json({ message: 'Thông tin sự kiện không hợp lệ.' });
+  }
+
+  try {
+    await pool.execute(
+      `INSERT INTO \`Sự kiện\`
+       (\`Mã sự kiện\`, \`Tên sự kiện\`, \`Mã đơn vị\`, \`Thời gian bắt đầu\`,
+        \`Thời gian kết thúc\`, \`Địa điểm\`, \`Số lượng tối đa\`, \`Trạng thái sự kiện\`)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra')`,
+      [id.trim(), name.trim(), organizerId.trim(), parsedStart, parsedEnd, location.trim(), parsedCapacity],
+    );
+    return response.status(201).json({ message: 'Tạo sự kiện thành công.' });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return response.status(409).json({ message: 'Mã sự kiện đã tồn tại.' });
+    }
+    if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+      return response.status(400).json({ message: 'Đơn vị tổ chức không tồn tại.' });
+    }
+    console.error('Create organizer event error:', error.message);
+    return response.status(500).json({ message: 'Không thể tạo sự kiện.' });
+  }
+});
+
+app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên'), async (request, response) => {
+  const { name, organizerId, startTime, endTime, location, capacity } = request.body || {};
+  const parsedCapacity = Number(capacity);
+  const parsedStart = new Date(startTime);
+  const parsedEnd = new Date(endTime);
+
+  if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
+      || parsedCapacity <= 0 || Number.isNaN(parsedStart.valueOf())
+      || Number.isNaN(parsedEnd.valueOf()) || parsedEnd <= parsedStart) {
+    return response.status(400).json({ message: 'Thông tin sự kiện không hợp lệ.' });
+  }
+
+  try {
+    const [result] = await pool.execute(
+      `UPDATE \`Sự kiện\`
+       SET \`Tên sự kiện\` = ?, \`Mã đơn vị\` = ?,
+           \`Thời gian bắt đầu\` = ?, \`Thời gian kết thúc\` = ?,
+           \`Địa điểm\` = ?, \`Số lượng tối đa\` = ?
+       WHERE \`Mã sự kiện\` = ?`,
+      [name.trim(), organizerId.trim(), parsedStart, parsedEnd, location.trim(), parsedCapacity, request.params.eventId],
+    );
+    if (result.affectedRows === 0) {
+      return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    return response.json({ message: 'Cập nhật sự kiện thành công.' });
+  } catch (error) {
+    if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+      return response.status(400).json({ message: 'Đơn vị tổ chức không tồn tại.' });
+    }
+    console.error('Update organizer event error:', error.message);
+    return response.status(500).json({ message: 'Không thể cập nhật sự kiện.' });
+  }
+});
+
+app.delete('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên'), async (request, response) => {
+  try {
+    const [result] = await pool.execute(
+      'DELETE FROM `Sự kiện` WHERE `Mã sự kiện` = ?',
+      [request.params.eventId],
+    );
+    if (result.affectedRows === 0) {
+      return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    return response.json({ message: 'Xóa sự kiện thành công.' });
+  } catch (error) {
+    console.error('Delete organizer event error:', error.message);
+    return response.status(409).json({
+      message: 'Không thể xóa sự kiện đã có dữ liệu đăng ký hoặc điểm danh.',
+    });
+  }
+});
+
 app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admin'), async (_request, response) => {
   try {
     const [rows] = await pool.query(
@@ -291,7 +413,7 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
   }
 });
 
-app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức'), async (_request, response) => {
+app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên'), async (_request, response) => {
   try {
     const [rows] = await pool.query(
       `SELECT sk.\`Mã sự kiện\` AS id, sk.\`Tên sự kiện\` AS name,
