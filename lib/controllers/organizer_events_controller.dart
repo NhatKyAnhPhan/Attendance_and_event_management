@@ -11,7 +11,9 @@ class OrganizerEventsController extends GetxController {
   final RxList<OrganizerEventSummary> items = <OrganizerEventSummary>[].obs;
   final RxList<OrganizerUnit> units = <OrganizerUnit>[].obs;
   final RxBool loading = false.obs;
+  final RxBool unitsLoading = false.obs;
   final RxString error = ''.obs;
+  final RxString unitsError = ''.obs;
 
   @override
   void onInit() {
@@ -21,10 +23,14 @@ class OrganizerEventsController extends GetxController {
   }
 
   Future<void> loadUnits() async {
+    unitsLoading.value = true;
+    unitsError.value = '';
     try {
       units.assignAll(await _repository.getOrganizerUnits());
-    } catch (_) {
-      units.clear();
+    } catch (exception) {
+      unitsError.value = exception.toString();
+    } finally {
+      unitsLoading.value = false;
     }
   }
 

@@ -34,7 +34,20 @@ class OrganizerEventsPage extends StatelessWidget {
                   ),
                 ),
                 FilledButton.icon(
-                  onPressed: () => _showEventDialog(context, controller),
+                  onPressed: () async {
+                    await controller.loadUnits();
+                    if (!context.mounted) return;
+                    if (controller.unitsError.value.isNotEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            '${controller.unitsError.value} Bạn vẫn có thể nhập mã thủ công.',
+                          ),
+                        ),
+                      );
+                    }
+                    await _showEventDialog(context, controller);
+                  },
                   icon: const Icon(Icons.add),
                   label: const Text('Tạo sự kiện'),
                 ),
@@ -108,6 +121,9 @@ class OrganizerEventsPage extends StatelessWidget {
     final capacityController = TextEditingController(
       text: event?.capacity.toString() ?? '100',
     );
+    final organizerController = TextEditingController(
+      text: event?.organizerId ?? '',
+    );
     String? selectedOrganizerId = event?.organizerId;
     DateTime startTime =
         event?.startTime ?? DateTime.now().add(const Duration(days: 1));
@@ -132,6 +148,7 @@ class OrganizerEventsPage extends StatelessWidget {
                     _unitField(
                       controller.units,
                       selectedOrganizerId,
+                      organizerController,
                       (value) => setState(() => selectedOrganizerId = value),
                     ),
                     _field(locationController, 'Địa điểm'),
@@ -237,6 +254,7 @@ class OrganizerEventsPage extends StatelessWidget {
     nameController.dispose();
     locationController.dispose();
     capacityController.dispose();
+    organizerController.dispose();
   }
 
   static Widget _field(
@@ -271,27 +289,80 @@ class OrganizerEventsPage extends StatelessWidget {
   static Widget _unitField(
     List<OrganizerUnit> units,
     String? value,
+    TextEditingController controller,
     ValueChanged<String?> onChanged,
   ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: DropdownButtonFormField<String>(
-        initialValue: units.any((unit) => unit.id == value) ? value : null,
-        decoration: const InputDecoration(
-          labelText: 'Đơn vị tổ chức',
-          border: OutlineInputBorder(),
-        ),
-        items: units
-            .map(
-              (unit) => DropdownMenuItem<String>(
-                value: unit.id,
-                child: Text('${unit.id} - ${unit.name}'),
+      child: FormField<String>(
+        initialValue: value ?? '',
+        validator: (selected) => selected == null || selected.trim().isEmpty
+            ? 'Vui lòng nhập mã đơn vị tổ chức'
+            : null,
+        builder: (field) => Autocomplete<OrganizerUnit>(
+          displayStringForOption: (unit) => unit.id,
+          initialValue: TextEditingValue(text: value ?? ''),
+          optionsBuilder: (textEditingValue) {
+            final query = textEditingValue.text.trim().toLowerCase();
+            if (query.isEmpty) return units;
+            return units.where(
+              (unit) =>
+                  unit.id.toLowerCase().contains(query) ||
+                  unit.name.toLowerCase().contains(query),
+            );
+          },
+          onSelected: (unit) {
+            controller.text = unit.id;
+            field.didChange(unit.id);
+            onChanged(unit.id);
+          },
+          optionsViewBuilder: (context, onSelected, options) => Align(
+            alignment: Alignment.topLeft,
+            child: Material(
+              elevation: 4,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 220),
+                child: ListView.builder(
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  itemCount: options.length,
+                  itemBuilder: (context, index) {
+                    final unit = options.elementAt(index);
+                    return ListTile(
+                      title: Text(unit.id),
+                      subtitle: Text(unit.name),
+                      onTap: () => onSelected(unit),
+                    );
+                  },
+                ),
               ),
-            )
-            .toList(),
-        onChanged: onChanged,
-        validator: (selected) =>
-            selected == null ? 'Vui lòng chọn đơn vị tổ chức' : null,
+            ),
+          ),
+          fieldViewBuilder: (context, textController, focusNode, onSubmitted) {
+            controller.value = textController.value;
+            return TextFormField(
+              controller: textController,
+              focusNode: focusNode,
+              onChanged: (text) {
+                controller.value = textController.value;
+                field.didChange(text);
+                onChanged(text.trim().isEmpty ? null : text.trim());
+              },
+              onFieldSubmitted: (_) => onSubmitted(),
+              decoration: InputDecoration(
+                labelText: 'Mã đơn vị tổ chức',
+                hintText: 'Nhập mã, ví dụ: DVK',
+                border: const OutlineInputBorder(),
+                errorText: field.errorText,
+                suffixIcon: IconButton(
+                  tooltip: 'Xem danh sách đơn vị',
+                  icon: const Icon(Icons.arrow_drop_down),
+                  onPressed: focusNode.requestFocus,
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
