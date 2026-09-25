@@ -42,11 +42,19 @@ class ApiClient {
     }
   }
 
+  // Các phương thức HTTP dùng chung, tự gắn token và chuẩn hóa lỗi ở _request.
   Future<Map<String, dynamic>> post(
     String path, {
     Map<String, dynamic>? data,
   }) async {
     return _request(() => _dio.post<Map<String, dynamic>>(path, data: data));
+  }
+
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Map<String, dynamic>? data,
+  }) async {
+    return _request(() => _dio.put<Map<String, dynamic>>(path, data: data));
   }
 
   Future<Map<String, dynamic>> get(String path) async {
@@ -55,6 +63,10 @@ class ApiClient {
 
   Future<Map<String, dynamic>> postMultipart(String path, FormData data) async {
     return _request(() => _dio.post<Map<String, dynamic>>(path, data: data));
+  }
+
+  Future<Map<String, dynamic>> delete(String path) async {
+    return _request(() => _dio.delete<Map<String, dynamic>>(path));
   }
 
   Future<Map<String, dynamic>> _request(

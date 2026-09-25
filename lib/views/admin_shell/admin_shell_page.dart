@@ -7,13 +7,11 @@ import '../../core/constants/admin_page.dart';
 import '../../core/theme/app_colors.dart';
 import '../dashboard/dashboard_page.dart';
 import '../attendance/attendance_page.dart';
-import '../attendance/qr_scan_page.dart';
 import '../classes/classes_page.dart';
-import '../events/events_page.dart';
 import '../notifications/notifications_page.dart';
 import '../reports/reports_page.dart';
+import '../events/organizer_events_page.dart';
 import '../shared/placeholder_page.dart';
-import '../shared/admin_data_page.dart';
 import '../users/users_page.dart';
 import 'widgets/app_header.dart';
 import 'widgets/app_sidebar.dart';
@@ -37,6 +35,7 @@ class _AdminShellPageState extends State<AdminShellPage> {
   }
 
   Widget _buildBody(bool isDark) {
+    // Chọn màn hình theo mục đang hoạt động trong thanh điều hướng quản trị.
     switch (_activePage) {
       case AdminPage.dashboard:
         return DashboardPage(role: Get.find<AuthController>().role.value);
@@ -47,7 +46,7 @@ class _AdminShellPageState extends State<AdminShellPage> {
       case AdminPage.classes:
         return const ClassesPage();
       case AdminPage.events:
-        return const EventsPage();
+        return const OrganizerEventsPage();
       case AdminPage.attendance:
         return const AttendancePage();
       case AdminPage.reports:
@@ -60,8 +59,6 @@ class _AdminShellPageState extends State<AdminShellPage> {
         return NotificationsPage(role: Get.find<AuthController>().role.value);
       case AdminPage.settings:
         return const PlaceholderPage(title: 'Cài đặt');
-      default:
-        return PlaceholderPage(title: _activePage.title);
     }
   }
 

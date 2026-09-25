@@ -34,6 +34,8 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   bool _faceBusy = false;
   bool _faceDetected = false;
   bool _checkInBusy = false;
+  final Stopwatch _faceFrameClock = Stopwatch()..start();
+  int _lastFaceFrameMs = 0;
   String? _errorMessage;
   late final AnimationController _lineCtrl;
 
@@ -98,7 +100,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       );
       final controller = CameraController(
         camera,
-        ResolutionPreset.medium,
+        ResolutionPreset.low,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.nv21,
       );
@@ -127,11 +129,22 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
 
   Future<void> _processFaceImage(CameraImage image) async {
     if (_faceBusy || _faceDetector == null || _cameraController == null) return;
+    // Giới hạn tần suất nhận diện để giảm tải CPU và cấp phát bộ nhớ mỗi frame.
+    final now = _faceFrameClock.elapsedMilliseconds;
+    if (now - _lastFaceFrameMs < 250) return;
+    _lastFaceFrameMs = now;
     _faceBusy = true;
     try {
-      final bytes = Uint8List.fromList(
-        image.planes.expand((plane) => plane.bytes).toList(),
+      final byteCount = image.planes.fold<int>(
+        0,
+        (total, plane) => total + plane.bytes.length,
       );
+      final bytes = Uint8List(byteCount);
+      var offset = 0;
+      for (final plane in image.planes) {
+        bytes.setRange(offset, offset + plane.bytes.length, plane.bytes);
+        offset += plane.bytes.length;
+      }
       final inputImage = InputImage.fromBytes(
         bytes: bytes,
         metadata: InputImageMetadata(
