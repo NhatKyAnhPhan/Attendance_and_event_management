@@ -20,6 +20,10 @@ class EventRepository {
         .toList();
   }
 
+  Future<Map<String, dynamic>> getEventDetails(String eventId) async {
+    return _client.get('/api/events/$eventId');
+  }
+
   Future<void> register(String eventId) async {
     await _client.post('/api/events/$eventId/register');
   }

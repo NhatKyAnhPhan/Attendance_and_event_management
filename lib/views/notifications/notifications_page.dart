@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -65,19 +67,26 @@ class _NotificationsPageState extends State<NotificationsPage> {
   String _filter = 'all';
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(Get.find<NotificationController>().refreshActiveAttendance());
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final c = AppColors.of(isDark);
     final controller = Get.find<NotificationController>();
-    final items = controller.notificationsFor(widget.role);
 
-    final filtered = switch (_filter) {
-      'unread' => items.where((item) => !item.read).toList(),
-      'important' => items.where((item) => item.priority == NotificationPriority.high).toList(),
-      _ => items,
-    };
+    return Obx(() {
+      final items = controller.notificationsFor(widget.role);
+      final filtered = switch (_filter) {
+        'unread' => items.where((item) => !item.read).toList(),
+        'important' => items.where((item) => item.priority == NotificationPriority.high).toList(),
+        _ => items,
+      };
 
-    return Scaffold(
+      return Scaffold(
       backgroundColor: c.background,
       appBar: AppBar(
         backgroundColor: c.card,
@@ -142,7 +151,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       )
                     : ListView.separated(
                         itemCount: filtered.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
                         itemBuilder: (context, index) {
                           final item = filtered[index];
                           return _NotificationTile(
@@ -157,7 +166,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
           ),
         ),
       ),
-    );
+      );
+    });
   }
 }
 
@@ -228,7 +238,7 @@ class _NotificationTile extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
+                  color: color.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(item.icon, color: color),
@@ -261,7 +271,7 @@ class _NotificationTile extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                            color: color.withOpacity(0.12),
+                            color: color.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(

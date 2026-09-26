@@ -31,4 +31,8 @@ class EventsController extends GetxController {
     await _repository.register(eventId);
     await load();
   }
+
+  Future<Map<String, dynamic>> getDetails(String eventId) {
+    return _repository.getEventDetails(eventId);
+  }
 }

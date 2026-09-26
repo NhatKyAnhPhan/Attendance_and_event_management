@@ -22,3 +22,14 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+subprojects {
+    project.configurations.all {
+        resolutionStrategy {
+            eachDependency {
+                if (requested.group == "androidx.concurrent" && requested.name == "concurrent-futures") {
+                    useVersion("1.2.0")
+                }
+            }
+        }
+    }
+}

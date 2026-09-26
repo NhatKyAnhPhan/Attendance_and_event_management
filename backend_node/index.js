@@ -157,6 +157,67 @@ app.get('/api/me', requireAuth, async (request, response) => {
   }
 });
 
+/*
+/*
+app.get('/api/notifications', requireAuth, async (request, response) => {
+  if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
+    return response.json({ items: [] });
+  }
+
+  try {
+    const [result] = await pool.execute(
+      `SELECT DISTINCT bpd.[[0m[K`Mã buổi điểm danh[0m[K` AS sessionId,
+              b.[[0m[K`Mã lớp[0m[K` AS classId,
+              COALESCE(b.[[0m[K`Nội dung[0m[K`, '') AS content,
+              bpd.[[0m[K`Phương thức[0m[K` AS method,
+              bpd.[[0m[K`Thời gian mở[0m[K` AS createdAt,
+              bpd.[[0m[K`Thời gian đóng[0m[K` AS closesAt
+       FROM [[0m[K`buổi điểm danh[0m[K` bpd
+       INNER JOIN [[0m[K`buổi[0m[K` b ON b.[[0m[K`Mã buổi[0m[K` = bpd.[[0m[K`Mã buổi[0m[K`
+       INNER JOIN [[0m[K`Thành viên lớp[0m[K` tvl ON tvl.[[0m[K`Mã lớp[0m[K` = b.[[0m[K`Mã lớp[0m[K`
+       WHERE tvl.[[0m[K`Mã sinh viên[0m[K` = ?
+         AND bpd.[[0m[K`Trạng thái điểm danh[0m[K` = 'Đang mở'
+         AND bpd.[[0m[K`Thời gian đóng[0m[K` > NOW()
+       ORDER BY bpd.[[0m[K`Thời gian mở[0m[K` DESC
+       LIMIT 50`,
+      [request.auth.sub],
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Notifications error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải thông báo.' });
+  }
+});
+
+*/
+app.get('/api/notifications', requireAuth, async (request, response) => {
+  if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
+    return response.json({ items: [] });
+  }
+
+  try {
+    const [rows] = await pool.execute(
+      [
+        "SELECT DISTINCT bpd.`Mã buổi điểm danh` AS sessionId,",
+        "b.`Mã lớp` AS classId, COALESCE(b.`Nội dung`, '') AS content,",
+        "bpd.`Phương thức` AS method, bpd.`Thời gian mở` AS createdAt,",
+        "bpd.`Thời gian đóng` AS closesAt",
+        "FROM `Buổi điểm danh` bpd",
+        "INNER JOIN `Buổi` b ON b.`Mã buổi` = bpd.`Mã buổi`",
+        "INNER JOIN `Thành viên lớp` tvl ON tvl.`Mã lớp` = b.`Mã lớp`",
+        "WHERE tvl.`Mã sinh viên` = ?",
+        "AND bpd.`Trạng thái điểm danh` = 'Đang mở'",
+        "AND bpd.`Thời gian đóng` > NOW()",
+        "ORDER BY bpd.`Thời gian mở` DESC LIMIT 50",
+      ].join(' '),
+      [request.auth.sub],
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Notifications error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải thông báo.' });
+  }
+});
 app.get('/api/classes', requireAuth, async (request, response) => {
   try {
     const [rows] = await pool.execute(
@@ -213,6 +274,57 @@ app.get('/api/events', requireAuth, async (request, response) => {
   } catch (error) {
     console.error('Events error:', error.message);
     return response.status(500).json({ message: 'Không thể tải danh sách sự kiện.' });
+  }
+});
+
+app.get('/api/events/:eventId', requireAuth, async (request, response) => {
+  try {
+    const [[event]] = await pool.execute(
+      [
+        "SELECT sk.`Mã sự kiện` AS id, sk.`Tên sự kiện` AS name,",
+        "sk.`Mô tả` AS description, COALESCE(sk.`Địa điểm`, '') AS location,",
+        "sk.`Thời gian bắt đầu` AS startTime, sk.`Thời gian kết thúc` AS endTime,",
+        "COALESCE(sk.`Số lượng tối đa`, 0) AS capacity,",
+        "dv.`Tên đơn vị` AS organizerName,",
+        "(SELECT COUNT(*) FROM `Đăng ký sự kiện` allRegs",
+        "WHERE allRegs.`Mã sự kiện` = sk.`Mã sự kiện`) AS registeredCount,",
+        "(SELECT COUNT(*) FROM `Đăng ký sự kiện` mine",
+        "WHERE mine.`Mã sự kiện` = sk.`Mã sự kiện` AND mine.`Mã sinh viên` = ?) AS isRegistered",
+        "FROM `Sự kiện` sk INNER JOIN `Đơn vị` dv ON dv.`Mã đơn vị` = sk.`Mã đơn vị`",
+        "WHERE sk.`Mã sự kiện` = ? LIMIT 1",
+      ].join(' '),
+      [request.auth.sub, request.params.eventId],
+    );
+    if (!event) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+
+    let benefits = [];
+    try {
+      [benefits] = await pool.execute(
+      [
+        "SELECT `Loại quyền lợi` AS type, `Số điểm` AS points, `Nội dung` AS content",
+        "FROM `Quyền lợi` WHERE `Mã sự kiện` = ? ORDER BY `Mã quyền lợi`",
+      ].join(' '),
+      [event.id],
+      );
+    } catch (error) {
+      if (error.code !== 'ER_NO_SUCH_TABLE') throw error;
+    }
+    let rules = [];
+    try {
+      [rules] = await pool.execute(
+      [
+        "SELECT `Thứ tự` AS sortOrder, `Trạng thái nội quy` AS text",
+        "FROM `Nội quy` WHERE `Mã sự kiện` = ? ORDER BY `Thứ tự`",
+      ].join(' '),
+      [event.id],
+      );
+    } catch (error) {
+      if (error.code !== 'ER_NO_SUCH_TABLE') throw error;
+    }
+    return response.json({ ...event, benefits, rules });
+  } catch (error) {
+    console.error('Event details error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải chi tiết sự kiện.' });
   }
 });
 

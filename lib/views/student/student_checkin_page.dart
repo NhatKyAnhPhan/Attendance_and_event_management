@@ -69,9 +69,21 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     }
   }
 
-  void _reset() {
-    _qrController.stop();
-    _cameraController?.stopImageStream();
+  Future<void> _stopCameras() async {
+    await _qrController.stop();
+    final camera = _cameraController;
+    _cameraController = null;
+    if (camera != null) {
+      if (camera.value.isStreamingImages) await camera.stopImageStream();
+      await camera.dispose();
+    }
+    await _faceDetector?.close();
+    _faceDetector = null;
+  }
+
+  Future<void> _reset() async {
+    await _stopCameras();
+    if (!mounted) return;
     setState(() {
       _state = _ScanState.idle;
       _errorMessage = null;
@@ -80,9 +92,9 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     });
   }
 
-  void _setMethod(_ScanMethod method) {
-    _qrController.stop();
-    _cameraController?.stopImageStream();
+  Future<void> _setMethod(_ScanMethod method) async {
+    await _stopCameras();
+    if (!mounted) return;
     setState(() {
       _method = method;
       _state = _ScanState.idle;
@@ -251,18 +263,39 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       child: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Text(
-                _method == _ScanMethod.qr
-                    ? 'Điểm danh QR'
-                    : 'Nhận diện khuôn mặt',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontFamily: 'Nunito',
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
+            SizedBox(
+              height: 56,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 48,
+                    child: _state != _ScanState.idle
+                        ? IconButton(
+                            tooltip: 'Thoát quét',
+                            onPressed: _reset,
+                            icon: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                            ),
+                          )
+                        : null,
+                  ),
+                  Expanded(
+                    child: Text(
+                      _method == _ScanMethod.qr
+                          ? 'Điểm danh QR'
+                          : 'Nhận diện khuôn mặt',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontFamily: 'Nunito',
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
                 ),
+                  const SizedBox(width: 48),
+                ],
               ),
             ),
             if (_state == _ScanState.idle)

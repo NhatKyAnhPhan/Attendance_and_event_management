@@ -34,10 +34,10 @@ dependencies:
   get: ^4.6.6                 # state management + routing (giống app Flutter movie bạn từng làm — Nhóm 4)
   dio: ^5.4.0                 # gọi API
   fl_chart: ^0.68.0           # thay thế recharts (bar/line/pie)
-  mobile_scanner: ^5.2.3      # quét QR điểm danh
+  mobile_scanner: ^6.0.2      # quét QR điểm danh
   qr_flutter: ^4.1.0          # tạo mã QR cho phiên điểm danh
   geolocator: ^13.0.2         # lấy vị trí để kiểm tra khoảng cách điểm danh
-  camera: ^0.11.0             # camera cho nhận diện khuôn mặt
+  camera: ^0.11.0+2             # camera cho nhận diện khuôn mặt
   google_mlkit_face_detection: ^0.12.0 # phát hiện khuôn mặt trên thiết bị
   google_fonts: ^6.2.1        # Nunito + Inter + JetBrains Mono (khớp index.css)
   intl: ^0.19.0               # định dạng ngày tiếng Việt

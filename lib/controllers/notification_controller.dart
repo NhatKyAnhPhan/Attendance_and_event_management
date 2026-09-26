@@ -1,31 +1,91 @@
+import 'dart:async';
+
 import 'package:get/get.dart';
 
 import '../core/constants/role.dart';
+import '../data/api/api_client.dart';
 import '../data/models/notification_model.dart';
 
 class NotificationController extends GetxController {
   final RxList<AppNotificationItem> items = <AppNotificationItem>[].obs;
+  final ApiClient _apiClient = ApiClient();
+  Timer? _refreshTimer;
+  bool _refreshingAttendance = false;
 
   @override
   void onInit() {
     super.onInit();
     _seedNotifications();
+    unawaited(refreshActiveAttendance());
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => refreshActiveAttendance(),
+    );
+  }
+
+  @override
+  void onClose() {
+    _refreshTimer?.cancel();
+    super.onClose();
+  }
+
+  Future<void> refreshActiveAttendance() async {
+    if (_refreshingAttendance) return;
+    _refreshingAttendance = true;
+    try {
+      final response = await _apiClient.get('/api/notifications');
+      final responseItems = response['items'];
+      if (responseItems is! List) return;
+
+      final previousAttendance = {
+        for (final item in items.where(
+          (item) => item.type == NotificationType.attendance,
+        ))
+          item.id: item,
+      };
+      final activeAttendance = responseItems.whereType<Map>().map((raw) {
+        final item = Map<String, dynamic>.from(raw);
+        final sessionId = item['sessionId']?.toString() ?? '';
+        final id = 'attendance-$sessionId';
+        final classId = item['classId']?.toString() ?? '';
+        final content = item['content']?.toString() ?? '';
+        final method = item['method']?.toString() ?? 'QR';
+        final closesAt = DateTime.tryParse(item['closesAt']?.toString() ?? '')
+            ?.toLocal();
+        final closingTime = closesAt == null
+            ? ''
+            : ' đến ${closesAt.hour.toString().padLeft(2, '0')}:${closesAt.minute.toString().padLeft(2, '0')}';
+
+        return AppNotificationItem(
+          id: id,
+          recipients: const [Role.student],
+          title: 'Điểm danh lớp $classId đã mở',
+          message: '${content.isEmpty ? 'Phiên điểm danh' : content} đang mở bằng $method$closingTime.',
+          type: NotificationType.attendance,
+          priority: NotificationPriority.high,
+          createdAt:
+              DateTime.tryParse(item['createdAt']?.toString() ?? '') ??
+              DateTime.now(),
+          read: previousAttendance[id]?.read ?? false,
+          actionLabel: 'Điểm danh',
+          route: '/student',
+        );
+      }).toList();
+
+      items.assignAll([
+        ...items.where((item) => item.type != NotificationType.attendance),
+        ...activeAttendance,
+      ]);
+    } catch (_) {
+      // Keep the last known notifications while the API is unavailable.
+    } finally {
+      _refreshingAttendance = false;
+    }
   }
 
   void _seedNotifications() {
     final now = DateTime.now();
     items.assignAll([
-      AppNotificationItem(
-        id: 'n1',
-        recipients: const [Role.student],
-        title: 'Điểm danh mở',
-        message: 'Lớp CS101 đã mở điểm danh. Vui lòng xác nhận trong 15 phút tới.',
-        type: NotificationType.attendance,
-        priority: NotificationPriority.high,
-        createdAt: now.subtract(const Duration(minutes: 12)),
-        actionLabel: 'Điểm danh',
-        route: '/student',
-      ),
       AppNotificationItem(
         id: 'n2',
         recipients: const [Role.student],
