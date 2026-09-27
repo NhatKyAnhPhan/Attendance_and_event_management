@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:get/get.dart';
 
 import '../data/mock/student_mock_data.dart';
@@ -8,11 +10,23 @@ class EventsController extends GetxController {
   final RxList<StudentEventSummary> items = <StudentEventSummary>[].obs;
   final RxBool loading = false.obs;
   final RxString error = ''.obs;
+  final RxInt statusRefreshTick = 0.obs;
+  Timer? _statusRefreshTimer;
 
   @override
   void onInit() {
     super.onInit();
     load();
+    _statusRefreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => statusRefreshTick.value++,
+    );
+  }
+
+  @override
+  void onClose() {
+    _statusRefreshTimer?.cancel();
+    super.onClose();
   }
 
   // Tải danh sách sự kiện và phản ánh kết quả vào state của màn hình.
@@ -28,9 +42,18 @@ class EventsController extends GetxController {
     }
   }
 
-  // Đăng ký sự kiện rồi tải lại danh sách để cập nhật trạng thái đăng ký.
-  Future<void> register(String eventId) async {
-    await _repository.register(eventId);
+  // Đăng ký sự kiện rồi tải lại danh sách để cập nhật trạng thái.
+  Future<void> register(
+    String eventId, {
+    bool allowClassConflict = false,
+  }) async {
+    await _repository.register(eventId, allowClassConflict: allowClassConflict);
+    await load();
+  }
+
+  // Hủy đăng ký hợp lệ rồi tải lại danh sách sự kiện.
+  Future<void> cancelRegistration(String eventId) async {
+    await _repository.cancelRegistration(eventId);
     await load();
   }
 

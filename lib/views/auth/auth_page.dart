@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../controllers/auth_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../widgets/huit_logo_mark.dart';
 
 /// Tương ứng `type AuthStep` trong AuthPage.tsx
 enum _AuthStep { login, forgot, otp, newPassword, success }
@@ -521,10 +522,7 @@ class _LeftPanel extends StatelessWidget {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
-                    'assets/LogoHUIT.jpg',
-                    fit: BoxFit.contain,
-                  ),
+                  child: const HuitLogoMark(),
                 ),
               ),
               const SizedBox(width: 12),
@@ -541,7 +539,7 @@ class _LeftPanel extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Khoa Công nghệ Thông tin',
+                    'hệ thống điểm danh và quản lý sự kiện',
                     style: TextStyle(color: Colors.white70, fontSize: 11),
                   ),
                 ],
@@ -561,7 +559,7 @@ class _LeftPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           const Text(
-            'Quản lý điểm danh lớp học và sự kiện tại Khoa Công nghệ Thông tin — Trường Đại học Công Thương TP.HCM.',
+            'Quản lý điểm danh lớp học và sự kiện tại trường Đại học Công Thương TP.HCM.',
             style: TextStyle(fontSize: 14, height: 1.7, color: Colors.white70),
           ),
           const Spacer(),
@@ -634,7 +632,7 @@ class _MobileLogo extends StatelessWidget {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: Image.asset('assets/LogoHUIT.jpg', fit: BoxFit.contain),
+              child: const HuitLogoMark(),
             ),
           ),
           const SizedBox(width: 8),

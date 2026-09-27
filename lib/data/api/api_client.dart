@@ -5,12 +5,14 @@ String _resolveBaseUrl(String? baseUrl) {
   final configured = (baseUrl ?? const String.fromEnvironment('API_BASE_URL'))
       .trim();
   if (configured.isNotEmpty) return configured;
-  return kIsWeb ? 'http://127.0.0.1:3000' : 'http://10.0.2.2:3000';
+  return kIsWeb ? 'http://127.0.0.1:3001' : 'http://10.0.2.2:3001';
 }
 
 class ApiException implements Exception {
   final String message;
-  const ApiException(this.message);
+  final int? statusCode;
+  final Map<String, dynamic>? data;
+  const ApiException(this.message, {this.statusCode, this.data});
 
   @override
   String toString() => message;
@@ -20,7 +22,7 @@ class ApiClient {
   ApiClient({String? baseUrl})
     : _dio = Dio(
         BaseOptions(
-          baseUrl: _resolveBaseUrl(baseUrl),
+          baseUrl: _resolveBaseUrl(baseUrl ?? _configuredBaseUrl),
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 15),
           sendTimeout: const Duration(seconds: 10),
@@ -30,6 +32,13 @@ class ApiClient {
 
   final Dio _dio;
   static String? _sharedToken;
+  static String? _configuredBaseUrl;
+
+  static String get baseUrl => _resolveBaseUrl(_configuredBaseUrl);
+
+  static void configureBaseUrl(String? baseUrl) {
+    _configuredBaseUrl = baseUrl?.trim();
+  }
 
   bool get isConfigured => _dio.options.baseUrl.isNotEmpty;
 
@@ -92,7 +101,13 @@ class ApiClient {
           : error.response == null
           ? 'Không thể kết nối tới máy chủ.'
           : 'Máy chủ trả về lỗi HTTP ${error.response?.statusCode}.';
-      throw ApiException(message);
+      throw ApiException(
+        message,
+        statusCode: error.response?.statusCode,
+        data: responseData is Map
+            ? Map<String, dynamic>.from(responseData)
+            : null,
+      );
     }
   }
 }

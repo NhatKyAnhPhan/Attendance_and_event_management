@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+
 import '../../../core/constants/admin_page.dart';
 import '../../../core/constants/role.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../widgets/huit_logo_mark.dart';
 
 class _NavItem {
   final IconData icon;
@@ -85,16 +87,21 @@ class AppSidebar extends StatelessWidget {
           // Logo
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.border))),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: c.border)),
+            ),
             child: Row(
               children: [
                 Container(
                   width: 36,
                   height: 36,
-                  decoration: BoxDecoration(color: c.primary, borderRadius: BorderRadius.circular(8)),
+                  decoration: BoxDecoration(
+                    color: c.primary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.asset('assets/LogoHUIT.jpg', fit: BoxFit.contain),
+                    child: const HuitLogoMark(),
                   ),
                 ),
                 if (!collapsed) ...[
@@ -103,8 +110,16 @@ class AppSidebar extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('HUIT', style: AppTextStyles.displayXs(c.primary).copyWith(fontSize: 13)),
-                        Text('Điểm danh thông minh', style: AppTextStyles.bodyXs(c.mutedForeground).copyWith(fontSize: 10)),
+                        Text(
+                          'HUIT',
+                          style: AppTextStyles.displayXs(c.primary)
+                              .copyWith(fontSize: 13),
+                        ),
+                        Text(
+                          'Điểm danh thông minh',
+                          style: AppTextStyles.bodyXs(c.mutedForeground)
+                              .copyWith(fontSize: 10),
+                        ),
                       ],
                     ),
                   ),
@@ -120,10 +135,19 @@ class AppSidebar extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(color: c.secondary, borderRadius: BorderRadius.circular(999)),
-                  child: Text(role.label,
-                      style: AppTextStyles.bodyXs(c.primary).copyWith(fontWeight: FontWeight.w700, fontSize: 12)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: c.secondary,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    role.label,
+                    style: AppTextStyles.bodyXs(c.primary)
+                        .copyWith(fontWeight: FontWeight.w700, fontSize: 12),
+                  ),
                 ),
               ),
             ),
@@ -143,17 +167,30 @@ class AppSidebar extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                       onTap: () => onNavigate(item.page),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 9,
+                        ),
                         child: Row(
                           children: [
-                            Icon(item.icon, size: 18, color: active ? c.primary : c.mutedForeground),
+                            Icon(
+                              item.icon,
+                              size: 18,
+                              color: active ? c.primary : c.mutedForeground,
+                            ),
                             if (!collapsed) ...[
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
                                   item.page.title,
-                                  style: AppTextStyles.bodySm(active ? c.primary : c.mutedForeground)
-                                      .copyWith(fontWeight: active ? FontWeight.w600 : FontWeight.w500),
+                                  style:
+                                      AppTextStyles.bodySm(
+                                        active ? c.primary : c.mutedForeground,
+                                      ).copyWith(
+                                        fontWeight: active
+                                            ? FontWeight.w600
+                                            : FontWeight.w500,
+                                      ),
                                 ),
                               ),
                             ],
@@ -170,28 +207,48 @@ class AppSidebar extends StatelessWidget {
           // Footer — user info + logout
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(border: Border(top: BorderSide(color: c.border))),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: c.border)),
+            ),
             child: Column(
               children: [
                 if (!collapsed)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     margin: const EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(color: c.muted, borderRadius: BorderRadius.circular(8)),
+                    decoration: BoxDecoration(
+                      color: c.muted,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                     child: Row(
                       children: [
                         Container(
                           width: 32,
                           height: 32,
                           alignment: Alignment.center,
-                          decoration: BoxDecoration(color: c.primary, shape: BoxShape.circle),
-                          child: Text(role.shortCode,
-                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                          decoration: BoxDecoration(
+                            color: c.primary,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            role.shortCode,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: Text(role.label,
-                              style: AppTextStyles.bodySm(c.foreground).copyWith(fontWeight: FontWeight.w600)),
+                          child: Text(
+                            role.label,
+                            style: AppTextStyles.bodySm(c.foreground)
+                                .copyWith(fontWeight: FontWeight.w600),
+                          ),
                         ),
                       ],
                     ),
@@ -208,7 +265,11 @@ class AppSidebar extends StatelessWidget {
                           Icon(Icons.logout, size: 18, color: c.danger),
                           if (!collapsed) ...[
                             const SizedBox(width: 10),
-                            Text('Đăng xuất', style: AppTextStyles.bodySm(c.danger).copyWith(fontWeight: FontWeight.w500)),
+                            Text(
+                              'Đăng xuất',
+                              style: AppTextStyles.bodySm(c.danger)
+                                  .copyWith(fontWeight: FontWeight.w500),
+                            ),
                           ],
                         ],
                       ),

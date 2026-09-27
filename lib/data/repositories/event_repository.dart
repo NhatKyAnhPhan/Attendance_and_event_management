@@ -26,9 +26,20 @@ class EventRepository {
     return _client.get('/api/events/$eventId');
   }
 
-  // Gửi yêu cầu đăng ký tham gia một sự kiện.
-  Future<void> register(String eventId) async {
-    await _client.post('/api/events/$eventId/register');
+  // Gửi yêu cầu đăng ký và trạng thái xác nhận trùng lịch học.
+  Future<void> register(
+    String eventId, {
+    bool allowClassConflict = false,
+  }) async {
+    await _client.post(
+      '/api/events/$eventId/register',
+      data: {'allowClassConflict': allowClassConflict},
+    );
+  }
+
+  // Gửi yêu cầu hủy đăng ký sự kiện.
+  Future<void> cancelRegistration(String eventId) async {
+    await _client.delete('/api/events/$eventId/register');
   }
 
   // Các yêu cầu đọc và ghi sự kiện trong khu vực ban tổ chức.
@@ -58,7 +69,6 @@ class EventRepository {
 
   // Tạo sự kiện mới bằng dữ liệu từ biểu mẫu ban tổ chức.
   Future<void> createOrganizerEvent({
-    required String id,
     required String name,
     required String organizerId,
     required DateTime startTime,
@@ -69,7 +79,6 @@ class EventRepository {
     await _client.post(
       '/api/organizer/events',
       data: {
-        'id': id,
         'name': name,
         'organizerId': organizerId,
         'startTime': startTime.toIso8601String(),

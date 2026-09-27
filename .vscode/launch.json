@@ -5,11 +5,12 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "type": "chrome",
+            "name": "attendance_and_event_management",
             "request": "launch",
-            "name": "Launch Chrome against localhost",
-            "url": "http://localhost:8080",
-            "webRoot": "${workspaceFolder}"
+            "type": "dart",
+            "toolArgs": [
+                "--dart-define=API_BASE_URL=http://127.0.0.1:3000"
+            ]
         }
     ]
 }

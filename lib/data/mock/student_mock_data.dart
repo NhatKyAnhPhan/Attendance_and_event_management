@@ -53,6 +53,9 @@ class StudentEventSummary {
   final String date;
   final String org;
   final bool registered;
+  final DateTime? registeredAt;
+  final DateTime? startTime;
+  final DateTime? endTime;
 
   const StudentEventSummary({
     required this.id,
@@ -60,7 +63,21 @@ class StudentEventSummary {
     required this.date,
     required this.org,
     required this.registered,
+    this.registeredAt,
+    this.startTime,
+    this.endTime,
   });
+
+  bool get isEnded => endTime != null && !DateTime.now().isBefore(endTime!);
+
+  String get eventStatus {
+    final end = endTime;
+    if (end == null) return '';
+    final now = DateTime.now();
+    if (!now.isBefore(end)) return 'Đã kết thúc';
+    if (startTime != null && now.isBefore(startTime!)) return 'Sắp diễn ra';
+    return 'Đang diễn ra';
+  }
 
   // Chuyển phản hồi API sự kiện thành dữ liệu tóm tắt cho màn sinh viên.
   factory StudentEventSummary.fromJson(Map<String, dynamic> json) {
@@ -70,6 +87,11 @@ class StudentEventSummary {
       date: json['startTime']?.toString() ?? '',
       org: json['organizerName']?.toString() ?? '',
       registered: json['registrationStatus']?.toString() != 'notRegistered',
+      registeredAt: DateTime.tryParse(json['registeredAt']?.toString() ?? '')
+          ?.toLocal(),
+      startTime: DateTime.tryParse(json['startTime']?.toString() ?? '')
+          ?.toLocal(),
+      endTime: DateTime.tryParse(json['endTime']?.toString() ?? '')?.toLocal(),
     );
   }
 }

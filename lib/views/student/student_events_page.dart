@@ -2,11 +2,68 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 
+import '../../data/api/api_client.dart';
 import '../../controllers/events_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/mock/student_mock_data.dart';
 import '../../widgets/app_badge.dart';
+
+// Đăng ký và hỏi xác nhận nếu sự kiện trùng lịch học.
+Future<void> _registerWithConflictHandling(
+  BuildContext context,
+  EventsController controller,
+  StudentEventSummary event,
+) async {
+  try {
+    await controller.register(event.id);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đăng ký sự kiện thành công.')),
+      );
+    }
+  } on ApiException catch (exception) {
+    if (!context.mounted) return;
+    if (exception.data?['type'] != 'class_schedule_conflict') {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(exception.message)));
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Trùng lịch học'),
+        content: Text(exception.message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Quay lại'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Vẫn đăng ký'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await controller.register(event.id, allowClassConflict: true);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đăng ký sự kiện thành công.')),
+        );
+      }
+    } on ApiException catch (retryException) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(retryException.message)));
+      }
+    }
+  }
+}
 
 // Tải chi tiết sự kiện và hiển thị modal để người dùng xem hoặc đăng ký.
 Future<void> _showEventDetails(
@@ -38,7 +95,8 @@ Future<void> _showEventDetails(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Text(
-                    snapshot.error?.toString() ?? 'Không tải được chi tiết sự kiện.',
+                    snapshot.error?.toString() ??
+                        'Không tải được chi tiết sự kiện.',
                     textAlign: TextAlign.center,
                     style: AppTextStyles.bodySm(c.mutedForeground),
                   ),
@@ -57,8 +115,10 @@ Future<void> _showEventDetails(
                 .toList();
             final start = DateTime.tryParse(data['startTime']?.toString() ?? '')
                 ?.toLocal();
-            final end = DateTime.tryParse(data['endTime']?.toString() ?? '')
-                ?.toLocal();
+            final end =
+                DateTime.tryParse(data['endTime']?.toString() ?? '')
+                    ?.toLocal() ??
+                event.endTime;
             final capacity = (data['capacity'] as num?)?.toInt() ?? 0;
             final registeredCount =
                 (data['registeredCount'] as num?)?.toInt() ?? 0;
@@ -101,6 +161,12 @@ Future<void> _showEventDetails(
                       : '${DateFormat('dd/MM/yyyy HH:mm').format(start)} - ${end == null ? '' : DateFormat('HH:mm').format(end)}',
                   c: c,
                 ),
+                if (event.eventStatus.isNotEmpty)
+                  _EventDetailRow(
+                    label: 'Trạng thái',
+                    value: event.eventStatus,
+                    c: c,
+                  ),
                 _EventDetailRow(
                   label: 'Địa điểm',
                   value: data['location']?.toString().trim().isNotEmpty == true
@@ -119,7 +185,10 @@ Future<void> _showEventDetails(
                 Text('Quyền lợi', style: AppTextStyles.displayXs(c.foreground)),
                 const SizedBox(height: 8),
                 if (benefits.isEmpty)
-                  Text('Chưa có thông tin quyền lợi.', style: AppTextStyles.bodySm(c.mutedForeground))
+                  Text(
+                    'Chưa có thông tin quyền lợi.',
+                    style: AppTextStyles.bodySm(c.mutedForeground),
+                  )
                 else
                   ...benefits.map((benefit) {
                     final points = (benefit['points'] as num?)?.toInt() ?? 0;
@@ -137,7 +206,10 @@ Future<void> _showEventDetails(
                 Text('Nội quy', style: AppTextStyles.displayXs(c.foreground)),
                 const SizedBox(height: 8),
                 if (rules.isEmpty)
-                  Text('Chưa có nội quy.', style: AppTextStyles.bodySm(c.mutedForeground))
+                  Text(
+                    'Chưa có nội quy.',
+                    style: AppTextStyles.bodySm(c.mutedForeground),
+                  )
                 else
                   ...rules.map(
                     (rule) => Padding(
@@ -148,7 +220,7 @@ Future<void> _showEventDetails(
                       ),
                     ),
                   ),
-                if (!event.registered) ...[
+                if (!event.registered && !event.isEnded) ...[
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
@@ -180,6 +252,7 @@ class StudentEventsPage extends StatelessWidget {
     final controller = Get.put(EventsController());
 
     return Obx(() {
+      controller.statusRefreshTick.value;
       final events = controller.items;
       if (controller.loading.value && events.isEmpty) {
         return const Center(child: CircularProgressIndicator());
@@ -222,12 +295,19 @@ class StudentEventsPage extends StatelessWidget {
                     child: _EventCard(
                       event: e,
                       c: c,
-                      onRegister: () => controller.register(e.id),
+                      onRegister: () =>
+                          _registerWithConflictHandling(context, controller, e),
+                      onCancel: () =>
+                          _cancelRegistration(context, controller, e),
                       onDetails: () => _showEventDetails(
                         context,
                         controller,
                         e,
-                        () => controller.register(e.id),
+                        () => _registerWithConflictHandling(
+                          context,
+                          controller,
+                          e,
+                        ),
                       ),
                     ),
                   ),
@@ -246,11 +326,13 @@ class _EventCard extends StatelessWidget {
   final StudentEventSummary event;
   final AppColors c;
   final Future<void> Function() onRegister;
+  final Future<void> Function() onCancel;
   final VoidCallback onDetails;
   const _EventCard({
     required this.event,
     required this.c,
     required this.onRegister,
+    required this.onCancel,
     required this.onDetails,
   });
 
@@ -307,13 +389,47 @@ class _EventCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               event.registered
-                  ? const AppBadge(label: 'Đã đăng ký', status: BadgeStatus.present)
-                  : const AppBadge(label: 'Chưa đăng ký', status: BadgeStatus.pending),
+                  ? const AppBadge(
+                      label: 'Đã đăng ký',
+                      status: BadgeStatus.present,
+                    )
+                  : const AppBadge(
+                      label: 'Chưa đăng ký',
+                      status: BadgeStatus.pending,
+                    ),
+              if (event.eventStatus.isNotEmpty)
+                AppBadge(
+                  label: event.eventStatus,
+                  status: event.isEnded
+                      ? BadgeStatus.blue
+                      : event.eventStatus == 'Đang diễn ra'
+                      ? BadgeStatus.late
+                      : BadgeStatus.pending,
+                ),
+              if (event.registered && event.registeredAt != null)
+                Text(
+                  'Đăng ký lúc ${DateFormat('dd/MM/yyyy HH:mm').format(event.registeredAt!)}',
+                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                ),
               TextButton(
                 onPressed: onDetails,
                 child: const Text('Xem chi tiết'),
               ),
-              if (!event.registered)
+              if (event.registered && _canCancelRegistration(event))
+                OutlinedButton.icon(
+                  onPressed: onCancel,
+                  icon: const Icon(Icons.event_busy, size: 18),
+                  label: const Text('Hủy đăng ký'),
+                ),
+              if (event.registered &&
+                  !event.isEnded &&
+                  event.registeredAt != null &&
+                  !_canCancelRegistration(event))
+                Text(
+                  'Đã quá 24 giờ, không thể hủy',
+                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                ),
+              if (!event.registered && !event.isEnded)
                 ElevatedButton(
                   onPressed: onRegister,
                   child: const Text('Đăng ký ngay'),
@@ -326,12 +442,53 @@ class _EventCard extends StatelessWidget {
   }
 }
 
+// Cho phép hủy khi đã biết thời điểm đăng ký và chưa đủ 24 giờ.
+bool _canCancelRegistration(StudentEventSummary event) {
+  final registeredAt = event.registeredAt;
+  final endTime = event.endTime;
+  final elapsed = registeredAt == null
+      ? null
+      : DateTime.now().difference(registeredAt);
+  return event.registered &&
+      registeredAt != null &&
+      endTime != null &&
+      endTime.isAfter(DateTime.now()) &&
+      elapsed != null &&
+      !elapsed.isNegative &&
+      elapsed <= const Duration(hours: 24);
+}
+
+// Hủy đăng ký và thông báo kết quả cho sinh viên.
+Future<void> _cancelRegistration(
+  BuildContext context,
+  EventsController controller,
+  StudentEventSummary event,
+) async {
+  try {
+    await controller.cancelRegistration(event.id);
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Đã hủy đăng ký sự kiện.')));
+    }
+  } on ApiException catch (exception) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(exception.message)));
+    }
+  }
+}
+
 class _EventDetailRow extends StatelessWidget {
   final String label;
   final String value;
   final AppColors c;
 
-  const _EventDetailRow({required this.label, required this.value, required this.c});
+  const _EventDetailRow({
+    required this.label,
+    required this.value,
+    required this.c,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -344,7 +501,9 @@ class _EventDetailRow extends StatelessWidget {
             width: 112,
             child: Text(label, style: AppTextStyles.bodySm(c.mutedForeground)),
           ),
-          Expanded(child: Text(value, style: AppTextStyles.bodySm(c.foreground))),
+          Expanded(
+            child: Text(value, style: AppTextStyles.bodySm(c.foreground)),
+          ),
         ],
       ),
     );

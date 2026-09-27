@@ -22,6 +22,16 @@ class AuthRepository {
 
   void setToken(String? token) => _client.setToken(token);
 
+  /// Đọc hồ sơ hiện tại từ token đã xác thực để đồng bộ vai trò với backend.
+  Future<Map<String, dynamic>> getCurrentUser() async {
+    final body = await _client.get(ApiEndpoints.currentUser);
+    final user = body['user'];
+    if (user is! Map) {
+      throw const ApiException('Phản hồi hồ sơ người dùng không hợp lệ.');
+    }
+    return Map<String, dynamic>.from(user);
+  }
+
   // Gửi thông tin đăng nhập và chuyển phản hồi API thành AuthSession.
   Future<AuthSession> login({
     required String identifier,

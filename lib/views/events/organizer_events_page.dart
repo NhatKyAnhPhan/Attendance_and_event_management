@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 
+import '../../controllers/auth_controller.dart';
 import '../../controllers/organizer_events_controller.dart';
+import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/event_model.dart';
@@ -10,6 +12,7 @@ import '../../data/models/event_model.dart';
 class OrganizerEventsPage extends StatelessWidget {
   const OrganizerEventsPage({super.key});
 
+  // Hiển thị danh sách sự kiện cùng các thao tác theo vai trò.
   @override
   Widget build(BuildContext context) {
     final controller = Get.put(OrganizerEventsController());
@@ -18,6 +21,10 @@ class OrganizerEventsPage extends StatelessWidget {
 
     // Theo dõi trạng thái controller để hiển thị tải, lỗi và danh sách sự kiện.
     return Obx(() {
+      controller.statusRefreshTick.value;
+      final auth = Get.find<AuthController>();
+      final canManageEvents = auth.canManageEvents;
+      final canDeleteEvents = auth.role.value == Role.admin;
       if (controller.loading.value && controller.items.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -34,24 +41,21 @@ class OrganizerEventsPage extends StatelessWidget {
                     style: AppTextStyles.displayLg(colors.foreground),
                   ),
                 ),
-                FilledButton.icon(
-                  onPressed: () async {
-                    await controller.loadUnits();
-                    if (!context.mounted) return;
-                    if (controller.unitsError.value.isNotEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            '${controller.unitsError.value} Bạn vẫn có thể nhập mã thủ công.',
-                          ),
-                        ),
-                      );
-                    }
-                    await _showEventDialog(context, controller);
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Tạo sự kiện'),
-                ),
+                if (canManageEvents)
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await controller.loadUnits();
+                      if (!context.mounted) return;
+                      if (controller.unitsError.value.isNotEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(controller.unitsError.value)),
+                        );
+                      }
+                      await _showEventDialog(context, controller);
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Tạo sự kiện'),
+                  ),
               ],
             ),
             const SizedBox(height: 16),
@@ -67,6 +71,7 @@ class OrganizerEventsPage extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
                   contentPadding: const EdgeInsets.all(16),
+                  onTap: () => _showEventDetails(context, controller, event),
                   title: Text(
                     event.name,
                     style: const TextStyle(fontWeight: FontWeight.w700),
@@ -74,7 +79,7 @@ class OrganizerEventsPage extends StatelessWidget {
                   subtitle: Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      '${event.id}  |  ${event.location}\n'
+                      '${event.location}\n'
                       '${DateFormat('dd/MM/yyyy HH:mm').format(event.startTime)} - '
                       '${DateFormat('HH:mm').format(event.endTime)}\n'
                       'Đăng ký: ${event.registeredCount}/${event.capacity}',
@@ -84,23 +89,34 @@ class OrganizerEventsPage extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Chip(label: Text(event.status)),
-                      PopupMenuButton<String>(
-                        tooltip: 'Thao tác sự kiện',
-                        onSelected: (action) {
-                          if (action == 'edit') {
-                            _showEventDialog(context, controller, event: event);
-                          } else if (action == 'delete') {
-                            _confirmDelete(context, controller, event);
-                          }
-                        },
-                        itemBuilder: (context) => const [
-                          PopupMenuItem(
-                            value: 'edit',
-                            child: Text('Chỉnh sửa'),
-                          ),
-                          PopupMenuItem(value: 'delete', child: Text('Xóa')),
-                        ],
-                      ),
+                      if ((canManageEvents && _canEditEvent(event)) ||
+                          canDeleteEvents)
+                        PopupMenuButton<String>(
+                          tooltip: 'Thao tác sự kiện',
+                          onSelected: (action) {
+                            if (action == 'edit') {
+                              _showEventDialog(
+                                context,
+                                controller,
+                                event: event,
+                              );
+                            } else if (action == 'delete') {
+                              _confirmDelete(context, controller, event);
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            if (canManageEvents && _canEditEvent(event))
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Chỉnh sửa'),
+                              ),
+                            if (canDeleteEvents)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Xóa'),
+                              ),
+                          ],
+                        ),
                     ],
                   ),
                 ),
@@ -112,6 +128,162 @@ class OrganizerEventsPage extends StatelessWidget {
     });
   }
 
+  // Hiển thị thông tin chi tiết của một sự kiện.
+  Future<void> _showEventDetails(
+    BuildContext context,
+    OrganizerEventsController controller,
+    OrganizerEventSummary event,
+  ) async {
+    final detailsFuture = controller.getEventDetails(event.id);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(event.name),
+        content: SizedBox(
+          width: 560,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.65,
+            ),
+            child: FutureBuilder<Map<String, dynamic>>(
+              future: detailsFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text('Không tải được chi tiết: ${snapshot.error}'),
+                  );
+                }
+
+                final details = snapshot.data ?? const <String, dynamic>{};
+                final benefits = details['benefits'] is List
+                    ? (details['benefits'] as List).whereType<Map>().toList()
+                    : const <Map>[];
+                final rules = details['rules'] is List
+                    ? (details['rules'] as List).whereType<Map>().toList()
+                    : const <Map>[];
+                final description = details['description']?.toString().trim();
+
+                return SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _detailSection('Thông tin sự kiện', [
+                        _detailRow('Mã sự kiện', event.id),
+                        _detailRow('Trạng thái', event.status),
+                        _detailRow(
+                          'Đơn vị tổ chức',
+                          details['organizerName']?.toString() ??
+                              event.organizerId,
+                        ),
+                        _detailRow(
+                          'Thời gian bắt đầu',
+                          DateFormat('dd/MM/yyyy HH:mm')
+                              .format(event.startTime),
+                        ),
+                        _detailRow(
+                          'Thời gian kết thúc',
+                          DateFormat('dd/MM/yyyy HH:mm').format(event.endTime),
+                        ),
+                        _detailRow('Địa điểm', event.location),
+                        _detailRow(
+                          'Số lượng đăng ký',
+                          '${details['registeredCount'] ?? event.registeredCount}/${details['capacity'] ?? event.capacity}',
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _detailSection('Mô tả', [
+                        Text(
+                          description == null || description.isEmpty
+                              ? 'Chưa có mô tả cho sự kiện này.'
+                              : description,
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _detailSection(
+                        'Quyền lợi',
+                        benefits.isEmpty
+                            ? [const Text('Chưa có thông tin quyền lợi.')]
+                            : benefits.map((benefit) {
+                                final type = benefit['type']?.toString();
+                                final points = benefit['points'];
+                                final content = benefit['content']?.toString();
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    [
+                                      if (type != null && type.isNotEmpty) type,
+                                      if (points != null) '$points điểm',
+                                      if (content != null && content.isNotEmpty)
+                                        content,
+                                    ].join(' · '),
+                                  ),
+                                );
+                              }).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                      _detailSection(
+                        'Nội quy',
+                        rules.isEmpty
+                            ? [const Text('Chưa có nội quy cho sự kiện này.')]
+                            : rules.map((rule) {
+                                final order = rule['sortOrder']?.toString();
+                                final text = rule['text']?.toString() ?? '';
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    order == null ? text : '$order. $text',
+                                  ),
+                                );
+                              }).toList(),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _detailSection(String title, List<Widget> children) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        ...children,
+      ],
+    );
+  }
+
+  static Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 150,
+            child: Text(label, style: const TextStyle(color: Colors.grey)),
+          ),
+          Expanded(child: Text(value.isEmpty ? 'Chưa cập nhật' : value)),
+        ],
+      ),
+    );
+  }
+
+  // Mở biểu mẫu tạo mới hoặc cập nhật sự kiện hợp lệ.
   Future<void> _showEventDialog(
     BuildContext context,
     OrganizerEventsController controller, {
@@ -119,8 +291,15 @@ class OrganizerEventsPage extends StatelessWidget {
   }) async {
     // Dùng chung biểu mẫu cho cả thao tác tạo mới và cập nhật sự kiện.
     final isEditing = event != null;
+    if (event != null && !_canEditEvent(event)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sự kiện đã kết thúc hoặc đã bắt đầu quá 1 ngày.'),
+        ),
+      );
+      return;
+    }
     final formKey = GlobalKey<FormState>();
-    final idController = TextEditingController(text: event?.id ?? '');
     final nameController = TextEditingController(text: event?.name ?? '');
     final locationController = TextEditingController(
       text: event?.location ?? '',
@@ -150,7 +329,6 @@ class OrganizerEventsPage extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _field(idController, 'Mã sự kiện', readOnly: isEditing),
                     _field(nameController, 'Tên sự kiện'),
                     _unitField(
                       controller.units,
@@ -171,7 +349,18 @@ class OrganizerEventsPage extends StatelessWidget {
                           context,
                           startTime,
                         );
+                        if (!context.mounted) return;
                         if (selected != null) {
+                          if (!endTime.isAfter(selected)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Thời gian bắt đầu phải trước thời gian kết thúc.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
                           setState(() => startTime = selected);
                         }
                       },
@@ -184,7 +373,18 @@ class OrganizerEventsPage extends StatelessWidget {
                       ),
                       onTap: () async {
                         final selected = await _pickDateTime(context, endTime);
+                        if (!context.mounted) return;
                         if (selected != null) {
+                          if (!selected.isAfter(startTime)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Thời gian kết thúc phải sau thời gian bắt đầu.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
                           setState(() => endTime = selected);
                         }
                       },
@@ -201,28 +401,26 @@ class OrganizerEventsPage extends StatelessWidget {
             ),
             FilledButton(
               onPressed: () async {
-                if (!formKey.currentState!.validate() ||
-                    !endTime.isAfter(startTime)) {
-                  if (context.mounted && !endTime.isAfter(startTime)) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Thời gian kết thúc phải sau thời gian bắt đầu.',
-                        ),
-                      ),
-                    );
+                final timeError = _eventTimeError(
+                  startTime,
+                  endTime,
+                  isEditing,
+                );
+                if (!formKey.currentState!.validate() || timeError != null) {
+                  if (context.mounted && timeError != null) {
+                    ScaffoldMessenger.of(context)
+                        .showSnackBar(SnackBar(content: Text(timeError)));
                   }
                   return;
                 }
                 try {
-                  final eventId = idController.text.trim();
                   final eventName = nameController.text.trim();
                   final organizerId = selectedOrganizerId?.trim() ?? '';
                   final location = locationController.text.trim();
                   final capacity = int.parse(capacityController.text.trim());
                   if (isEditing) {
                     await controller.updateEvent(
-                      id: eventId,
+                      id: event.id,
                       name: eventName,
                       organizerId: organizerId,
                       startTime: startTime,
@@ -232,7 +430,6 @@ class OrganizerEventsPage extends StatelessWidget {
                     );
                   } else {
                     await controller.createEvent(
-                      id: eventId,
                       name: eventName,
                       organizerId: organizerId,
                       startTime: startTime,
@@ -257,13 +454,43 @@ class OrganizerEventsPage extends StatelessWidget {
         ),
       ),
     );
-    idController.dispose();
     nameController.dispose();
     locationController.dispose();
     capacityController.dispose();
     organizerController.dispose();
   }
 
+  // Trả về lỗi nếu khoảng thời gian tạo hoặc sửa không hợp lệ.
+  static String? _eventTimeError(
+    DateTime startTime,
+    DateTime endTime,
+    bool isEditing,
+  ) {
+    final now = DateTime.now();
+    if (!endTime.isAfter(startTime)) {
+      return 'Thời gian kết thúc phải sau thời gian bắt đầu.';
+    }
+    if (endTime.difference(startTime) > const Duration(days: 1)) {
+      return 'Thời lượng sự kiện không được quá 1 ngày.';
+    }
+    if (!isEditing && !startTime.isAfter(now)) {
+      return 'Sự kiện mới phải bắt đầu trong tương lai.';
+    }
+    if (isEditing && !endTime.isAfter(now)) {
+      return 'Không thể chỉnh sửa sự kiện đã kết thúc.';
+    }
+    return null;
+  }
+
+  // Kiểm tra sự kiện chưa kết thúc, chưa quá một ngày và không kéo dài quá 24 giờ.
+  static bool _canEditEvent(OrganizerEventSummary event) {
+    final now = DateTime.now();
+    return event.endTime.isAfter(now) &&
+        now.difference(event.startTime) <= const Duration(days: 1) &&
+        event.endTime.difference(event.startTime) <= const Duration(days: 1);
+  }
+
+  // Tạo ô nhập liệu và xác thực dữ liệu cơ bản của sự kiện.
   static Widget _field(
     TextEditingController controller,
     String label, {
@@ -293,6 +520,7 @@ class OrganizerEventsPage extends StatelessWidget {
     );
   }
 
+  // Hiển thị ô tìm kiếm và chọn đơn vị tổ chức.
   static Widget _unitField(
     List<OrganizerUnit> units,
     String? value,
@@ -375,6 +603,7 @@ class OrganizerEventsPage extends StatelessWidget {
     );
   }
 
+  // Yêu cầu xác nhận trước khi xóa sự kiện.
   Future<void> _confirmDelete(
     BuildContext context,
     OrganizerEventsController controller,
@@ -409,6 +638,7 @@ class OrganizerEventsPage extends StatelessWidget {
     }
   }
 
+  // Chọn ngày và giờ cho một mốc thời gian sự kiện.
   static Future<DateTime?> _pickDateTime(
     BuildContext context,
     DateTime initial,
@@ -436,6 +666,7 @@ class _ErrorBanner extends StatelessWidget {
   final String message;
   const _ErrorBanner({required this.message});
 
+  // Hiển thị thông báo lỗi tải dữ liệu.
   @override
   Widget build(BuildContext context) {
     return Padding(

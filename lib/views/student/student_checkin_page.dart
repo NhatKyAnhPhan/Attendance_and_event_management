@@ -34,6 +34,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   bool _faceBusy = false;
   bool _faceDetected = false;
   bool _checkInBusy = false;
+  Map<String, dynamic>? _checkInDetails;
   final Stopwatch _faceFrameClock = Stopwatch()..start();
   int _lastFaceFrameMs = 0;
   String? _errorMessage;
@@ -92,6 +93,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       _errorMessage = null;
       _checkInBusy = false;
       _faceDetected = false;
+      _checkInDetails = null;
     });
   }
 
@@ -104,6 +106,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       _state = _ScanState.idle;
       _errorMessage = null;
       _faceDetected = false;
+      _checkInDetails = null;
     });
   }
 
@@ -201,7 +204,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     await _qrController.stop();
     try {
       final position = await _getCurrentPosition();
-      await _apiClient.post(
+      final result = await _apiClient.post(
         ApiEndpoints.attendanceCheckIn,
         data: {
           'qrToken': token,
@@ -210,7 +213,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
           'longitude': position.longitude,
         },
       );
-      if (mounted) setState(() => _state = _ScanState.success);
+      if (mounted) {
+        setState(() {
+          _checkInDetails = result;
+          _state = _ScanState.success;
+        });
+      }
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -226,7 +234,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     _checkInBusy = true;
     try {
       final position = await _getCurrentPosition();
-      await _apiClient.post(
+      final result = await _apiClient.post(
         ApiEndpoints.attendanceFaceCheckIn,
         data: {
           'faceDetected': true,
@@ -234,7 +242,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
           'longitude': position.longitude,
         },
       );
-      if (mounted) setState(() => _state = _ScanState.success);
+      if (mounted) {
+        setState(() {
+          _checkInDetails = result;
+          _state = _ScanState.success;
+        });
+      }
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -546,12 +559,63 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     );
   }
 
+  List<MapEntry<String, String>> get _successDetails {
+    final details = _checkInDetails ?? const <String, dynamic>{};
+    final rows = <MapEntry<String, String>>[];
+    void add(String label, Object? value) {
+      final text = value?.toString().trim() ?? '';
+      if (text.isNotEmpty && text != 'null') rows.add(MapEntry(label, text));
+    }
+
+    final classId = details['classId']?.toString() ?? details['eventId']?.toString() ?? '';
+    final className = details['className']?.toString() ??
+        details['eventName']?.toString() ??
+        details['classOrEventName']?.toString() ??
+        '';
+    add('Lớp / sự kiện', [classId, className].where((value) => value.isNotEmpty).join(' · '));
+    add('Buổi học', details['sessionName'] ?? details['classSessionId']);
+    add('Giảng viên', details['lecturerName'] ?? details['organizerName']);
+    final studentName = details['studentName']?.toString() ?? '';
+    final studentId = details['studentId']?.toString() ?? '';
+    add('Sinh viên', [studentName, studentId].where((value) => value.isNotEmpty).join(' · '));
+    final checkedInAt = DateTime.tryParse(details['checkedInAt']?.toString() ?? '')?.toLocal();
+    if (checkedInAt != null) {
+      add('Giờ điểm danh', _formatDateTime(checkedInAt));
+    }
+    final start = DateTime.tryParse(details['startTime']?.toString() ?? '')?.toLocal();
+    final end = DateTime.tryParse(details['endTime']?.toString() ?? '')?.toLocal();
+    if (start != null || end != null) {
+      add('Thời gian buổi', [
+        if (start != null) _formatDateTime(start),
+        if (end != null) _formatDateTime(end),
+      ].join(' - '));
+    }
+    add('Trạng thái', details['status']);
+    add('Hình thức', details['method']);
+    return rows;
+  }
+
+  String _formatDateTime(DateTime value) {
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    return '$hour:$minute $day/$month/${value.year}';
+  }
+
+  String get _failureTitle {
+    final message = _errorMessage ?? '';
+    for (final category in ['Sai lớp', 'Sai tài khoản', 'Sai sinh viên']) {
+      if (message.startsWith('$category:')) return category;
+    }
+    return 'Không thể xác thực';
+  }
+
   Widget _buildSuccess(AppColors c) {
-    final now = DateTime.now();
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+    final details = _successDetails;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
             width: 80,
@@ -572,24 +636,35 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
               fontSize: 24,
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            _method == _ScanMethod.qr
-                ? 'CS101 — Lập trình cơ bản'
-                : 'Nhận diện khuôn mặt thành công — CS101',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.7),
-              fontSize: 14,
+          if (details.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+              ),
+              child: Column(
+                children: details.map((detail) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 105,
+                        child: Text(detail.key, style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 13)),
+                      ),
+                      Expanded(
+                        child: Text(detail.value, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                      ),
+                    ],
+                  ),
+                )).toList(),
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} — ${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 13,
-            ),
-          ),
+          ],
           const SizedBox(height: 32),
           SizedBox(
             width: double.infinity,
@@ -620,8 +695,8 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             child: const Icon(Icons.close, color: Color(0xFFDC2626), size: 40),
           ),
           const SizedBox(height: 24),
-          const Text(
-            'Không thể xác thực',
+          Text(
+            _failureTitle,
             style: TextStyle(
               color: Colors.white,
               fontFamily: 'Nunito',

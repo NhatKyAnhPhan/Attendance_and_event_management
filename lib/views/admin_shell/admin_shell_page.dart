@@ -5,6 +5,8 @@ import '../../controllers/auth_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../core/constants/admin_page.dart';
 import '../../core/theme/app_colors.dart';
+import '../settings/admin_settings_page.dart';
+import '../staff/staff_records_page.dart';
 import '../dashboard/dashboard_page.dart';
 import '../attendance/attendance_page.dart';
 import '../classes/classes_page.dart';
@@ -22,6 +24,7 @@ class AdminShellPage extends StatefulWidget {
   const AdminShellPage({super.key});
 
   @override
+  /// Tạo stateful shell cho điều hướng quản trị và cán bộ.
   State<AdminShellPage> createState() => _AdminShellPageState();
 }
 
@@ -29,11 +32,13 @@ class _AdminShellPageState extends State<AdminShellPage> {
   AdminPage _activePage = AdminPage.dashboard;
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  /// Chuyển trang hiện tại và đóng drawer nếu ứng dụng đang ở màn hình hẹp.
   void _navigate(AdminPage page) {
     setState(() => _activePage = page);
     Navigator.of(context).maybePop(); // đóng Drawer nếu đang mở (màn hẹp)
   }
 
+  /// Chọn nội dung tương ứng với mục điều hướng đang được mở.
   Widget _buildBody(bool isDark) {
     // Chọn màn hình theo mục đang hoạt động trong thanh điều hướng quản trị.
     switch (_activePage) {
@@ -52,17 +57,18 @@ class _AdminShellPageState extends State<AdminShellPage> {
       case AdminPage.reports:
         return const ReportsPage();
       case AdminPage.feedback:
-        return const PlaceholderPage(title: 'Phản hồi');
+        return const StaffRecordsPage(kind: StaffRecordKind.feedback);
       case AdminPage.certificates:
-        return const PlaceholderPage(title: 'Chứng chỉ');
+        return const StaffRecordsPage(kind: StaffRecordKind.certificates);
       case AdminPage.notifications:
         return NotificationsPage(role: Get.find<AuthController>().role.value);
       case AdminPage.settings:
-        return const PlaceholderPage(title: 'Cài đặt');
+        return const AdminSettingsPage();
     }
   }
 
   @override
+  /// Dựng layout responsive gồm sidebar, header và nội dung trang.
   Widget build(BuildContext context) {
     final auth = Get.find<AuthController>();
     final theme = Get.find<ThemeController>();

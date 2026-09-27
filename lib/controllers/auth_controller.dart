@@ -17,6 +17,10 @@ class AuthController extends GetxController {
   final Rx<Role> role = Role.admin.obs;
   final Rxn<Map<String, dynamic>> currentUser = Rxn<Map<String, dynamic>>();
 
+  /// Cán bộ chỉ được xem; quyền quản lý dành cho admin và ban tổ chức.
+  bool get canManageEvents =>
+      RoleX.canManageEvents(currentUser.value?['role']?.toString() ?? '');
+
   /// SplashPage chờ cờ này = true rồi mới điều hướng, để không bị
   /// "nháy" sang màn login trước khi đọc xong SharedPreferences.
   final RxBool isReady = false.obs;
@@ -28,7 +32,7 @@ class AuthController extends GetxController {
     _restoreSession();
   }
 
-  // Khôi phục phiên đăng nhập, vai trò và token đã lưu trên thiết bị.
+  /// Khôi phục token rồi đồng bộ người dùng và quyền từ API trước khi mở shell.
   Future<void> _restoreSession() async {
     final prefs = await SharedPreferences.getInstance();
     isAuthed.value = prefs.getBool(_authKey) ?? false;
@@ -40,7 +44,31 @@ class AuthController extends GetxController {
         jsonDecode(savedUser) as Map,
       );
     }
-    _authRepository.setToken(prefs.getString('authToken'));
+    final token = prefs.getString('authToken');
+    _authRepository.setToken(token);
+    if (isAuthed.value && token != null && token.isNotEmpty) {
+      try {
+        final user = await _authRepository.getCurrentUser();
+        final roleValue = user['role']?.toString();
+        if (roleValue != null && roleValue.isNotEmpty) {
+          final restoredRole = RoleX.fromString(roleValue);
+          currentUser.value = user;
+          role.value = restoredRole;
+          await prefs.setString('currentUser', jsonEncode(user));
+          await prefs.setString('currentRole', restoredRole.name);
+        }
+      } on ApiException catch (error) {
+        if (error.statusCode == 401) {
+          isAuthed.value = false;
+          currentUser.value = null;
+          await prefs.remove(_authKey);
+          await prefs.remove(_roleKey);
+          await prefs.remove('authToken');
+          await prefs.remove('currentUser');
+          _authRepository.setToken(null);
+        }
+      }
+    }
     isReady.value = true;
   }
 

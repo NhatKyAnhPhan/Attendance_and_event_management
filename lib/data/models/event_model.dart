@@ -82,7 +82,13 @@ class OrganizerEventSummary {
   final String location;
   final DateTime startTime;
   final DateTime endTime;
-  final String status;
+  String get status {
+    final now = DateTime.now();
+    if (now.isBefore(startTime)) return 'Sắp diễn ra';
+    if (now.isBefore(endTime)) return 'Đang diễn ra';
+    return 'Đã kết thúc';
+  }
+
   final int capacity;
   final int registeredCount;
 
@@ -93,7 +99,6 @@ class OrganizerEventSummary {
     required this.location,
     required this.startTime,
     required this.endTime,
-    required this.status,
     required this.capacity,
     required this.registeredCount,
   });
@@ -109,7 +114,6 @@ class OrganizerEventSummary {
       endTime: DateTime.parse(
         json['endTime']?.toString() ?? json['startTime'].toString(),
       ),
-      status: json['status']?.toString() ?? 'Sắp diễn ra',
       capacity: (json['capacity'] as num?)?.toInt() ?? 0,
       registeredCount: (json['registeredCount'] as num?)?.toInt() ?? 0,
     );

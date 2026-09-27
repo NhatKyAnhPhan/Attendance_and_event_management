@@ -1,5 +1,7 @@
 import 'package:get/get.dart';
 
+import 'dart:async';
+
 import '../data/models/event_model.dart';
 import '../data/repositories/event_repository.dart';
 
@@ -16,12 +18,26 @@ class OrganizerEventsController extends GetxController {
   final RxBool unitsLoading = false.obs;
   final RxString error = ''.obs;
   final RxString unitsError = ''.obs;
+  final RxInt statusRefreshTick = 0.obs;
+  Timer? _statusRefreshTimer;
 
+  // Khởi tạo bộ đếm cập nhật trạng thái và tải dữ liệu màn hình.
   @override
   void onInit() {
     super.onInit();
     load();
     loadUnits();
+    _statusRefreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => statusRefreshTick.value++,
+    );
+  }
+
+  // Dừng bộ đếm khi controller không còn được sử dụng.
+  @override
+  void onClose() {
+    _statusRefreshTimer?.cancel();
+    super.onClose();
   }
 
   // Nạp danh sách đơn vị cho biểu mẫu tạo hoặc sửa sự kiện.
@@ -50,9 +66,13 @@ class OrganizerEventsController extends GetxController {
     }
   }
 
+  /// Lấy thông tin đầy đủ của sự kiện để hiển thị ở hộp thoại chi tiết.
+  Future<Map<String, dynamic>> getEventDetails(String eventId) {
+    return _repository.getEventDetails(eventId);
+  }
+
   // Gọi repository để tạo, sửa hoặc xóa rồi tải lại danh sách.
   Future<void> createEvent({
-    required String id,
     required String name,
     required String organizerId,
     required DateTime startTime,
@@ -61,7 +81,6 @@ class OrganizerEventsController extends GetxController {
     required int capacity,
   }) async {
     await _repository.createOrganizerEvent(
-      id: id,
       name: name,
       organizerId: organizerId,
       startTime: startTime,
@@ -72,6 +91,7 @@ class OrganizerEventsController extends GetxController {
     await load();
   }
 
+  // Gửi dữ liệu chỉnh sửa và tải lại danh sách sự kiện.
   Future<void> updateEvent({
     required String id,
     required String name,

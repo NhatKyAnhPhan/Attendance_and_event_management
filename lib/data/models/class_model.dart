@@ -22,6 +22,9 @@ class ClassModel {
   final String lecturerName;
   final int studentCount;
   final String semester; // vd "2024-2025 HK2"
+  final String schoolYear;
+  final DateTime? startDate;
+  final DateTime? endDate;
   final String room; // phòng học mặc định
   final String schedule; // vd "Thứ 3, 13:00–15:00"
 
@@ -34,6 +37,9 @@ class ClassModel {
     required this.lecturerName,
     required this.studentCount,
     required this.semester,
+    this.schoolYear = '',
+    this.startDate,
+    this.endDate,
     required this.room,
     required this.schedule,
   });
@@ -51,6 +57,9 @@ class ClassModel {
       lecturerName: json['lecturerName'] as String? ?? '',
       studentCount: json['studentCount'] as int? ?? 0,
       semester: json['semester'] as String? ?? '',
+      schoolYear: json['schoolYear'] as String? ?? '',
+      startDate: DateTime.tryParse(json['startDate']?.toString() ?? ''),
+      endDate: DateTime.tryParse(json['endDate']?.toString() ?? ''),
       room: json['room'] as String? ?? '',
       schedule: json['schedule'] as String? ?? '',
     );
@@ -58,15 +67,33 @@ class ClassModel {
 
   // Chuyển model lớp học phần thành dữ liệu JSON.
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'code': code,
-        'name': name,
-        'type': type == ClassType.homeroom ? 'homeroom' : 'courseSection',
-        'lecturerId': lecturerId,
-        'lecturerName': lecturerName,
-        'studentCount': studentCount,
-        'semester': semester,
-        'room': room,
-        'schedule': schedule,
-      };
+    'id': id,
+    'code': code,
+    'name': name,
+    'type': type == ClassType.homeroom ? 'homeroom' : 'courseSection',
+    'lecturerId': lecturerId,
+    'lecturerName': lecturerName,
+    'studentCount': studentCount,
+    'semester': semester,
+    'schoolYear': schoolYear,
+    'startDate': startDate?.toIso8601String(),
+    'endDate': endDate?.toIso8601String(),
+    'room': room,
+    'schedule': schedule,
+  };
+}
+
+bool isValidClassDateRange(DateTime startDate, DateTime endDate) =>
+    !endDate.isBefore(startDate);
+
+class ClassLecturer {
+  final String id;
+  final String name;
+
+  const ClassLecturer({required this.id, required this.name});
+
+  factory ClassLecturer.fromJson(Map<String, dynamic> json) => ClassLecturer(
+    id: json['id']?.toString() ?? '',
+    name: json['name']?.toString() ?? '',
+  );
 }
