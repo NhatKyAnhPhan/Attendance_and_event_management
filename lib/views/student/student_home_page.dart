@@ -3,13 +3,14 @@ import 'package:get/get.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/classes_controller.dart';
+import '../../controllers/dashboard_controller.dart';
 import '../../controllers/events_controller.dart';
 import '../../controllers/notification_controller.dart';
 import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
-import '../../data/mock/student_mock_data.dart';
 import '../../data/models/notification_model.dart';
+import '../../data/models/student_summaries.dart';
 import '../../widgets/app_badge.dart';
 import '../notifications/notifications_page.dart';
 import 'student_checkin_page.dart';
@@ -31,15 +32,21 @@ class StudentHomePage extends StatefulWidget {
 class _StudentHomePageState extends State<StudentHomePage> {
   int _index = 0;
 
+  /// Chuyển tab được chọn trong thanh điều hướng sinh viên.
   void _goTo(int i) => setState(() => _index = i);
 
+  /// Dựng trang chủ cùng các tab lấy dữ liệu theo tài khoản.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final c = AppColors.of(isDark);
 
     final pages = [
-      _HomeTabContent(onScan: () => _goTo(3), onGoToClasses: () => _goTo(1)),
+      _HomeTabContent(
+        onScan: () => _goTo(3),
+        onGoToClasses: () => _goTo(1),
+        onGoToEvents: () => _goTo(2),
+      ),
       const StudentClassesPage(),
       const StudentEventsPage(),
       const StudentCheckinPage(),
@@ -101,7 +108,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
 class _HomeTabContent extends StatelessWidget {
   final VoidCallback onScan;
   final VoidCallback onGoToClasses;
-  const _HomeTabContent({required this.onScan, required this.onGoToClasses});
+  final VoidCallback onGoToEvents;
+
+  const _HomeTabContent({
+    required this.onScan,
+    required this.onGoToClasses,
+    required this.onGoToEvents,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -109,17 +122,23 @@ class _HomeTabContent extends StatelessWidget {
     final c = AppColors.of(isDark);
     final classesController = Get.put(ClassesController());
     final eventsController = Get.put(EventsController());
+    final dashboardController = Get.put(DashboardController());
     final notifications = Get.find<NotificationController>();
     final auth = Get.find<AuthController>();
 
     return Obx(() {
       final classes = classesController.items;
-      final events = eventsController.items;
+      final events = eventsController.items.where((event) => !event.isEnded);
       final user = auth.currentUser.value ?? const <String, dynamic>{};
       return ListView(
         padding: EdgeInsets.zero,
         children: [
-          _buildHeader(c, user, notifications.unreadCount(Role.student)),
+          _buildHeader(
+            c,
+            user,
+            notifications.unreadCount(Role.student),
+            dashboardController.summary,
+          ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -130,7 +149,7 @@ class _HomeTabContent extends StatelessWidget {
                 _buildQuickActions(c),
                 const SizedBox(height: 20),
 
-                _sectionTitle('Lớp học hôm nay', c),
+                _sectionTitle('Lớp học của tôi', c),
                 const SizedBox(height: 12),
                 ...classes
                     .take(2)
@@ -147,7 +166,11 @@ class _HomeTabContent extends StatelessWidget {
                 ...events.map(
                   (e) => Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: _EventRow(event: e, c: c),
+                    child: _EventRow(
+                      event: e,
+                      c: c,
+                      onOpenEvents: onGoToEvents,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -156,8 +179,13 @@ class _HomeTabContent extends StatelessWidget {
                   children: [
                     Expanded(child: _sectionTitle('Thông báo', c)),
                     TextButton(
-                      onPressed: () => Get.to(() => const NotificationsPage(role: Role.student)),
-                      child: Text('Xem tất cả', style: AppTextStyles.bodySm(c.primary)),
+                      onPressed: () => Get.to(
+                        () => const NotificationsPage(role: Role.student),
+                      ),
+                      child: Text(
+                        'Xem tất cả',
+                        style: AppTextStyles.bodySm(c.primary),
+                      ),
                     ),
                   ],
                 ),
@@ -169,20 +197,7 @@ class _HomeTabContent extends StatelessWidget {
                       (n) => Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: _NotificationRow(
-                          notif: StudentNotification(
-                            id: n.id.hashCode,
-                            type: switch (n.type) {
-                              NotificationType.attendance => 'attendance',
-                              NotificationType.classUpdate => 'class',
-                              NotificationType.event => 'event',
-                              NotificationType.certificate => 'certificate',
-                              NotificationType.system => 'class',
-                              NotificationType.approval => 'event',
-                            },
-                            text: n.message,
-                            time: n.timeLabel,
-                            read: n.read,
-                          ),
+                          notif: n,
                           c: c,
                           onTap: () => showNotificationDetails(context, n),
                         ),
@@ -199,11 +214,17 @@ class _HomeTabContent extends StatelessWidget {
   Widget _sectionTitle(String text, AppColors c) =>
       Text(text, style: AppTextStyles.displaySm(c.foreground));
 
-  Widget _buildHeader(AppColors c, Map<String, dynamic> user, int unreadCount) {
-    const summary = [
-      {'label': 'Có mặt', 'val': '89%'},
-      {'label': 'Muộn', 'val': '8%'},
-      {'label': 'Vắng', 'val': '3%'},
+  /// Hiển thị hồ sơ và số liệu điểm danh trả về từ API.
+  Widget _buildHeader(
+    AppColors c,
+    Map<String, dynamic> user,
+    int unreadCount,
+    Map<String, dynamic> dashboard,
+  ) {
+    final summary = [
+      {'label': 'Có mặt', 'val': dashboard['present']?.toString() ?? '0'},
+      {'label': 'Muộn', 'val': dashboard['late']?.toString() ?? '0'},
+      {'label': 'Vắng', 'val': dashboard['absent']?.toString() ?? '0'},
     ];
     return Container(
       color: c.primary,
@@ -232,7 +253,7 @@ class _HomeTabContent extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Tài khoản dữ liệu thật',
+                    user['email']?.toString() ?? '',
                     style: TextStyle(color: Colors.white60, fontSize: 12),
                   ),
                 ],
@@ -241,7 +262,9 @@ class _HomeTabContent extends StatelessWidget {
                 clipBehavior: Clip.none,
                 children: [
                   InkWell(
-                    onTap: () => Get.to(() => const NotificationsPage(role: Role.student)),
+                    onTap: () => Get.to(
+                      () => const NotificationsPage(role: Role.student),
+                    ),
                     borderRadius: BorderRadius.circular(24),
                     child: Container(
                       width: 44,
@@ -451,13 +474,16 @@ class _TodayClassCard extends StatelessWidget {
                       .copyWith(fontSize: 14),
                 ),
                 Text(
-                  '${cls.time} · Phòng ${cls.room}',
+                  'Mã lớp ${cls.id}',
                   style: AppTextStyles.bodyXs(c.mutedForeground),
                 ),
               ],
             ),
           ),
-          const AppBadge(label: 'Chưa mở', status: BadgeStatus.pending),
+          Text(
+            '${cls.sessions} buổi',
+            style: AppTextStyles.bodyXs(c.mutedForeground),
+          ),
         ],
       ),
     );
@@ -467,8 +493,15 @@ class _TodayClassCard extends StatelessWidget {
 class _EventRow extends StatelessWidget {
   final StudentEventSummary event;
   final AppColors c;
-  const _EventRow({required this.event, required this.c});
+  final VoidCallback onOpenEvents;
 
+  const _EventRow({
+    required this.event,
+    required this.c,
+    required this.onOpenEvents,
+  });
+
+  /// Mở tab sự kiện thật thay vì hiển thị nút đăng ký không có xử lý.
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -525,9 +558,9 @@ class _EventRow extends StatelessWidget {
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                         ),
-                        onPressed: () {},
+                        onPressed: onOpenEvents,
                         child: const Text(
-                          'Đăng ký',
+                          'Xem sự kiện',
                           style: TextStyle(fontSize: 11),
                         ),
                       ),
@@ -541,11 +574,16 @@ class _EventRow extends StatelessWidget {
 }
 
 class _NotificationRow extends StatelessWidget {
-  final StudentNotification notif;
+  final AppNotificationItem notif;
   final AppColors c;
   final VoidCallback onTap;
-  const _NotificationRow({required this.notif, required this.c, required this.onTap});
+  const _NotificationRow({
+    required this.notif,
+    required this.c,
+    required this.onTap,
+  });
 
+  /// Hiển thị thông báo gốc do API trả về.
   @override
   Widget build(BuildContext context) {
     return Opacity(
@@ -563,16 +601,24 @@ class _NotificationRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(notif.emoji, style: const TextStyle(fontSize: 20)),
+              Icon(notif.icon, color: c.primary),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(notif.text, style: AppTextStyles.bodySm(c.foreground)),
+                    Text(
+                      notif.title,
+                      style: AppTextStyles.bodySm(c.foreground),
+                    ),
                     const SizedBox(height: 2),
                     Text(
-                      notif.time,
+                      notif.message,
+                      style: AppTextStyles.bodyXs(c.mutedForeground),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      notif.timeLabel,
                       style: AppTextStyles.bodyXs(c.mutedForeground),
                     ),
                   ],

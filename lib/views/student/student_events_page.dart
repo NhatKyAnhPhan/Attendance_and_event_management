@@ -6,7 +6,7 @@ import '../../data/api/api_client.dart';
 import '../../controllers/events_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
-import '../../data/mock/student_mock_data.dart';
+import '../../data/models/student_summaries.dart';
 import '../../widgets/app_badge.dart';
 
 // Đăng ký và hỏi xác nhận nếu sự kiện trùng lịch học.
@@ -312,7 +312,6 @@ class StudentEventsPage extends StatelessWidget {
                     ),
                   ),
                 ),
-                _SearchMoreCard(c: c),
               ],
             ),
           ),
@@ -503,44 +502,6 @@ class _EventDetailRow extends StatelessWidget {
           ),
           Expanded(
             child: Text(value, style: AppTextStyles.bodySm(c.foreground)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SearchMoreCard extends StatelessWidget {
-  final AppColors c;
-  const _SearchMoreCard({required this.c});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: c.card,
-        border: Border.all(color: c.border),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          const Text('🔍', style: TextStyle(fontSize: 32)),
-          const SizedBox(height: 8),
-          Text(
-            'Khám phá thêm sự kiện',
-            style: AppTextStyles.displayXs(c.foreground).copyWith(fontSize: 14),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Tìm kiếm sự kiện theo tên, mã hoặc ngày',
-            textAlign: TextAlign.center,
-            style: AppTextStyles.bodySm(c.mutedForeground),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton(
-            onPressed: () {},
-            child: const Text('Tìm kiếm sự kiện'),
           ),
         ],
       ),

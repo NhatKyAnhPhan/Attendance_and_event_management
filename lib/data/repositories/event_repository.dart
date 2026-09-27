@@ -1,6 +1,6 @@
 import '../api/api_client.dart';
 import '../models/event_model.dart';
-import '../mock/student_mock_data.dart';
+import '../models/student_summaries.dart';
 
 class EventRepository {
   EventRepository({ApiClient? client}) : _client = client ?? ApiClient();

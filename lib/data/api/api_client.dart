@@ -33,6 +33,7 @@ class ApiClient {
   final Dio _dio;
   static String? _sharedToken;
   static String? _configuredBaseUrl;
+  static Future<void> Function()? onUnauthorized;
 
   static String get baseUrl => _resolveBaseUrl(_configuredBaseUrl);
 
@@ -95,6 +96,10 @@ class ApiClient {
       if (body == null) throw const ApiException('API trả về dữ liệu rỗng.');
       return body;
     } on DioException catch (error) {
+      if (error.response?.statusCode == 401 &&
+          error.requestOptions.path != '/api/auth/login') {
+        await onUnauthorized?.call();
+      }
       final responseData = error.response?.data;
       final message = responseData is Map
           ? (responseData['message']?.toString() ?? 'Yêu cầu API thất bại.')

@@ -8,6 +8,7 @@ import '../../core/theme/app_text_styles.dart';
 class StudentProfilePage extends StatelessWidget {
   const StudentProfilePage({super.key});
 
+  /// Hiển thị thông tin tài khoản đã xác thực từ backend.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -16,6 +17,13 @@ class StudentProfilePage extends StatelessWidget {
     final user = auth.currentUser.value ?? const <String, dynamic>{};
     final name = user['name']?.toString() ?? 'Người dùng';
     final code = user['id']?.toString() ?? '';
+    final initials = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0].toUpperCase())
+        .join();
 
     final info = [
       ['Email', user['email']?.toString() ?? ''],
@@ -41,8 +49,8 @@ class StudentProfilePage extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
-                child: const Text(
-                  'PD',
+                child: Text(
+                  initials,
                   style: TextStyle(
                     color: Colors.white,
                     fontFamily: 'Nunito',
@@ -112,57 +120,6 @@ class StudentProfilePage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: c.card,
-                  border: Border.all(color: c.border),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Thành tích',
-                      style: AppTextStyles.displaySm(c.foreground),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEF3C7),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            Icons.emoji_events,
-                            color: Color(0xFFD97706),
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '2 chứng chỉ',
-                              style: AppTextStyles.displayXs(c.foreground)
-                                  .copyWith(fontSize: 14),
-                            ),
-                            Text(
-                              'Sự kiện đã hoàn thành',
-                              style: AppTextStyles.bodyXs(c.mutedForeground),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,

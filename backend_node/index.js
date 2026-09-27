@@ -293,11 +293,33 @@ app.get('/api/classes', requireAuth, async (request, response) => {
               DATE_FORMAT(lhp.Thoigianbatdau, '%Y-%m-%d') AS startDate,
               DATE_FORMAT(lhp.Thoigianketthuc, '%Y-%m-%d') AS endDate,
               COALESCE(nd.Hoten, '') AS lecturerName,
-              COUNT(DISTINCT tvl.Masv) AS studentCount
+              COUNT(DISTINCT tvl.Masv) AS studentCount,
+              COALESCE(attendance.present, 0) AS present,
+              COALESCE(attendance.late, 0) AS late,
+              COALESCE(attendance.absent, 0) AS absent,
+              COALESCE(attendance.sessions, 0) AS sessions,
+              CASE WHEN COALESCE(attendance.present, 0)
+                    + COALESCE(attendance.late, 0)
+                    + COALESCE(attendance.absent, 0) = 0 THEN 0
+                   ELSE ROUND(100 * COALESCE(attendance.present, 0)
+                    / (attendance.present + attendance.late + attendance.absent))
+              END AS rate
        FROM lophocphan lhp
        LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
        LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
        LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
+            LEFT JOIN (
+              SELECT b.Malop, kd.Masv,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent,
+                COUNT(DISTINCT bpd.Mabuoidiemdanh) AS sessions
+              FROM ketquadiemdanh kd
+              INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+              INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+              GROUP BY b.Malop, kd.Masv
+            ) attendance ON attendance.Malop = lhp.Malop
+                   AND attendance.Masv = ?
        WHERE EXISTS (
          SELECT 1 FROM thanhvienlop mine
          WHERE mine.Malop = lhp.Malop
@@ -305,9 +327,10 @@ app.get('/api/classes', requireAuth, async (request, response) => {
        )
        GROUP BY lhp.Malop, lhp.Tenlop, lhp.Hocky,
                 lhp.Namhoc, lhp.Magv, lhp.Thoigianbatdau,
-                lhp.Thoigianketthuc, nd.Hoten
+                lhp.Thoigianketthuc, nd.Hoten, attendance.present,
+                attendance.late, attendance.absent, attendance.sessions
        ORDER BY lhp.Malop`,
-      [request.auth.sub],
+      [request.auth.sub, request.auth.sub],
     );
     return response.json({ items: rows });
   } catch (error) {
@@ -551,21 +574,123 @@ app.delete('/api/events/:eventId/register', requireAuth, async (request, respons
 // Tổng hợp số lớp, sự kiện và kết quả điểm danh của sinh viên.
 app.get('/api/dashboard', requireAuth, async (request, response) => {
   try {
+    const currentRole = String(request.auth.role || '').trim().toLowerCase();
+    const userId = request.auth.sub;
+
+    if (['quản trị viên', 'admin'].includes(currentRole)) {
+      const [[users]] = await pool.query(
+        'SELECT COUNT(*) AS total FROM nguoidung',
+      );
+      const [[students]] = await pool.query(
+        'SELECT COUNT(*) AS total FROM sinhvien',
+      );
+      const [[classes]] = await pool.query(
+        'SELECT COUNT(*) AS total FROM lophocphan',
+      );
+      const [[events]] = await pool.query(
+        'SELECT COUNT(*) AS total FROM sukien',
+      );
+      const [[sessions]] = await pool.query(
+        'SELECT COUNT(*) AS total FROM buoidiemdanh',
+      );
+      const [[attendance]] = await pool.query(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present
+         FROM ketquadiemdanh`,
+      );
+      const rate = Number(attendance.total || 0) === 0
+        ? 0
+        : Math.round(Number(attendance.present || 0) * 100 / Number(attendance.total));
+      return response.json({
+        metrics: [
+          { label: 'Tổng người dùng', value: Number(users.total || 0) },
+          { label: 'Sinh viên', value: Number(students.total || 0) },
+          { label: 'Lớp học phần', value: Number(classes.total || 0) },
+          { label: 'Sự kiện', value: Number(events.total || 0) },
+          { label: 'Phiên điểm danh', value: Number(sessions.total || 0) },
+          { label: 'Tỷ lệ có mặt', value: `${rate}%` },
+        ],
+      });
+    }
+
+    if (['cán bộ', 'nhân viên', 'ban tổ chức', 'organizer', 'staff', 'employee'].includes(currentRole)) {
+      const [[events]] = await pool.execute(
+        `SELECT COUNT(DISTINCT sk.Masukien) AS total,
+                COUNT(DISTINCT dk.Masv, dk.Masukien) AS registrations
+         FROM donvi dv
+         LEFT JOIN sukien sk ON sk.Madv = dv.Madv
+         LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
+         WHERE dv.Manv = ?`,
+        [userId],
+      );
+      const [[certificates]] = await pool.execute(
+        `SELECT COUNT(*) AS total
+         FROM chungnhan cn
+         INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
+         INNER JOIN donvi dv ON dv.Madv = sk.Madv
+         WHERE dv.Manv = ?`,
+        [userId],
+      );
+      return response.json({
+        metrics: [
+          { label: 'Sự kiện phụ trách', value: Number(events.total || 0) },
+          { label: 'Lượt đăng ký', value: Number(events.registrations || 0) },
+          { label: 'Chứng chỉ đã cấp', value: Number(certificates.total || 0) },
+        ],
+      });
+    }
+
+    if (['giảng viên', 'lecturer', 'teacher'].includes(currentRole)) {
+      const [[teaching]] = await pool.execute(
+        `SELECT COUNT(DISTINCT lhp.Malop) AS classes,
+                COUNT(DISTINCT tvl.Masv) AS students,
+                COUNT(DISTINCT b.Mabuoi) AS sessions
+         FROM lophocphan lhp
+         LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
+         LEFT JOIN buoi b ON b.Malop = lhp.Malop
+         WHERE lhp.Magv = ?`,
+        [userId],
+      );
+      const [[attendance]] = await pool.execute(
+        `SELECT COUNT(kd.Maketqua) AS total,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+         FROM ketquadiemdanh kd
+         INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+         INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+         INNER JOIN lophocphan lhp ON lhp.Malop = b.Malop
+         WHERE lhp.Magv = ?`,
+        [userId],
+      );
+      const rate = Number(attendance.total || 0) === 0
+        ? 0
+        : Math.round(Number(attendance.present || 0) * 100 / Number(attendance.total));
+      return response.json({
+        metrics: [
+          { label: 'Lớp của tôi', value: Number(teaching.classes || 0) },
+          { label: 'Sinh viên', value: Number(teaching.students || 0) },
+          { label: 'Buổi học', value: Number(teaching.sessions || 0) },
+          { label: 'Tỷ lệ có mặt', value: `${rate}%` },
+        ],
+      });
+    }
+
     const [[classes]] = await pool.execute(
-      `SELECT COUNT(*) AS total FROM thanhvienlop WHERE Masv = ?`,
-      [request.auth.sub],
+      'SELECT COUNT(*) AS total FROM thanhvienlop WHERE Masv = ?',
+      [userId],
     );
     const [[events]] = await pool.execute(
-      `SELECT COUNT(*) AS total FROM dangkysukien WHERE Masv = ?`,
-      [request.auth.sub],
+      'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masv = ?',
+      [userId],
     );
     const [[attendance]] = await pool.execute(
       `SELECT
          SUM(CASE WHEN Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
          SUM(CASE WHEN Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
          SUM(CASE WHEN Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
-       FROM ketquadiemdanh WHERE Masv = ?`,
-      [request.auth.sub],
+      FROM ketquadiemdanh WHERE Masv = ?`,
+          [userId],
     );
     return response.json({
       classes: Number(classes.total || 0),
@@ -643,6 +768,83 @@ app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
   } catch (error) {
     console.error('Attendance sessions error:', error.message);
     return response.status(500).json({ message: 'Không thể tải phiên điểm danh.' });
+  }
+});
+
+// Lấy các phiên điểm danh cùng số lượt có mặt, trễ và vắng từ cơ sở dữ liệu.
+app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT bpd.Mabuoidiemdanh AS id, b.Malop AS classId,
+              COALESCE(lhp.Tenlop, '') AS className,
+              COALESCE(b.Noidung, '') AS sessionName,
+              bpd.Thoigianmo AS openedAt, bpd.Thoigiandong AS closedAt,
+              bpd.Phuongthuc AS method,
+              bpd.Trangthaidiemdanh AS status,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+       FROM buoidiemdanh bpd
+       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN ketquadiemdanh kd ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
+       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
+       GROUP BY bpd.Mabuoidiemdanh, b.Malop, lhp.Tenlop,
+                b.Noidung, bpd.Thoigianmo, bpd.Thoigiandong,
+                bpd.Phuongthuc, bpd.Trangthaidiemdanh
+       ORDER BY bpd.Thoigianmo DESC`,
+      [request.auth.role, request.auth.sub],
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Admin attendance sessions error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải phiên điểm danh.' });
+  }
+});
+
+// Tổng hợp kết quả điểm danh theo trạng thái và ngày cho Admin/Giảng viên.
+app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+  try {
+    const scope = [request.auth.role, request.auth.sub];
+    const [[summary]] = await pool.execute(
+      `SELECT COUNT(kd.Maketqua) AS total,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+       FROM ketquadiemdanh kd
+       INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)`,
+      scope,
+    );
+    const [rows] = await pool.execute(
+      `SELECT DATE(kd.Thoigiandiemdanh) AS date,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+       FROM ketquadiemdanh kd
+       INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       WHERE kd.Thoigiandiemdanh >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+         AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
+       GROUP BY DATE(kd.Thoigiandiemdanh)
+       ORDER BY date`,
+      scope,
+    );
+    return response.json({
+      summary: {
+        total: Number(summary.total || 0),
+        present: Number(summary.present || 0),
+        late: Number(summary.late || 0),
+        absent: Number(summary.absent || 0),
+      },
+      items: rows,
+    });
+  } catch (error) {
+    console.error('Attendance report error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải báo cáo điểm danh.' });
   }
 });
 

@@ -15,7 +15,8 @@ Future<void> main() async {
 
   // Controller nền tảng, cần có trước khi bất kỳ trang nào build.
   Get.put(ThemeController());
-  Get.put(AuthController());
+  final authController = Get.put(AuthController());
+  ApiClient.onUnauthorized = authController.handleUnauthorized;
   Get.put(NotificationController());
 
   runApp(const App());

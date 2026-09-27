@@ -4,11 +4,12 @@ import 'package:get/get.dart';
 import '../../controllers/classes_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
-import '../../data/mock/student_mock_data.dart';
+import '../../data/models/student_summaries.dart';
 
 class StudentClassesPage extends StatelessWidget {
   const StudentClassesPage({super.key});
 
+  /// Hiển thị lớp và kết quả điểm danh lấy từ API sinh viên.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -42,7 +43,7 @@ class StudentClassesPage extends StatelessWidget {
                       .copyWith(fontSize: 22),
                 ),
                 Text(
-                  'HK2 2024–2025 · ${classes.length} lớp',
+                  '${classes.length} lớp trong dữ liệu của bạn',
                   style: AppTextStyles.bodySm(c.mutedForeground),
                 ),
               ],

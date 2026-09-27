@@ -5,8 +5,7 @@ import '../../views/auth/auth_page.dart';
 import '../../views/student/student_home_page.dart';
 import '../../views/admin_shell/admin_shell_page.dart';
 
-/// TODO: thay dần các PlaceholderPage bằng trang thật theo lộ trình
-/// (login → student flow → admin shell).
+/// Khai báo các luồng đăng nhập, sinh viên và quản trị.
 class AppPages {
   AppPages._();
 

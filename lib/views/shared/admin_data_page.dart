@@ -16,6 +16,7 @@ class AdminDataPage extends StatelessWidget {
     required this.columns,
   });
 
+  /// Tải bảng dữ liệu thật theo endpoint được chọn.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -67,7 +68,11 @@ class AdminDataPage extends StatelessWidget {
     );
   }
 
+  /// Ánh xạ các cột hiển thị về key JSON từ từng endpoint.
   List<String> get columnKeys {
+    if (endpoint.endsWith('/units')) {
+      return const ['id', 'name'];
+    }
     if (endpoint.endsWith('/users')) {
       return const ['id', 'name', 'email', 'role', 'status'];
     }

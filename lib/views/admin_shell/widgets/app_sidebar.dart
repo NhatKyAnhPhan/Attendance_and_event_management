@@ -22,7 +22,6 @@ const _adminNav = [
   _NavItem(Icons.bar_chart_outlined, AdminPage.reports),
   _NavItem(Icons.forum_outlined, AdminPage.feedback),
   _NavItem(Icons.workspace_premium_outlined, AdminPage.certificates),
-  _NavItem(Icons.notifications_outlined, AdminPage.notifications),
   _NavItem(Icons.settings_outlined, AdminPage.settings),
 ];
 
@@ -37,11 +36,8 @@ const _lecturerNav = [
 const _organizerNav = [
   _NavItem(Icons.home_outlined, AdminPage.dashboard),
   _NavItem(Icons.event_outlined, AdminPage.events),
-  _NavItem(Icons.people_outline, AdminPage.users),
-  _NavItem(Icons.check_box_outlined, AdminPage.attendance),
   _NavItem(Icons.workspace_premium_outlined, AdminPage.certificates),
   _NavItem(Icons.forum_outlined, AdminPage.feedback),
-  _NavItem(Icons.bar_chart_outlined, AdminPage.reports),
 ];
 
 List<_NavItem> _navFor(Role role) {

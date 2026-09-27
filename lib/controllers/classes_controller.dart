@@ -1,6 +1,6 @@
 import 'package:get/get.dart';
 
-import '../data/mock/student_mock_data.dart';
+import '../data/models/student_summaries.dart';
 import '../data/repositories/class_repository.dart';
 
 class ClassesController extends GetxController {

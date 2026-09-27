@@ -86,12 +86,18 @@ class AuthController extends GetxController {
     );
     final r = RoleX.fromString(session.role);
     _authRepository.setToken(session.token);
-    currentUser.value = session.user;
+    var user = session.user;
+    try {
+      user = await _authRepository.getCurrentUser();
+    } on ApiException catch (_) {
+      // Hồ sơ đăng nhập vẫn là dữ liệu API hợp lệ nếu endpoint hồ sơ tạm lỗi.
+    }
+    currentUser.value = user;
     role.value = r;
     isAuthed.value = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('authToken', session.token);
-    await prefs.setString('currentUser', jsonEncode(session.user));
+    await prefs.setString('currentUser', jsonEncode(user));
     await prefs.setBool(_authKey, true);
     await prefs.setString(_roleKey, r.name);
     Get.offAllNamed(
@@ -110,5 +116,11 @@ class AuthController extends GetxController {
     await prefs.remove('currentUser');
     _authRepository.setToken(null);
     Get.offAllNamed(AppRoutes.login);
+  }
+
+  /// Xóa phiên hiện tại nếu API xác nhận token đã hết hạn.
+  Future<void> handleUnauthorized() async {
+    if (!isAuthed.value) return;
+    await logout();
   }
 }

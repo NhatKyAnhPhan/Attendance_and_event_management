@@ -1,6 +1,6 @@
 import '../api/api_client.dart';
 import '../models/class_model.dart';
-import '../mock/student_mock_data.dart';
+import '../models/student_summaries.dart';
 
 class ClassRepository {
   ClassRepository({ApiClient? client}) : _client = client ?? ApiClient();

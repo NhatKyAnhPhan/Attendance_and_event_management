@@ -1,281 +1,226 @@
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
+import '../../controllers/reports_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 
 class ReportsPage extends StatelessWidget {
   const ReportsPage({super.key});
 
+  /// Hiển thị thống kê điểm danh được truy vấn trực tiếp từ backend.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final c = AppColors.of(isDark);
+    final colors = AppColors.of(isDark);
+    final controller = Get.put(ReportsController());
 
-    final stats = [
-      {'label': 'Tổng điểm danh', 'value': '8,742', 'color': c.primary},
-      {'label': 'Có mặt', 'value': '82.3%', 'color': c.success},
-      {'label': 'Muộn', 'value': '9.1%', 'color': c.warning},
-      {'label': 'Vắng', 'value': '6.4%', 'color': c.danger},
-    ];
+    return Obx(() {
+      final summary = controller.summary;
+      final present = _number(summary['present']);
+      final late = _number(summary['late']);
+      final absent = _number(summary['absent']);
+      final total = _number(summary['total']);
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          'Báo cáo & thống kê',
-          style: AppTextStyles.displayLg(c.foreground),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Tổng quan hiệu suất học tập và điểm danh theo thời gian',
-          style: AppTextStyles.bodySm(c.mutedForeground),
-        ),
-        const SizedBox(height: 20),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final columns = constraints.maxWidth >= 900
-                ? 4
-                : constraints.maxWidth >= 560
-                ? 2
-                : 1;
-            return GridView.builder(
-              itemCount: stats.length,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
+      return RefreshIndicator(
+        onRefresh: controller.load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              'Báo cáo & thống kê',
+              style: AppTextStyles.displayLg(colors.foreground),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Kết quả điểm danh trong cơ sở dữ liệu.',
+              style: AppTextStyles.bodySm(colors.mutedForeground),
+            ),
+            const SizedBox(height: 20),
+            LayoutBuilder(
+              builder: (context, constraints) => GridView.count(
+                crossAxisCount: constraints.maxWidth >= 800
+                    ? 4
+                    : constraints.maxWidth >= 520
+                    ? 2
+                    : 1,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                mainAxisExtent: 100,
-              ),
-              itemBuilder: (context, index) {
-                final item = stats[index];
-                return Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: c.card,
-                    border: Border.all(color: c.border),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        item['label'] as String,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTextStyles.bodySm(c.mutedForeground),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        item['value'] as String,
-                        style: AppTextStyles.displayLg(item['color'] as Color)
-                            .copyWith(fontSize: 22),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            );
-          },
-        ),
-        const SizedBox(height: 20),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final wide = constraints.maxWidth > 900;
-            final charts = [
-              _ReportChartCard(
-                title: 'Xu hướng điểm danh theo tuần',
-                child: SizedBox(height: 220, child: _WeeklyChart(c: c)),
-              ),
-              _ReportChartCard(
-                title: 'Tỷ lệ điểm danh',
-                child: _PieChart(c: c),
-              ),
-            ];
-            if (wide) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisExtent: 92,
                 children: [
-                  Expanded(child: charts[0]),
-                  const SizedBox(width: 16),
-                  Expanded(child: charts[1]),
+                  _SummaryTile(
+                    title: 'Tổng kết quả',
+                    value: '$total',
+                    color: colors.primary,
+                  ),
+                  _SummaryTile(
+                    title: 'Có mặt',
+                    value: _percentage(present, total),
+                    color: colors.success,
+                  ),
+                  _SummaryTile(
+                    title: 'Muộn',
+                    value: _percentage(late, total),
+                    color: colors.warning,
+                  ),
+                  _SummaryTile(
+                    title: 'Vắng',
+                    value: _percentage(absent, total),
+                    color: colors.danger,
+                  ),
                 ],
-              );
-            }
-            return Column(
-              children: [charts[0], const SizedBox(height: 16), charts[1]],
-            );
-          },
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Theo ngày',
+              style: AppTextStyles.displaySm(colors.foreground),
+            ),
+            const SizedBox(height: 12),
+            if (controller.loading.value && controller.dailyItems.isEmpty)
+              const Center(child: CircularProgressIndicator())
+            else if (controller.error.value.isNotEmpty)
+              Text(
+                controller.error.value,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              )
+            else if (controller.dailyItems.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Center(
+                  child: Text(
+                    'Chưa có kết quả điểm danh để lập báo cáo.',
+                    style: AppTextStyles.bodySm(colors.mutedForeground),
+                  ),
+                ),
+              )
+            else
+              ...controller.dailyItems.map(
+                (item) => _DailyRow(item: item, colors: colors),
+              ),
+          ],
         ),
-      ],
-    );
+      );
+    });
   }
+
+  /// Chuyển giá trị JSON sang số nguyên, mặc định 0 nếu dữ liệu trống.
+  static int _number(dynamic value) =>
+      int.tryParse(value?.toString() ?? '') ?? 0;
+
+  /// Định dạng tỷ lệ từ tổng số kết quả đã được truy vấn.
+  static String _percentage(int value, int total) =>
+      total == 0 ? '0%' : '${(value * 100 / total).round()}%';
 }
 
-class _ReportChartCard extends StatelessWidget {
+class _SummaryTile extends StatelessWidget {
   final String title;
-  final Widget child;
+  final String value;
+  final Color color;
 
-  const _ReportChartCard({required this.title, required this.child});
+  const _SummaryTile({
+    required this.title,
+    required this.value,
+    required this.color,
+  });
 
+  /// Hiển thị một chỉ số tổng hợp từ API.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final c = AppColors.of(isDark);
-
+    final colors = AppColors.of(isDark);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: c.card,
-        border: Border.all(color: c.border),
-        borderRadius: BorderRadius.circular(12),
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(title, style: AppTextStyles.displaySm(c.foreground)),
-          const SizedBox(height: 12),
-          child,
+          Text(title, style: AppTextStyles.bodySm(colors.mutedForeground)),
+          const SizedBox(height: 4),
+          Text(value, style: AppTextStyles.displaySm(color)),
         ],
       ),
     );
   }
 }
 
-class _WeeklyChart extends StatelessWidget {
-  final AppColors c;
-  const _WeeklyChart({required this.c});
+class _DailyRow extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final AppColors colors;
 
+  const _DailyRow({required this.item, required this.colors});
+
+  /// Hiển thị số lượt theo ngày từ kết quả API.
   @override
   Widget build(BuildContext context) {
-    final weeks = [
-      {'day': 'T2', 'value': 78.0},
-      {'day': 'T3', 'value': 83.0},
-      {'day': 'T4', 'value': 69.0},
-      {'day': 'T5', 'value': 92.0},
-      {'day': 'T6', 'value': 88.0},
-      {'day': 'T7', 'value': 73.0},
-      {'day': 'CN', 'value': 64.0},
-    ];
-
-    return BarChart(
-      BarChartData(
-        maxY: 100,
-        barGroups: List.generate(weeks.length, (index) {
-          final item = weeks[index];
-          return BarChartGroupData(
-            x: index,
-            barRods: [
-              BarChartRodData(
-                toY: item['value'] as double,
-                width: 18,
-                borderRadius: BorderRadius.circular(6),
-                color: c.primary,
-              ),
-            ],
-          );
-        }),
-        titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
+    final date = DateTime.tryParse(item['date']?.toString() ?? '');
+    final label = date == null
+        ? item['date']?.toString() ?? ''
+        : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label, style: AppTextStyles.bodySm(colors.foreground)),
           ),
-          rightTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
+          _CountLabel(
+            label: 'Có mặt',
+            value: item['present'],
+            color: colors.success,
           ),
-          topTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
+          const SizedBox(width: 12),
+          _CountLabel(
+            label: 'Muộn',
+            value: item['late'],
+            color: colors.warning,
           ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              getTitlesWidget: (value, meta) {
-                final i = value.toInt();
-                if (i < 0 || i >= weeks.length) return const SizedBox.shrink();
-                return Text(
-                  weeks[i]['day'] as String,
-                  style: AppTextStyles.bodyXs(c.mutedForeground),
-                );
-              },
-            ),
+          const SizedBox(width: 12),
+          _CountLabel(
+            label: 'Vắng',
+            value: item['absent'],
+            color: colors.danger,
           ),
-        ),
-        gridData: FlGridData(
-          show: true,
-          getDrawingHorizontalLine: (value) =>
-              FlLine(color: c.border, strokeWidth: 1),
-        ),
-        borderData: FlBorderData(show: false),
+        ],
       ),
     );
   }
 }
 
-class _PieChart extends StatelessWidget {
-  final AppColors c;
-  const _PieChart({required this.c});
+class _CountLabel extends StatelessWidget {
+  final String label;
+  final dynamic value;
+  final Color color;
 
+  const _CountLabel({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  /// Hiển thị một trạng thái điểm danh trong dòng báo cáo.
   @override
   Widget build(BuildContext context) {
-    final pieData = [
-      {'label': 'Có mặt', 'value': 76.0, 'color': const Color(0xFF16A34A)},
-      {'label': 'Muộn', 'value': 12.0, 'color': const Color(0xFFD97706)},
-      {'label': 'Vắng', 'value': 8.0, 'color': const Color(0xFFDC2626)},
-      {'label': 'Phép', 'value': 4.0, 'color': const Color(0xFF7C3AED)},
-    ];
-
+    final count = int.tryParse(value?.toString() ?? '') ?? 0;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        SizedBox(
-          height: 150,
-          child: PieChart(
-            PieChartData(
-              sectionsSpace: 2,
-              centerSpaceRadius: 38,
-              sections: pieData
-                  .map(
-                    (item) => PieChartSectionData(
-                      value: item['value'] as double,
-                      color: item['color'] as Color,
-                      title: '',
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        ...pieData.map(
-          (item) => Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: item['color'] as Color,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    item['label'] as String,
-                    style: AppTextStyles.bodySm(c.foreground),
-                  ),
-                ),
-                Text(
-                  '${item['value']}%',
-                  style: AppTextStyles.bodySm(c.foreground)
-                      .copyWith(fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ),
-        ),
+        Text('$count', style: AppTextStyles.bodySm(color)),
+        Text(label, style: AppTextStyles.bodyXs(color)),
       ],
     );
   }

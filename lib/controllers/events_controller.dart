@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:get/get.dart';
 
-import '../data/mock/student_mock_data.dart';
+import '../data/models/student_summaries.dart';
 import '../data/repositories/event_repository.dart';
 
 class EventsController extends GetxController {

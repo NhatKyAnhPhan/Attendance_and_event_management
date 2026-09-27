@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:get/get.dart';
 
+import 'auth_controller.dart';
 import '../core/constants/role.dart';
 import '../data/api/api_client.dart';
 import '../data/models/notification_model.dart';
@@ -10,28 +11,40 @@ class NotificationController extends GetxController {
   final RxList<AppNotificationItem> items = <AppNotificationItem>[].obs;
   final ApiClient _apiClient = ApiClient();
   Timer? _refreshTimer;
+  Worker? _authWorker;
   bool _refreshingAttendance = false;
 
+  /// Chỉ đồng bộ thông báo thật sau khi trạng thái đăng nhập đã được xác minh.
   @override
   void onInit() {
     super.onInit();
-    _seedNotifications();
-    unawaited(refreshActiveAttendance());
+    final auth = Get.find<AuthController>();
+    _authWorker = everAll([auth.isReady, auth.isAuthed], (_) {
+      if (auth.isReady.value && auth.isAuthed.value) {
+        unawaited(refreshActiveAttendance());
+      } else if (auth.isReady.value) {
+        items.clear();
+      }
+    });
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 15),
       (_) => refreshActiveAttendance(),
     );
   }
 
+  /// Dừng bộ đếm và listener xác thực khi controller bị hủy.
   @override
   void onClose() {
     _refreshTimer?.cancel();
+    _authWorker?.dispose();
     super.onClose();
   }
 
-  // Đồng bộ các phiên điểm danh đang mở, đồng thời giữ trạng thái đã đọc.
+  /// Đồng bộ các phiên điểm danh đang mở khi phiên người dùng còn hợp lệ.
   Future<void> refreshActiveAttendance() async {
     if (_refreshingAttendance) return;
+    final auth = Get.find<AuthController>();
+    if (!auth.isReady.value || !auth.isAuthed.value) return;
     _refreshingAttendance = true;
     try {
       final response = await _apiClient.get('/api/notifications');
@@ -61,7 +74,8 @@ class NotificationController extends GetxController {
           id: id,
           recipients: const [Role.student],
           title: 'Điểm danh lớp $classId đã mở',
-          message: '${content.isEmpty ? 'Phiên điểm danh' : content} đang mở bằng $method$closingTime.',
+          message:
+              '${content.isEmpty ? 'Phiên điểm danh' : content} đang mở bằng $method$closingTime.',
           type: NotificationType.attendance,
           priority: NotificationPriority.high,
           createdAt:
@@ -84,68 +98,6 @@ class NotificationController extends GetxController {
     }
   }
 
-  // Tạo các thông báo mẫu dùng cho những loại thông báo chưa có API riêng.
-  void _seedNotifications() {
-    final now = DateTime.now();
-    items.assignAll([
-      AppNotificationItem(
-        id: 'n2',
-        recipients: const [Role.student],
-        title: 'Lịch học thay đổi',
-        message: 'Buổi CS202 đã đổi phòng từ B204 sang B301.',
-        type: NotificationType.classUpdate,
-        priority: NotificationPriority.normal,
-        createdAt: now.subtract(const Duration(hours: 3)),
-      ),
-      AppNotificationItem(
-        id: 'n3',
-        recipients: const [Role.student],
-        title: 'Chứng chỉ đã cấp',
-        message: 'Workshop AI của bạn đã được cấp chứng nhận thành công.',
-        type: NotificationType.certificate,
-        priority: NotificationPriority.low,
-        createdAt: now.subtract(const Duration(days: 1)),
-      ),
-      AppNotificationItem(
-        id: 'n4',
-        recipients: const [Role.lecturer, Role.admin],
-        title: 'Phân tích điểm danh',
-        message: 'Tỷ lệ có mặt của CS101 tuần này giảm 7% so với tuần trước.',
-        type: NotificationType.system,
-        priority: NotificationPriority.high,
-        createdAt: now.subtract(const Duration(hours: 8)),
-      ),
-      AppNotificationItem(
-        id: 'n5',
-        recipients: const [Role.organizer, Role.admin],
-        title: 'Đơn đăng ký sự kiện cần duyệt',
-        message: 'Có 64 sinh viên đăng ký sự kiện Ngày hội Việc làm IT 2025.',
-        type: NotificationType.approval,
-        priority: NotificationPriority.high,
-        createdAt: now.subtract(const Duration(hours: 2)),
-        actionLabel: 'Duyệt ngay',
-      ),
-      AppNotificationItem(
-        id: 'n6',
-        recipients: const [Role.admin],
-        title: 'Báo cáo cuối ngày',
-        message: 'Hệ thống đã cập nhật báo cáo điểm danh và báo cáo sự kiện ngày hôm nay.',
-        type: NotificationType.system,
-        priority: NotificationPriority.normal,
-        createdAt: now.subtract(const Duration(days: 2)),
-      ),
-      AppNotificationItem(
-        id: 'n7',
-        recipients: const [Role.lecturer],
-        title: 'Sinh viên muộn',
-        message: '3 sinh viên đã điểm danh muộn trong buổi CS301 hôm nay.',
-        type: NotificationType.attendance,
-        priority: NotificationPriority.normal,
-        createdAt: now.subtract(const Duration(minutes: 46)),
-      ),
-    ]);
-  }
-
   // Lọc thông báo theo vai trò và sắp xếp thông báo mới nhất lên trước.
   List<AppNotificationItem> notificationsFor(Role role) {
     return items.where((item) => item.recipients.contains(role)).toList()
@@ -153,16 +105,22 @@ class NotificationController extends GetxController {
   }
 
   // Lọc tiếp danh sách theo trạng thái chưa đọc hoặc mức độ quan trọng.
-  List<AppNotificationItem> visibleFor(Role role, {bool unreadOnly = false, bool importantOnly = false}) {
+  List<AppNotificationItem> visibleFor(
+    Role role, {
+    bool unreadOnly = false,
+    bool importantOnly = false,
+  }) {
     final list = notificationsFor(role);
     return list.where((item) {
       if (unreadOnly && item.read) return false;
-      if (importantOnly && item.priority == NotificationPriority.low) return false;
+      if (importantOnly && item.priority == NotificationPriority.low)
+        return false;
       return true;
     }).toList();
   }
 
-  int unreadCount(Role role) => notificationsFor(role).where((item) => !item.read).length;
+  int unreadCount(Role role) =>
+      notificationsFor(role).where((item) => !item.read).length;
   // Đánh dấu một thông báo cụ thể là đã đọc.
 
   void markAsRead(String id) {
