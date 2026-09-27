@@ -31,6 +31,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
     _loadSessions();
   }
 
+  // Tải các buổi học mà giảng viên có thể mở điểm danh.
   Future<void> _loadSessions() async {
     try {
       final body = await _client.get(ApiEndpoints.attendanceSessions);
@@ -53,6 +54,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
     }
   }
 
+  // Lấy vị trí hiện tại và tạo phiên điểm danh kèm mã QR từ API.
   Future<void> _createQr() async {
     if (_selectedClassSession == null) return;
     setState(() {
@@ -87,6 +89,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
     }
   }
 
+  // Kiểm tra dịch vụ/quyền vị trí trước khi tạo phiên điểm danh.
   Future<Position> _getCurrentPosition() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
       throw const ApiException(

@@ -9,6 +9,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/notification_model.dart';
 
+// Đánh dấu thông báo đã đọc và hiển thị nội dung cùng thao tác liên quan.
 Future<void> showNotificationDetails(BuildContext context, AppNotificationItem item) async {
   final isDark = Theme.of(context).brightness == Brightness.dark;
   final c = AppColors.of(isDark);

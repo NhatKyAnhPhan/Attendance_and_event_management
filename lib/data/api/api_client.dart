@@ -33,6 +33,7 @@ class ApiClient {
 
   bool get isConfigured => _dio.options.baseUrl.isNotEmpty;
 
+  // Cập nhật token dùng chung cho các yêu cầu HTTP tiếp theo.
   void setToken(String? token) {
     _sharedToken = token;
     if (token == null || token.isEmpty) {

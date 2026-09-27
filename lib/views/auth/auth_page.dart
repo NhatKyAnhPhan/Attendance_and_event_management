@@ -48,6 +48,7 @@ class _AuthPageState extends State<AuthPage> {
 
   // ---------- Handlers (tương ứng handleLogin/handleForgot/handleOtp/handleNewPassword) ----------
 
+  // Kiểm tra biểu mẫu, gọi AuthController và hiển thị lỗi đăng nhập.
   Future<void> _handleLogin() async {
     if (_emailCtrl.text.isEmpty || _passwordCtrl.text.isEmpty) {
       setState(() => _error = 'Vui lòng nhập đầy đủ thông tin.');
@@ -70,6 +71,7 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
+  // Kiểm tra email và chuyển sang bước nhập mã OTP.
   Future<void> _handleForgot() async {
     if (_emailCtrl.text.isEmpty) {
       setState(() => _error = 'Vui lòng nhập email.');
@@ -87,6 +89,7 @@ class _AuthPageState extends State<AuthPage> {
     });
   }
 
+  // Ghép sáu ô OTP, kiểm tra đủ mã rồi chuyển sang bước đổi mật khẩu.
   Future<void> _handleOtp() async {
     final code = _otpCtrls.map((c) => c.text).join();
     if (code.length < 6) {
@@ -105,6 +108,7 @@ class _AuthPageState extends State<AuthPage> {
     });
   }
 
+  // Kiểm tra mật khẩu mới trước khi hoàn tất quy trình khôi phục tài khoản.
   Future<void> _handleNewPassword() async {
     if (_newPwCtrl.text.length < 8) {
       setState(() => _error = 'Mật khẩu phải có ít nhất 8 ký tự.');
@@ -126,6 +130,7 @@ class _AuthPageState extends State<AuthPage> {
     });
   }
 
+  // Tự động chuyển focus sang ô OTP kế tiếp sau khi nhập một chữ số.
   void _handleOtpInput(int i, String val) {
     if (val.isNotEmpty && i < 5) {
       _otpFocus[i + 1].requestFocus();

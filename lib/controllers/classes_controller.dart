@@ -15,6 +15,7 @@ class ClassesController extends GetxController {
     load();
   }
 
+  // Tải danh sách lớp của sinh viên và cập nhật trạng thái loading/lỗi.
   Future<void> load() async {
     loading.value = true;
     error.value = '';

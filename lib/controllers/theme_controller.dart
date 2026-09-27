@@ -14,12 +14,14 @@ class ThemeController extends GetxController {
     _loadFromPrefs();
   }
 
+  // Đọc chế độ giao diện đã lưu và áp dụng ngay khi ứng dụng khởi động.
   Future<void> _loadFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     isDark.value = prefs.getBool(_prefKey) ?? false;
     Get.changeThemeMode(isDark.value ? ThemeMode.dark : ThemeMode.light);
   }
 
+  // Đổi chế độ sáng/tối, cập nhật giao diện và lưu lựa chọn của người dùng.
   Future<void> toggle() async {
     isDark.value = !isDark.value;
     Get.changeThemeMode(isDark.value ? ThemeMode.dark : ThemeMode.light);

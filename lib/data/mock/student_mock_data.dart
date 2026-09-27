@@ -30,6 +30,7 @@ class StudentClassSummary {
     required this.rate,
   });
 
+  // Chuyển phản hồi API lớp học thành dữ liệu tóm tắt cho màn sinh viên.
   factory StudentClassSummary.fromJson(Map<String, dynamic> json) {
     return StudentClassSummary(
       id: json['code']?.toString() ?? json['id']?.toString() ?? '',
@@ -61,6 +62,7 @@ class StudentEventSummary {
     required this.registered,
   });
 
+  // Chuyển phản hồi API sự kiện thành dữ liệu tóm tắt cho màn sinh viên.
   factory StudentEventSummary.fromJson(Map<String, dynamic> json) {
     return StudentEventSummary(
       id: json['id']?.toString() ?? '',

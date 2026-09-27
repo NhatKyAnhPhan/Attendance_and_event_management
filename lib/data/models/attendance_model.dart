@@ -74,6 +74,7 @@ class AttendanceSession {
     required this.absent,
   });
 
+  // Chuyển dữ liệu phiên điểm danh từ JSON sang model có kiểu rõ ràng.
   factory AttendanceSession.fromJson(Map<String, dynamic> json) {
     return AttendanceSession(
       id: json['id'] as String,
@@ -92,6 +93,7 @@ class AttendanceSession {
     );
   }
 
+  // Chuẩn hóa chuỗi phương thức từ API về enum dùng trong giao diện.
   static AttendanceMethod _methodFromString(String? v) {
     switch (v) {
       case 'Face':
@@ -105,6 +107,7 @@ class AttendanceSession {
     }
   }
 
+  // Chuẩn hóa chuỗi trạng thái từ API và dùng pending khi dữ liệu không hợp lệ.
   static AttendanceStatus _statusFromString(String? v) {
     return AttendanceStatus.values.firstWhere(
       (s) => s.name == v,
@@ -135,6 +138,7 @@ class AttendanceRecord {
     this.method = AttendanceMethod.qr,
   });
 
+  // Chuyển một bản ghi điểm danh từ JSON sang model ứng dụng.
   factory AttendanceRecord.fromJson(Map<String, dynamic> json) {
     return AttendanceRecord(
       id: json['id'] as String,
@@ -150,6 +154,7 @@ class AttendanceRecord {
     );
   }
 
+  // Chuyển bản ghi điểm danh thành payload JSON khi cần lưu hoặc gửi đi.
   Map<String, dynamic> toJson() => {
         'id': id,
         'sessionId': sessionId,

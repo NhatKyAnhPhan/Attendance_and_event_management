@@ -6,6 +6,7 @@ class ClassRepository {
 
   final ApiClient _client;
 
+  // Đọc danh sách lớp từ API và chuyển từng bản ghi thành model ứng dụng.
   Future<List<StudentClassSummary>> getStudentClasses() async {
     final body = await _client.get('/api/classes');
     final items = body['items'];

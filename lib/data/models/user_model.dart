@@ -22,6 +22,7 @@ class UserModel {
     this.status = UserStatus.active,
   });
 
+  // Chuyển dữ liệu người dùng từ API sang model có enum vai trò/trạng thái.
   factory UserModel.fromJson(Map<String, dynamic> json) {
     return UserModel(
       id: json['id'] as String,
@@ -36,6 +37,7 @@ class UserModel {
     );
   }
 
+  // Chuyển model người dùng thành dữ liệu JSON.
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,

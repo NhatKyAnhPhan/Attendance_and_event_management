@@ -29,6 +29,7 @@ class NotificationController extends GetxController {
     super.onClose();
   }
 
+  // Đồng bộ các phiên điểm danh đang mở, đồng thời giữ trạng thái đã đọc.
   Future<void> refreshActiveAttendance() async {
     if (_refreshingAttendance) return;
     _refreshingAttendance = true;
@@ -83,6 +84,7 @@ class NotificationController extends GetxController {
     }
   }
 
+  // Tạo các thông báo mẫu dùng cho những loại thông báo chưa có API riêng.
   void _seedNotifications() {
     final now = DateTime.now();
     items.assignAll([
@@ -144,11 +146,13 @@ class NotificationController extends GetxController {
     ]);
   }
 
+  // Lọc thông báo theo vai trò và sắp xếp thông báo mới nhất lên trước.
   List<AppNotificationItem> notificationsFor(Role role) {
     return items.where((item) => item.recipients.contains(role)).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
+  // Lọc tiếp danh sách theo trạng thái chưa đọc hoặc mức độ quan trọng.
   List<AppNotificationItem> visibleFor(Role role, {bool unreadOnly = false, bool importantOnly = false}) {
     final list = notificationsFor(role);
     return list.where((item) {
@@ -159,6 +163,7 @@ class NotificationController extends GetxController {
   }
 
   int unreadCount(Role role) => notificationsFor(role).where((item) => !item.read).length;
+  // Đánh dấu một thông báo cụ thể là đã đọc.
 
   void markAsRead(String id) {
     final index = items.indexWhere((item) => item.id == id);
@@ -167,6 +172,7 @@ class NotificationController extends GetxController {
     items[index] = current.copyWith(read: true);
   }
 
+  // Đánh dấu toàn bộ thông báo thuộc vai trò hiện tại là đã đọc.
   void markAllAsRead(Role role) {
     for (var i = 0; i < items.length; i++) {
       final item = items[i];

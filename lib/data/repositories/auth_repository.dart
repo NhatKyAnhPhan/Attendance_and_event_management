@@ -22,6 +22,7 @@ class AuthRepository {
 
   void setToken(String? token) => _client.setToken(token);
 
+  // Gửi thông tin đăng nhập và chuyển phản hồi API thành AuthSession.
   Future<AuthSession> login({
     required String identifier,
     required String password,

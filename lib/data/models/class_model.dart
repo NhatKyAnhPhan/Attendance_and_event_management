@@ -38,6 +38,7 @@ class ClassModel {
     required this.schedule,
   });
 
+  // Đọc lớp học phần từ dữ liệu API và áp dụng giá trị mặc định cho trường thiếu.
   factory ClassModel.fromJson(Map<String, dynamic> json) {
     return ClassModel(
       id: json['id'] as String,
@@ -55,6 +56,7 @@ class ClassModel {
     );
   }
 
+  // Chuyển model lớp học phần thành dữ liệu JSON.
   Map<String, dynamic> toJson() => {
         'id': id,
         'code': code,

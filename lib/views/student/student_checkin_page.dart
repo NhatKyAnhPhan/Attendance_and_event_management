@@ -57,6 +57,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     super.dispose();
   }
 
+  // Chuyển sang trạng thái quét và khởi động QR hoặc camera khuôn mặt.
   void _startScan() {
     setState(() {
       _state = _ScanState.scanning;
@@ -69,6 +70,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     }
   }
 
+  // Dừng scanner, camera và bộ nhận diện trước khi đổi trạng thái màn hình.
   Future<void> _stopCameras() async {
     await _qrController.stop();
     final camera = _cameraController;
@@ -81,6 +83,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     _faceDetector = null;
   }
 
+  // Đưa quy trình điểm danh về trạng thái ban đầu.
   Future<void> _reset() async {
     await _stopCameras();
     if (!mounted) return;
@@ -92,6 +95,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     });
   }
 
+  // Đổi phương thức điểm danh và giải phóng thiết bị đang sử dụng.
   Future<void> _setMethod(_ScanMethod method) async {
     await _stopCameras();
     if (!mounted) return;
@@ -103,6 +107,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     });
   }
 
+  // Khởi tạo camera trước và bắt đầu gửi từng khung hình cho bộ nhận diện.
   Future<void> _startFaceCamera() async {
     try {
       final cameras = await availableCameras();
@@ -139,6 +144,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     }
   }
 
+  // Chuyển dữ liệu camera sang ảnh ML Kit và gửi điểm danh khi phát hiện mặt.
   Future<void> _processFaceImage(CameraImage image) async {
     if (_faceBusy || _faceDetector == null || _cameraController == null) return;
     // Giới hạn tần suất nhận diện để giảm tải CPU và cấp phát bộ nhớ mỗi frame.
@@ -182,6 +188,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     }
   }
 
+  // Đọc token QR, lấy vị trí và gửi yêu cầu điểm danh đến backend.
   Future<void> _onQrDetected(BarcodeCapture capture) async {
     if (_checkInBusy || _state != _ScanState.scanning) return;
     final token = capture.barcodes
@@ -213,6 +220,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     }
   }
 
+  // Gửi yêu cầu điểm danh sau khi camera xác nhận có khuôn mặt.
   Future<void> _submitFaceCheckIn() async {
     if (_checkInBusy) return;
     _checkInBusy = true;
@@ -236,6 +244,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     }
   }
 
+  // Kiểm tra dịch vụ/quyền vị trí trước khi gửi tọa độ điểm danh.
   Future<Position> _getCurrentPosition() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
       throw const ApiException('Hãy bật dịch vụ vị trí để điểm danh.');

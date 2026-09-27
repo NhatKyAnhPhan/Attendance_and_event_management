@@ -7,6 +7,7 @@ class EventRepository {
 
   final ApiClient _client;
 
+  // Lấy danh sách sự kiện sinh viên có thể xem hoặc đăng ký.
   Future<List<StudentEventSummary>> getEvents() async {
     final body = await _client.get('/api/events');
     final items = body['items'];
@@ -20,10 +21,12 @@ class EventRepository {
         .toList();
   }
 
+  // Lấy dữ liệu chi tiết của sự kiện theo mã định danh.
   Future<Map<String, dynamic>> getEventDetails(String eventId) async {
     return _client.get('/api/events/$eventId');
   }
 
+  // Gửi yêu cầu đăng ký tham gia một sự kiện.
   Future<void> register(String eventId) async {
     await _client.post('/api/events/$eventId/register');
   }
@@ -42,6 +45,7 @@ class EventRepository {
         .toList();
   }
 
+  // Tải các đơn vị để làm dữ liệu lựa chọn khi tạo hoặc sửa sự kiện.
   Future<List<OrganizerUnit>> getOrganizerUnits() async {
     final body = await _client.get('/api/organizer/units');
     final items = body['items'];
@@ -52,6 +56,7 @@ class EventRepository {
         .toList();
   }
 
+  // Tạo sự kiện mới bằng dữ liệu từ biểu mẫu ban tổ chức.
   Future<void> createOrganizerEvent({
     required String id,
     required String name,
@@ -75,6 +80,7 @@ class EventRepository {
     );
   }
 
+  // Cập nhật sự kiện hiện có bằng dữ liệu mới từ biểu mẫu.
   Future<void> updateOrganizerEvent({
     required String id,
     required String name,
@@ -97,6 +103,7 @@ class EventRepository {
     );
   }
 
+  // Xóa sự kiện theo mã định danh.
   Future<void> deleteOrganizerEvent(String id) async {
     await _client.delete('/api/organizer/events/$id');
   }

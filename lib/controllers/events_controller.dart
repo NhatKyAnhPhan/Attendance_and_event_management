@@ -15,6 +15,7 @@ class EventsController extends GetxController {
     load();
   }
 
+  // Tải danh sách sự kiện và phản ánh kết quả vào state của màn hình.
   Future<void> load() async {
     loading.value = true;
     error.value = '';
@@ -27,11 +28,13 @@ class EventsController extends GetxController {
     }
   }
 
+  // Đăng ký sự kiện rồi tải lại danh sách để cập nhật trạng thái đăng ký.
   Future<void> register(String eventId) async {
     await _repository.register(eventId);
     await load();
   }
 
+  // Lấy dữ liệu chi tiết của một sự kiện từ repository.
   Future<Map<String, dynamic>> getDetails(String eventId) {
     return _repository.getEventDetails(eventId);
   }

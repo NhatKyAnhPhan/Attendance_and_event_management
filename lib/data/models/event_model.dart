@@ -7,6 +7,7 @@ class OrganizerUnit {
 
   const OrganizerUnit({required this.id, required this.name});
 
+  // Chuyển dữ liệu đơn vị tổ chức từ API sang model.
   factory OrganizerUnit.fromJson(Map<String, dynamic> json) {
     return OrganizerUnit(
       id: json['id']?.toString() ?? '',
@@ -42,6 +43,7 @@ class EventModel {
     this.requiresApproval = true,
   });
 
+  // Đọc sự kiện đầy đủ từ JSON và chuyển thời gian sang DateTime.
   factory EventModel.fromJson(Map<String, dynamic> json) {
     return EventModel(
       id: json['id'] as String,
@@ -57,6 +59,7 @@ class EventModel {
     );
   }
 
+  // Chuyển sự kiện thành payload JSON.
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -95,6 +98,7 @@ class OrganizerEventSummary {
     required this.registeredCount,
   });
 
+  // Đọc dữ liệu tóm tắt sự kiện dành cho màn hình quản lý.
   factory OrganizerEventSummary.fromJson(Map<String, dynamic> json) {
     return OrganizerEventSummary(
       id: json['id']?.toString() ?? '',

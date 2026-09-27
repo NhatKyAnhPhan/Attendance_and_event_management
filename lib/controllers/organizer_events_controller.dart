@@ -37,6 +37,7 @@ class OrganizerEventsController extends GetxController {
     }
   }
 
+  // Tải danh sách sự kiện dành cho khu vực ban tổ chức.
   Future<void> load() async {
     loading.value = true;
     error.value = '';
@@ -92,6 +93,7 @@ class OrganizerEventsController extends GetxController {
     await load();
   }
 
+  // Xóa sự kiện rồi đồng bộ lại danh sách đang hiển thị.
   Future<void> deleteEvent(String id) async {
     await _repository.deleteOrganizerEvent(id);
     await load();

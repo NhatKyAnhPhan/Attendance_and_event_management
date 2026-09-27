@@ -8,6 +8,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../data/mock/student_mock_data.dart';
 import '../../widgets/app_badge.dart';
 
+// Tải chi tiết sự kiện và hiển thị modal để người dùng xem hoặc đăng ký.
 Future<void> _showEventDetails(
   BuildContext context,
   EventsController controller,

@@ -28,6 +28,7 @@ class AuthController extends GetxController {
     _restoreSession();
   }
 
+  // Khôi phục phiên đăng nhập, vai trò và token đã lưu trên thiết bị.
   Future<void> _restoreSession() async {
     final prefs = await SharedPreferences.getInstance();
     isAuthed.value = prefs.getBool(_authKey) ?? false;
@@ -43,6 +44,7 @@ class AuthController extends GetxController {
     isReady.value = true;
   }
 
+  // Gửi thông tin đăng nhập, lưu phiên và điều hướng theo vai trò người dùng.
   Future<void> login({
     required String identifier,
     required String password,
@@ -69,6 +71,7 @@ class AuthController extends GetxController {
     );
   }
 
+  // Xóa toàn bộ dữ liệu phiên hiện tại rồi đưa người dùng về màn đăng nhập.
   Future<void> logout() async {
     isAuthed.value = false;
     role.value = Role.admin;

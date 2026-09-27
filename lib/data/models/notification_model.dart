@@ -31,6 +31,7 @@ class AppNotificationItem {
     this.route,
   });
 
+  // Tạo bản sao thông báo với những trường được cập nhật.
   AppNotificationItem copyWith({
     String? id,
     List<Role>? recipients,
@@ -57,6 +58,7 @@ class AppNotificationItem {
     );
   }
 
+  // Tính nhãn thời gian tương đối để hiển thị trong danh sách thông báo.
   String get timeLabel {
     final diff = DateTime.now().difference(createdAt);
     if (diff.inMinutes < 1) return 'Vừa xong';
