@@ -23,5 +23,27 @@ void main() {
         isFalse,
       );
     });
+
+    test('rejects a start date before the selected school year', () {
+      expect(
+        isValidClassDateRange(
+          DateTime(2025, 12, 31),
+          DateTime(2026, 1, 31),
+          schoolYear: 2026,
+        ),
+        isFalse,
+      );
+    });
+
+    test('accepts a start date in or after the selected school year', () {
+      expect(
+        isValidClassDateRange(
+          DateTime(2026, 9, 1),
+          DateTime(2027, 1, 31),
+          schoolYear: 2026,
+        ),
+        isTrue,
+      );
+    });
   });
 }

@@ -7,11 +7,20 @@ import '../../controllers/auth_controller.dart';
 import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../widgets/app_search_field.dart';
 import '../../widgets/app_badge.dart';
+import '../../widgets/statistics_charts.dart';
 import 'qr_generator_page.dart';
 
-class AttendancePage extends StatelessWidget {
+class AttendancePage extends StatefulWidget {
   const AttendancePage({super.key});
+
+  @override
+  State<AttendancePage> createState() => _AttendancePageState();
+}
+
+class _AttendancePageState extends State<AttendancePage> {
+  String _query = '';
 
   /// Hiển thị phiên điểm danh và kết quả truy vấn theo quyền hiện tại.
   @override
@@ -23,7 +32,12 @@ class AttendancePage extends StatelessWidget {
     final canCreateSession = role == Role.admin || role == Role.lecturer;
 
     return Obx(() {
-      final sessions = controller.sessions;
+      final query = _query.trim().toLowerCase();
+      final sessions = controller.sessions.where((session) {
+        return query.isEmpty ||
+            session.values.join(' ').toLowerCase().contains(query);
+      }).toList();
+      final classSummaries = _aggregateByClass(sessions);
       final present = sessions.fold<int>(
         0,
         (total, item) => total + _count(item['present']),
@@ -72,6 +86,12 @@ class AttendancePage extends StatelessWidget {
               'Phiên học và kết quả tham dự từ cơ sở dữ liệu.',
               style: AppTextStyles.bodySm(c.mutedForeground),
             ),
+            const SizedBox(height: 16),
+            AppSearchField(
+              colors: c,
+              hintText: 'Tìm mã lớp, sự kiện, trạng thái...',
+              onChanged: (value) => setState(() => _query = value),
+            ),
             const SizedBox(height: 20),
             LayoutBuilder(
               builder: (context, constraints) => GridView.count(
@@ -103,6 +123,28 @@ class AttendancePage extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            StatisticsDonutChart(
+              title: 'Phân bổ kết quả điểm danh',
+              colors: c,
+              data: [
+                StatisticsChartDatum(
+                  label: 'Có mặt',
+                  value: present,
+                  color: c.success,
+                ),
+                StatisticsChartDatum(
+                  label: 'Muộn',
+                  value: late,
+                  color: c.warning,
+                ),
+                StatisticsChartDatum(
+                  label: 'Vắng',
+                  value: absent,
+                  color: c.danger,
+                ),
+              ],
+            ),
             const SizedBox(height: 20),
             if (controller.loading.value && sessions.isEmpty)
               const Center(child: CircularProgressIndicator())
@@ -116,15 +158,49 @@ class AttendancePage extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 48),
                 child: Center(
                   child: Text(
-                    'Chưa có phiên điểm danh trong dữ liệu.',
+                    controller.sessions.isEmpty
+                        ? 'Chưa có phiên điểm danh trong dữ liệu.'
+                        : 'Không tìm thấy phiên điểm danh phù hợp.',
                     style: AppTextStyles.bodySm(c.mutedForeground),
                   ),
                 ),
               )
-            else
+            else ...[
+              StatisticsBarChart(
+                title: 'Kết quả theo mã học phần',
+                colors: c,
+                categories: classSummaries
+                    .map((item) => item['classId'].toString())
+                    .toList(),
+                series: [
+                  StatisticsChartSeries(
+                    label: 'Có mặt',
+                    color: c.success,
+                    values: classSummaries
+                        .map((item) => _count(item['present']))
+                        .toList(),
+                  ),
+                  StatisticsChartSeries(
+                    label: 'Muộn',
+                    color: c.warning,
+                    values: classSummaries
+                        .map((item) => _count(item['late']))
+                        .toList(),
+                  ),
+                  StatisticsChartSeries(
+                    label: 'Vắng',
+                    color: c.danger,
+                    values: classSummaries
+                        .map((item) => _count(item['absent']))
+                        .toList(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               ...sessions.map(
                 (session) => _SessionCard(session: session, c: c),
               ),
+            ],
           ],
         ),
       );
@@ -134,6 +210,27 @@ class AttendancePage extends StatelessWidget {
   /// Chuyển số từ JSON API sang giá trị số nguyên an toàn.
   static int _count(dynamic value) =>
       int.tryParse(value?.toString() ?? '') ?? 0;
+
+  /// Cộng số liệu API của các phiên theo mã học phần duy nhất.
+  static List<Map<String, dynamic>> _aggregateByClass(
+    List<Map<String, dynamic>> sessions,
+  ) {
+    final grouped = <String, Map<String, int>>{};
+    for (final session in sessions) {
+      final classId = session['classId']?.toString() ?? '';
+      if (classId.isEmpty) continue;
+      final counts = grouped.putIfAbsent(
+        classId,
+        () => {'present': 0, 'late': 0, 'absent': 0},
+      );
+      counts['present'] = counts['present']! + _count(session['present']);
+      counts['late'] = counts['late']! + _count(session['late']);
+      counts['absent'] = counts['absent']! + _count(session['absent']);
+    }
+    return grouped.entries
+        .map((entry) => <String, dynamic>{'classId': entry.key, ...entry.value})
+        .toList();
+  }
 }
 
 class _SessionCard extends StatelessWidget {
@@ -198,17 +295,17 @@ class _SessionCard extends StatelessWidget {
             children: [
               _MiniStat(
                 label: 'Có mặt',
-                value: '${AttendancePage._count(session['present'])}',
+                value: '${_AttendancePageState._count(session['present'])}',
                 color: c.success,
               ),
               _MiniStat(
                 label: 'Muộn',
-                value: '${AttendancePage._count(session['late'])}',
+                value: '${_AttendancePageState._count(session['late'])}',
                 color: c.warning,
               ),
               _MiniStat(
                 label: 'Vắng',
-                value: '${AttendancePage._count(session['absent'])}',
+                value: '${_AttendancePageState._count(session['absent'])}',
                 color: c.danger,
               ),
             ],

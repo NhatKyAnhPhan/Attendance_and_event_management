@@ -54,7 +54,7 @@ function isValidEventTimeRange(startTime, endTime, { requireFutureStart = false,
     && (!requireFutureEnd || end > now);
 }
 
-function isValidClassDateRange(startDate, endDate) {
+function isValidClassDateRange(startDate, endDate, schoolYear) {
   const isDateOnly = (value) => {
     if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       return false;
@@ -64,7 +64,15 @@ function isValidClassDateRange(startDate, endDate) {
     return parsed.toISOString().slice(0, 10) === value;
   };
 
-  return isDateOnly(startDate) && isDateOnly(endDate) && startDate <= endDate;
+  const schoolYearMatch = typeof schoolYear === 'string'
+    ? /^(\d{4})-\d{4}$/.exec(schoolYear.trim())
+    : null;
+
+  return isDateOnly(startDate)
+    && isDateOnly(endDate)
+    && startDate <= endDate
+    && schoolYearMatch !== null
+    && Number(startDate.slice(0, 4)) >= Number(schoolYearMatch[1]);
 }
 
 // Bổ sung cột tọa độ nếu cơ sở dữ liệu cũ chưa có thông tin vị trí.
@@ -1393,23 +1401,34 @@ app.get('/api/admin/lecturers', requireAuth, requireRole('Quản trị viên', '
 
 app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const {
-    name,
+    sourceClassId,
     semester = '',
     schoolYear = '',
     lecturerId = null,
     startDate,
     endDate,
   } = request.body || {};
-  if (typeof name !== 'string' || !name.trim() || !isValidClassDateRange(startDate, endDate)) {
+  if (typeof sourceClassId !== 'string' || !sourceClassId.trim()
+    || !isValidClassDateRange(startDate, endDate, schoolYear)) {
     return response.status(400).json({
-      message: 'Tên lớp hợp lệ và ngày kết thúc phải bằng hoặc sau ngày bắt đầu.',
+      message: 'Môn học có sẵn và khoảng ngày học kỳ hợp lệ là bắt buộc.',
     });
   }
   const normalizedLecturerId = typeof lecturerId === 'string' && lecturerId.trim()
     ? lecturerId.trim()
     : null;
+  if (!normalizedLecturerId) {
+    return response.status(400).json({ message: 'Vui lòng chọn giảng viên.' });
+  }
 
   try {
+    const [[sourceClass]] = await pool.execute(
+      'SELECT Tenlop AS name FROM lophocphan WHERE Malop = ?',
+      [sourceClassId.trim()],
+    );
+    if (!sourceClass || !String(sourceClass.name || '').trim()) {
+      return response.status(400).json({ message: 'Môn học đã chọn không tồn tại.' });
+    }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const id = generateRecordId('CL');
       try {
@@ -1418,7 +1437,7 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
            (Malop, Magv, Tenlop, Hocky, Namhoc, Thoigianbatdau,
             Thoigianketthuc, Trangthailop)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'Đang học')`,
-          [id, normalizedLecturerId, name.trim(), String(semester).trim(), String(schoolYear).trim(), startDate, endDate],
+          [id, normalizedLecturerId, sourceClass.name, String(semester).trim(), String(schoolYear).trim(), startDate, endDate],
         );
         return response.status(201).json({ id, message: 'Tạo lớp thành công.' });
       } catch (error) {
@@ -1443,7 +1462,8 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
     startDate,
     endDate,
   } = request.body || {};
-  if (typeof name !== 'string' || !name.trim() || !isValidClassDateRange(startDate, endDate)) {
+  if (typeof name !== 'string' || !name.trim()
+    || !isValidClassDateRange(startDate, endDate, schoolYear)) {
     return response.status(400).json({
       message: 'Tên lớp hợp lệ và ngày kết thúc phải bằng hoặc sau ngày bắt đầu.',
     });

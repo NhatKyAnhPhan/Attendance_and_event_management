@@ -7,6 +7,7 @@ import '../../controllers/events_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/student_summaries.dart';
+import '../../widgets/app_search_field.dart';
 import '../../widgets/app_badge.dart';
 
 // Đăng ký và hỏi xác nhận nếu sự kiện trùng lịch học.
@@ -142,11 +143,19 @@ Future<void> _showEventDetails(
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  data['description']?.toString().trim().isNotEmpty == true
-                      ? data['description'].toString()
-                      : 'Chưa có mô tả cho sự kiện này.',
-                  style: AppTextStyles.bodyMd(c.foreground),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 160),
+                  child: Scrollbar(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        data['description']?.toString().trim().isNotEmpty ==
+                                true
+                            ? data['description'].toString()
+                            : 'Chưa có mô tả cho sự kiện này.',
+                        style: AppTextStyles.bodyMd(c.foreground),
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 20),
                 _EventDetailRow(
@@ -242,8 +251,15 @@ Future<void> _showEventDetails(
   );
 }
 
-class StudentEventsPage extends StatelessWidget {
+class StudentEventsPage extends StatefulWidget {
   const StudentEventsPage({super.key});
+
+  @override
+  State<StudentEventsPage> createState() => _StudentEventsPageState();
+}
+
+class _StudentEventsPageState extends State<StudentEventsPage> {
+  String _query = '';
 
   @override
   Widget build(BuildContext context) {
@@ -254,6 +270,16 @@ class StudentEventsPage extends StatelessWidget {
     return Obx(() {
       controller.statusRefreshTick.value;
       final events = controller.items;
+      final query = _query.trim().toLowerCase();
+      final filteredEvents = events.where((event) {
+        return [
+          event.id,
+          event.name,
+          event.org,
+          event.date,
+          event.eventStatus,
+        ].any((value) => value.toLowerCase().contains(query));
+      }).toList();
       if (controller.loading.value && events.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -289,7 +315,23 @@ class StudentEventsPage extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                ...events.map(
+                AppSearchField(
+                  colors: c,
+                  hintText: 'Tìm tên sự kiện, đơn vị, ngày tổ chức...',
+                  onChanged: (value) => setState(() => _query = value),
+                ),
+                const SizedBox(height: 16),
+                if (filteredEvents.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
+                    child: Text(
+                      events.isEmpty
+                          ? 'Chưa có sự kiện nào.'
+                          : 'Không tìm thấy sự kiện phù hợp.',
+                      style: AppTextStyles.bodySm(c.mutedForeground),
+                    ),
+                  ),
+                ...filteredEvents.map(
                   (e) => Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: _EventCard(

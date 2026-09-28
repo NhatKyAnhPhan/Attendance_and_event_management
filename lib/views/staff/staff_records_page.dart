@@ -5,6 +5,8 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/api/api_client.dart';
 import '../../data/api/endpoints.dart';
+import '../../widgets/app_search_field.dart';
+import '../../widgets/statistics_charts.dart';
 
 /// Loại dữ liệu cán bộ có thể xem trong khu vực này.
 enum StaffRecordKind { certificates, feedback }
@@ -91,8 +93,15 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
             children: [
               _buildHeading(colors, items.length),
               const SizedBox(height: 18),
-              _buildSummary(colors, items),
-              const SizedBox(height: 18),
+              if (snapshot.connectionState == ConnectionState.done &&
+                  !snapshot.hasError) ...[
+                _buildSummary(colors, items),
+                if (items.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  _buildDistribution(colors, items),
+                ],
+                const SizedBox(height: 18),
+              ],
               _buildFilters(colors, items),
               const SizedBox(height: 14),
               if (snapshot.connectionState != ConnectionState.done)
@@ -191,6 +200,44 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
     );
   }
 
+  /// Nhóm bản ghi theo đúng trạng thái hoặc loại phản hồi trong dữ liệu API.
+  Widget _buildDistribution(
+    AppColors colors,
+    List<Map<String, dynamic>> items,
+  ) {
+    final isCertificates = widget.kind == StaffRecordKind.certificates;
+    final counts = <String, int>{};
+    for (final item in items) {
+      final key =
+          (isCertificates ? item['status'] : item['sourceType'])?.toString() ??
+          (isCertificates ? 'Chưa rõ trạng thái' : 'Phản hồi');
+      counts.update(key, (count) => count + 1, ifAbsent: () => 1);
+    }
+    final labels = counts.keys.toList()..sort();
+    final palette = [
+      colors.primary,
+      colors.success,
+      colors.warning,
+      colors.danger,
+      colors.info,
+    ];
+
+    return StatisticsDonutChart(
+      title: isCertificates
+          ? 'Chứng chỉ theo trạng thái'
+          : 'Phản hồi theo loại',
+      colors: colors,
+      data: [
+        for (var index = 0; index < labels.length; index++)
+          StatisticsChartDatum(
+            label: labels[index],
+            value: counts[labels[index]]!,
+            color: palette[index % palette.length],
+          ),
+      ],
+    );
+  }
+
   /// Tạo một ô thống kê bằng số liệu truy vấn được.
   Widget _summaryTile(
     AppColors colors,
@@ -247,23 +294,10 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
       children: [
         SizedBox(
           width: 360,
-          child: TextField(
+          child: AppSearchField(
+            colors: colors,
+            hintText: 'Tìm mã, sinh viên, sự kiện...',
             onChanged: (value) => setState(() => _query = value),
-            decoration: InputDecoration(
-              hintText: 'Tìm mã, sinh viên, sự kiện...',
-              prefixIcon: const Icon(Icons.search),
-              filled: true,
-              fillColor: colors.card,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.border),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.border),
-              ),
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-            ),
           ),
         ),
         SizedBox(

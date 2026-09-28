@@ -41,7 +41,7 @@ class AdminClassesController extends GetxController {
   }
 
   Future<void> createClass({
-    required String name,
+    required String sourceClassId,
     required String semester,
     required String schoolYear,
     required String? lecturerId,
@@ -49,7 +49,7 @@ class AdminClassesController extends GetxController {
     required DateTime endDate,
   }) async {
     await _repository.createClass(
-      name: name,
+      sourceClassId: sourceClassId,
       semester: semester,
       schoolYear: schoolYear,
       lecturerId: lecturerId,

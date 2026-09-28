@@ -5,9 +5,18 @@ import '../../controllers/classes_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/student_summaries.dart';
+import '../../widgets/app_search_field.dart';
+import '../../widgets/statistics_charts.dart';
 
-class StudentClassesPage extends StatelessWidget {
+class StudentClassesPage extends StatefulWidget {
   const StudentClassesPage({super.key});
+
+  @override
+  State<StudentClassesPage> createState() => _StudentClassesPageState();
+}
+
+class _StudentClassesPageState extends State<StudentClassesPage> {
+  String _query = '';
 
   /// Hiển thị lớp và kết quả điểm danh lấy từ API sinh viên.
   @override
@@ -18,6 +27,19 @@ class StudentClassesPage extends StatelessWidget {
 
     return Obx(() {
       final classes = controller.items;
+      final query = _query.trim().toLowerCase();
+      final filteredClasses = classes.where((cls) {
+        return [
+          cls.id,
+          cls.name,
+          cls.lecturer,
+          cls.time,
+          cls.room,
+        ].any((value) => value.toLowerCase().contains(query));
+      }).toList();
+      final hasAttendanceData = filteredClasses.any(
+        (cls) => cls.present + cls.late + cls.absent > 0,
+      );
       if (controller.loading.value && classes.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -43,23 +65,69 @@ class StudentClassesPage extends StatelessWidget {
                       .copyWith(fontSize: 22),
                 ),
                 Text(
-                  '${classes.length} lớp trong dữ liệu của bạn',
+                  '${filteredClasses.length} lớp trong dữ liệu của bạn',
                   style: AppTextStyles.bodySm(c.mutedForeground),
                 ),
               ],
             ),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: AppSearchField(
+              colors: c,
+              hintText: 'Tìm tên lớp, mã lớp, giảng viên...',
+              onChanged: (value) => setState(() => _query = value),
+            ),
+          ),
+          if (hasAttendanceData)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: StatisticsBarChart(
+                title: 'Kết quả điểm danh theo lớp',
+                colors: c,
+                categories: filteredClasses.map((cls) => cls.id).toList(),
+                series: [
+                  StatisticsChartSeries(
+                    label: 'Có mặt',
+                    color: c.success,
+                    values: filteredClasses.map((cls) => cls.present).toList(),
+                  ),
+                  StatisticsChartSeries(
+                    label: 'Muộn',
+                    color: c.warning,
+                    values: filteredClasses.map((cls) => cls.late).toList(),
+                  ),
+                  StatisticsChartSeries(
+                    label: 'Vắng',
+                    color: c.danger,
+                    values: filteredClasses.map((cls) => cls.absent).toList(),
+                  ),
+                ],
+              ),
+            ),
+          Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
-              children: classes
-                  .map(
-                    (cls) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _ClassCard(cls: cls, c: c),
-                    ),
-                  )
-                  .toList(),
+              children: filteredClasses.isEmpty
+                  ? [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Text(
+                          classes.isEmpty
+                              ? 'Bạn chưa có lớp học.'
+                              : 'Không tìm thấy lớp học phù hợp.',
+                          style: AppTextStyles.bodySm(c.mutedForeground),
+                        ),
+                      ),
+                    ]
+                  : filteredClasses
+                        .map(
+                          (cls) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _ClassCard(cls: cls, c: c),
+                          ),
+                        )
+                        .toList(),
             ),
           ),
         ],

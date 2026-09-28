@@ -12,6 +12,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../data/models/notification_model.dart';
 import '../../data/models/student_summaries.dart';
 import '../../widgets/app_badge.dart';
+import '../../widgets/statistics_charts.dart';
 import '../notifications/notifications_page.dart';
 import 'student_checkin_page.dart';
 import 'student_classes_page.dart';
@@ -116,6 +117,7 @@ class _HomeTabContent extends StatelessWidget {
     required this.onGoToEvents,
   });
 
+  /// Dựng tab chính cùng thống kê và dữ liệu hiện có của sinh viên.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -130,6 +132,15 @@ class _HomeTabContent extends StatelessWidget {
       final classes = classesController.items;
       final events = eventsController.items.where((event) => !event.isEnded);
       final user = auth.currentUser.value ?? const <String, dynamic>{};
+      final dashboard = dashboardController.summary;
+      final present = _countValue(dashboard['present']);
+      final late = _countValue(dashboard['late']);
+      final absent = _countValue(dashboard['absent']);
+      final hasAttendanceData =
+          present != null &&
+          late != null &&
+          absent != null &&
+          present + late + absent > 0;
       return ListView(
         padding: EdgeInsets.zero,
         children: [
@@ -137,8 +148,33 @@ class _HomeTabContent extends StatelessWidget {
             c,
             user,
             notifications.unreadCount(Role.student),
-            dashboardController.summary,
+            dashboard,
           ),
+          if (hasAttendanceData)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: StatisticsDonutChart(
+                title: 'Kết quả điểm danh',
+                colors: c,
+                data: [
+                  StatisticsChartDatum(
+                    label: 'Có mặt',
+                    value: present,
+                    color: c.success,
+                  ),
+                  StatisticsChartDatum(
+                    label: 'Muộn',
+                    value: late,
+                    color: c.warning,
+                  ),
+                  StatisticsChartDatum(
+                    label: 'Vắng',
+                    value: absent,
+                    color: c.danger,
+                  ),
+                ],
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -209,6 +245,12 @@ class _HomeTabContent extends StatelessWidget {
         ],
       );
     });
+  }
+
+  /// Đọc số lượng điểm danh hợp lệ từ giá trị API dạng số hoặc chuỗi số.
+  static int? _countValue(Object? value) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
   }
 
   Widget _sectionTitle(String text, AppColors c) =>

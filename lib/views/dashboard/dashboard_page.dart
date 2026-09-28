@@ -5,6 +5,7 @@ import '../../controllers/dashboard_controller.dart';
 import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../widgets/statistics_charts.dart';
 
 class DashboardPage extends StatelessWidget {
   final Role role;
@@ -23,6 +24,17 @@ class DashboardPage extends StatelessWidget {
       final metrics = rawMetrics is List
           ? rawMetrics.whereType<Map>().map(Map<String, dynamic>.from).toList()
           : <Map<String, dynamic>>[];
+      final countMetrics = metrics
+          .where((metric) => metric['value'] is num)
+          .toList();
+      final chartPalette = [
+        colors.primary,
+        colors.success,
+        colors.warning,
+        colors.info,
+        colors.danger,
+        colors.accent,
+      ];
 
       return RefreshIndicator(
         onRefresh: controller.load,
@@ -84,6 +96,29 @@ class DashboardPage extends StatelessWidget {
                   ),
                 ),
               ),
+            if (countMetrics.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              StatisticsBarChart(
+                title: 'Số lượng theo chỉ số',
+                colors: colors,
+                categories: countMetrics
+                    .map((metric) => metric['label']?.toString() ?? '')
+                    .toList(),
+                series: [
+                  StatisticsChartSeries(
+                    label: 'Số lượng',
+                    color: colors.primary,
+                    values: countMetrics
+                        .map((metric) => (metric['value'] as num).toInt())
+                        .toList(),
+                    pointColors: List.generate(
+                      countMetrics.length,
+                      (index) => chartPalette[index % chartPalette.length],
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       );

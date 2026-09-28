@@ -42,7 +42,7 @@ class ClassRepository {
   }
 
   Future<void> createClass({
-    required String name,
+    required String sourceClassId,
     required String semester,
     required String schoolYear,
     required String? lecturerId,
@@ -52,7 +52,7 @@ class ClassRepository {
     await _client.post(
       '/api/admin/classes',
       data: {
-        'name': name,
+        'sourceClassId': sourceClassId,
         'semester': semester,
         'schoolYear': schoolYear,
         'lecturerId': lecturerId,

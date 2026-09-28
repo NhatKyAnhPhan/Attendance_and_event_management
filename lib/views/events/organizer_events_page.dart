@@ -8,9 +8,17 @@ import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/event_model.dart';
+import '../../widgets/app_search_field.dart';
 
-class OrganizerEventsPage extends StatelessWidget {
+class OrganizerEventsPage extends StatefulWidget {
   const OrganizerEventsPage({super.key});
+
+  @override
+  State<OrganizerEventsPage> createState() => _OrganizerEventsPageState();
+}
+
+class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
+  String _query = '';
 
   // Hiển thị danh sách sự kiện cùng các thao tác theo vai trò.
   @override
@@ -25,6 +33,16 @@ class OrganizerEventsPage extends StatelessWidget {
       final auth = Get.find<AuthController>();
       final canManageEvents = auth.canManageEvents;
       final canDeleteEvents = auth.role.value == Role.admin;
+      final query = _query.trim().toLowerCase();
+      final filteredItems = controller.items.where((event) {
+        return [
+          event.id,
+          event.name,
+          event.location,
+          event.status,
+          event.organizerId,
+        ].any((value) => value.toLowerCase().contains(query));
+      }).toList();
       if (controller.loading.value && controller.items.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -59,6 +77,12 @@ class OrganizerEventsPage extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
+            AppSearchField(
+              colors: colors,
+              hintText: 'Tìm tên sự kiện, địa điểm, trạng thái...',
+              onChanged: (value) => setState(() => _query = value),
+            ),
+            const SizedBox(height: 16),
             if (controller.error.value.isNotEmpty)
               _ErrorBanner(message: controller.error.value),
             if (controller.items.isEmpty && controller.error.value.isEmpty)
@@ -66,7 +90,12 @@ class OrganizerEventsPage extends StatelessWidget {
                 padding: EdgeInsets.only(top: 48),
                 child: Center(child: Text('Chưa có sự kiện nào.')),
               ),
-            ...controller.items.map(
+            if (controller.items.isNotEmpty && filteredItems.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(top: 48),
+                child: Center(child: Text('Không tìm thấy sự kiện phù hợp.')),
+              ),
+            ...filteredItems.map(
               (event) => Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
@@ -195,10 +224,17 @@ class OrganizerEventsPage extends StatelessWidget {
                       ]),
                       const SizedBox(height: 16),
                       _detailSection('Mô tả', [
-                        Text(
-                          description == null || description.isEmpty
-                              ? 'Chưa có mô tả cho sự kiện này.'
-                              : description,
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 160),
+                          child: Scrollbar(
+                            child: SingleChildScrollView(
+                              child: Text(
+                                description == null || description.isEmpty
+                                    ? 'Chưa có mô tả cho sự kiện này.'
+                                    : description,
+                              ),
+                            ),
+                          ),
                         ),
                       ]),
                       const SizedBox(height: 16),

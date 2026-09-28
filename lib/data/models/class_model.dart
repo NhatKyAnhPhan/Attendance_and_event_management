@@ -83,8 +83,13 @@ class ClassModel {
   };
 }
 
-bool isValidClassDateRange(DateTime startDate, DateTime endDate) =>
-    !endDate.isBefore(startDate);
+bool isValidClassDateRange(
+  DateTime startDate,
+  DateTime endDate, {
+  int? schoolYear,
+}) =>
+    !endDate.isBefore(startDate) &&
+    (schoolYear == null || startDate.year >= schoolYear);
 
 class ClassLecturer {
   final String id;
