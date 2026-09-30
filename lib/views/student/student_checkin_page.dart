@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
@@ -5,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../data/api/api_client.dart';
@@ -29,6 +31,8 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   _ScanMethod _method = _ScanMethod.qr;
   final _qrController = MobileScannerController();
   final _apiClient = ApiClient();
+  final _secureStorage = const FlutterSecureStorage();
+  Future<String>? _deviceIdFuture;
   CameraController? _cameraController;
   FaceDetector? _faceDetector;
   bool _faceBusy = false;
@@ -39,6 +43,26 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   int _lastFaceFrameMs = 0;
   String? _errorMessage;
   late final AnimationController _lineCtrl;
+
+  Future<String> _getDeviceId() {
+    return _deviceIdFuture ??= _loadOrCreateDeviceId();
+  }
+
+  Future<String> _loadOrCreateDeviceId() async {
+    const storageKey = 'attendanceDeviceId';
+    final storedId = await _secureStorage.read(key: storageKey);
+    if (storedId != null && RegExp(r'^[a-f0-9]{32}$').hasMatch(storedId)) {
+      return storedId;
+    }
+
+    final random = Random.secure();
+    final deviceId = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    await _secureStorage.write(key: storageKey, value: deviceId);
+    return deviceId;
+  }
 
   @override
   void initState() {
@@ -204,11 +228,13 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     await _qrController.stop();
     try {
       final position = await _getCurrentPosition();
+      final deviceId = await _getDeviceId();
       final result = await _apiClient.post(
         ApiEndpoints.attendanceCheckIn,
         data: {
           'qrToken': token,
           'method': 'QR',
+          'deviceId': deviceId,
           'latitude': position.latitude,
           'longitude': position.longitude,
         },
@@ -234,10 +260,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     _checkInBusy = true;
     try {
       final position = await _getCurrentPosition();
+      final deviceId = await _getDeviceId();
       final result = await _apiClient.post(
         ApiEndpoints.attendanceFaceCheckIn,
         data: {
           'faceDetected': true,
+          'deviceId': deviceId,
           'latitude': position.latitude,
           'longitude': position.longitude,
         },
@@ -295,10 +323,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                         ? IconButton(
                             tooltip: 'Thoát quét',
                             onPressed: _reset,
-                            icon: const Icon(
-                              Icons.close,
-                              color: Colors.white,
-                            ),
+                            icon: const Icon(Icons.close, color: Colors.white),
                           )
                         : null,
                   ),
@@ -315,7 +340,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                         fontSize: 16,
                       ),
                     ),
-                ),
+                  ),
                   const SizedBox(width: 48),
                 ],
               ),
@@ -567,28 +592,43 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       if (text.isNotEmpty && text != 'null') rows.add(MapEntry(label, text));
     }
 
-    final classId = details['classId']?.toString() ?? details['eventId']?.toString() ?? '';
-    final className = details['className']?.toString() ??
+    final classId =
+        details['classId']?.toString() ?? details['eventId']?.toString() ?? '';
+    final className =
+        details['className']?.toString() ??
         details['eventName']?.toString() ??
         details['classOrEventName']?.toString() ??
         '';
-    add('Lớp / sự kiện', [classId, className].where((value) => value.isNotEmpty).join(' · '));
+    add(
+      'Lớp / sự kiện',
+      [classId, className].where((value) => value.isNotEmpty).join(' · '),
+    );
     add('Buổi học', details['sessionName'] ?? details['classSessionId']);
     add('Giảng viên', details['lecturerName'] ?? details['organizerName']);
     final studentName = details['studentName']?.toString() ?? '';
     final studentId = details['studentId']?.toString() ?? '';
-    add('Sinh viên', [studentName, studentId].where((value) => value.isNotEmpty).join(' · '));
-    final checkedInAt = DateTime.tryParse(details['checkedInAt']?.toString() ?? '')?.toLocal();
+    add(
+      'Sinh viên',
+      [studentName, studentId].where((value) => value.isNotEmpty).join(' · '),
+    );
+    final checkedInAt = DateTime.tryParse(
+      details['checkedInAt']?.toString() ?? '',
+    )?.toLocal();
     if (checkedInAt != null) {
       add('Giờ điểm danh', _formatDateTime(checkedInAt));
     }
-    final start = DateTime.tryParse(details['startTime']?.toString() ?? '')?.toLocal();
-    final end = DateTime.tryParse(details['endTime']?.toString() ?? '')?.toLocal();
+    final start = DateTime.tryParse(details['startTime']?.toString() ?? '')
+        ?.toLocal();
+    final end = DateTime.tryParse(details['endTime']?.toString() ?? '')
+        ?.toLocal();
     if (start != null || end != null) {
-      add('Thời gian buổi', [
-        if (start != null) _formatDateTime(start),
-        if (end != null) _formatDateTime(end),
-      ].join(' - '));
+      add(
+        'Thời gian buổi',
+        [
+          if (start != null) _formatDateTime(start),
+          if (end != null) _formatDateTime(end),
+        ].join(' - '),
+      );
     }
     add('Trạng thái', details['status']);
     add('Hình thức', details['method']);
@@ -647,21 +687,37 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                 border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
               ),
               child: Column(
-                children: details.map((detail) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 105,
-                        child: Text(detail.key, style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 13)),
+                children: details
+                    .map(
+                      (detail) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: 105,
+                              child: Text(
+                                detail.key,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.55),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                detail.value,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      Expanded(
-                        child: Text(detail.value, style: const TextStyle(color: Colors.white, fontSize: 13)),
-                      ),
-                    ],
-                  ),
-                )).toList(),
+                    )
+                    .toList(),
               ),
             ),
           ],

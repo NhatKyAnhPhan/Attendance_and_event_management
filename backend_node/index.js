@@ -86,6 +86,34 @@ async function ensureAttendanceLocationColumns() {
   }
 }
 
+async function ensureAttendanceDeviceClaimsTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS attendance_device_claims (
+       device_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       attendance_date DATE NOT NULL,
+       student_id VARCHAR(64) NOT NULL,
+       attendance_session_id VARCHAR(64) NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (device_id, attendance_session_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+
+  const [[primaryKey]] = await pool.query(
+    `SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS columns
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'attendance_device_claims'
+       AND INDEX_NAME = 'PRIMARY'`,
+  );
+  if (primaryKey.columns !== 'device_id,attendance_session_id') {
+    await pool.query(
+      `ALTER TABLE attendance_device_claims
+       DROP PRIMARY KEY,
+       ADD PRIMARY KEY (device_id, attendance_session_id)`,
+    );
+  }
+}
+
 async function ensureClassPeriodColumns() {
   for (const column of ['Thoigianbatdau', 'Thoigianketthuc']) {
     try {
@@ -905,10 +933,13 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
 
 // Xác thực mã QR, vị trí, thành viên lớp và ghi kết quả điểm danh.
 app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
-  const { qrToken, method = 'QR' } = request.body || {};
+  const { qrToken, method = 'QR', deviceId } = request.body || {};
   const coordinates = readCoordinates(request.body);
   if (!qrToken || !['QR', 'Face'].includes(method)) {
     return response.status(400).json({ message: 'Thiếu dữ liệu điểm danh.' });
+  }
+  if (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId)) {
+    return response.status(400).json({ message: 'Không xác định được thiết bị điểm danh.' });
   }
   if (!coordinates) {
     return response.status(400).json({ message: 'Không lấy được vị trí hiện tại của bạn.' });
@@ -973,12 +1004,33 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
     );
     if (existing) return response.status(409).json({ message: 'Bạn đã điểm danh phiên này.' });
 
-    await pool.execute(
-      `INSERT INTO ketquadiemdanh
-       (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Vitri, Mabuoidiemdanh, Masv)
-       VALUES (?, NOW(), 'Có mặt', ?, ?, ?)`,
-      [makeId('RS'), JSON.stringify(coordinates), session.id, request.auth.sub],
-    );
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute(
+        `INSERT INTO attendance_device_claims
+         (device_id, attendance_date, student_id, attendance_session_id)
+         VALUES (?, CURDATE(), ?, ?)`,
+        [deviceId, request.auth.sub, session.id],
+      );
+      await connection.execute(
+        `INSERT INTO ketquadiemdanh
+         (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Vitri, Mabuoidiemdanh, Masv)
+         VALUES (?, NOW(), 'Có mặt', ?, ?, ?)`,
+        [makeId('RS'), JSON.stringify(coordinates), session.id, request.auth.sub],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      if (error.code === 'ER_DUP_ENTRY') {
+        return response.status(409).json({
+          message: 'Thiết bị này đã được dùng để điểm danh phiên này.',
+        });
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
     const [[result]] = await pool.execute(
       `SELECT bpd.Mabuoidiemdanh AS attendanceSessionId,
               b.Mabuoi AS classSessionId, b.Malop AS classId,
@@ -1017,6 +1069,10 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
 // Kiểm tra phiên khuôn mặt và vị trí trước khi tiếp nhận kết quả nhận diện.
 app.post('/api/attendance/face-check-in', requireAuth, async (request, response) => {
   const coordinates = readCoordinates(request.body);
+  const deviceId = request.body?.deviceId;
+  if (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId)) {
+    return response.status(400).json({ message: 'Không xác định được thiết bị điểm danh.' });
+  }
   if (!coordinates || request.body?.faceDetected !== true) {
     return response.status(400).json({ message: 'Cần xác nhận khuôn mặt và vị trí hiện tại.' });
   }
@@ -1037,6 +1093,17 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     if (!session || !['Face', 'Both'].includes(session.method)) {
       return response.status(404).json({ message: 'Không có phiên khuôn mặt đang mở cho bạn.' });
     }
+    const [[deviceClaim]] = await pool.execute(
+      `SELECT 1 AS used FROM attendance_device_claims
+       WHERE device_id = ? AND attendance_session_id = ? LIMIT 1`,
+      [deviceId, session.id],
+    );
+    if (deviceClaim) {
+      return response.status(409).json({
+        message: 'Thiết bị này đã được dùng để điểm danh phiên này.',
+      });
+    }
+
     const distance = distanceInMeters(
       { latitude: Number(session.latitude), longitude: Number(session.longitude) },
       coordinates,
@@ -1569,6 +1636,7 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
 
 ensureAttendanceLocationColumns()
   .then(async () => {
+    await ensureAttendanceDeviceClaimsTable();
     await ensureClassPeriodColumns();
     await synchronizeEventStatuses();
     const statusSyncTimer = setInterval(() => {
