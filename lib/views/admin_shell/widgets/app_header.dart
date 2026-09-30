@@ -6,6 +6,7 @@ import '../../../controllers/notification_controller.dart';
 import '../../../core/constants/role.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../lecturer_profile/lecturer_profile_page.dart';
 
 class AppHeader extends StatelessWidget implements PreferredSizeWidget {
   final String title;
@@ -118,16 +119,31 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
               ],
             ),
           const SizedBox(width: 8),
-          Container(
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: c.primary, shape: BoxShape.circle),
-            child: Text(
-              initials.isEmpty ? 'U' : initials,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+          Tooltip(
+            message: role == Role.lecturer || role == Role.organizer
+                ? 'Mở hồ sơ cá nhân'
+                : '',
+            child: Material(
+              color: c.primary,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: role == Role.lecturer || role == Role.organizer
+                    ? () => Get.to<void>(() => const LecturerProfilePage())
+                    : null,
+                child: SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: Center(
+                    child: Text(
+                      initials.isEmpty ? 'U' : initials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),

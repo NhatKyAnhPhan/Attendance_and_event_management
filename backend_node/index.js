@@ -6,6 +6,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
+const { createUpdateProfileHandler } = require('./profile_handler');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -54,25 +55,24 @@ function isValidEventTimeRange(startTime, endTime, { requireFutureStart = false,
     && (!requireFutureEnd || end > now);
 }
 
-function isValidClassDateRange(startDate, endDate, schoolYear) {
-  const isDateOnly = (value) => {
-    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      return false;
-    }
-    const [year, month, day] = value.split('-').map(Number);
-    const parsed = new Date(Date.UTC(year, month - 1, day));
-    return parsed.toISOString().slice(0, 10) === value;
-  };
-
-  const schoolYearMatch = typeof schoolYear === 'string'
-    ? /^(\d{4})-\d{4}$/.exec(schoolYear.trim())
-    : null;
-
-  return isDateOnly(startDate)
-    && isDateOnly(endDate)
-    && startDate <= endDate
-    && schoolYearMatch !== null
-    && Number(startDate.slice(0, 4)) >= Number(schoolYearMatch[1]);
+function normalizeDateTime(value) {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second] = match;
+  const parsed = new Date(Date.UTC(
+    Number(year), Number(month) - 1, Number(day),
+    Number(hour), Number(minute), Number(second),
+  ));
+  if (parsed.getUTCFullYear() !== Number(year)
+      || parsed.getUTCMonth() !== Number(month) - 1
+      || parsed.getUTCDate() !== Number(day)
+      || parsed.getUTCHours() !== Number(hour)
+      || parsed.getUTCMinutes() !== Number(minute)
+      || parsed.getUTCSeconds() !== Number(second)) {
+    return null;
+  }
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
 // Bổ sung cột tọa độ nếu cơ sở dữ liệu cũ chưa có thông tin vị trí.
@@ -111,16 +111,6 @@ async function ensureAttendanceDeviceClaimsTable() {
        DROP PRIMARY KEY,
        ADD PRIMARY KEY (device_id, attendance_session_id)`,
     );
-  }
-}
-
-async function ensureClassPeriodColumns() {
-  for (const column of ['Thoigianbatdau', 'Thoigianketthuc']) {
-    try {
-      await pool.query(`ALTER TABLE \`lophocphan\` ADD COLUMN \`${column}\` DATE NULL`);
-    } catch (error) {
-      if (error.code !== 'ER_DUP_FIELDNAME') throw error;
-    }
   }
 }
 
@@ -201,7 +191,7 @@ app.post('/api/auth/login', async (request, response) => {
   try {
     const [rows] = await pool.execute(
             `SELECT Mand AS id, Hoten AS name, Email AS email, Matkhau AS password,
-              Vaitro AS role, Trangthainguoidung AS status
+              Vaitro AS role, Trangthaind AS status
              FROM nguoidung
              WHERE Mand = ? OR Email = ?
        LIMIT 1`,
@@ -241,10 +231,13 @@ app.get('/api/me', requireAuth, async (request, response) => {
     const [rows] = await pool.execute(
             `SELECT nd.Mand AS id, nd.Hoten AS name,
               nd.Email AS email, nd.Vaitro AS role,
-              nd.Trangthainguoidung AS status,
-              sv.Lop AS className, sv.Chuyennganh AS major
+              nd.Trangthaind AS status,
+              sv.Lop AS className, sv.Chuyennganh AS major,
+              gv.Bomon AS subjectDepartment, cnv.Chucvu AS position
              FROM nguoidung nd
              LEFT JOIN sinhvien sv ON sv.Masv = nd.Mand
+             LEFT JOIN giangvien gv ON gv.Magv = nd.Mand
+              LEFT JOIN congnhanvien cnv ON cnv.Manv = nd.Mand
              WHERE nd.Mand = ?
        LIMIT 1`,
       [request.auth.sub],
@@ -256,7 +249,7 @@ app.get('/api/me', requireAuth, async (request, response) => {
     return response.status(500).json({ message: 'Không thể tải thông tin người dùng.' });
   }
 });
-
+app.put('/api/me', requireAuth, createUpdateProfileHandler(pool));
 /*
 /*
 app.get('/api/notifications', requireAuth, async (request, response) => {
@@ -325,9 +318,7 @@ app.get('/api/classes', requireAuth, async (request, response) => {
     const [rows] = await pool.execute(
       `SELECT lhp.Malop AS id, lhp.Malop AS code,
               lhp.Tenlop AS name, lhp.Hocky AS semester,
-              lhp.Namhoc AS schoolYear, lhp.Magv AS lecturerId,
-              DATE_FORMAT(lhp.Thoigianbatdau, '%Y-%m-%d') AS startDate,
-              DATE_FORMAT(lhp.Thoigianketthuc, '%Y-%m-%d') AS endDate,
+              lhp.Thoigianbatdau AS startTime, lhp.Magv AS lecturerId,
               COALESCE(nd.Hoten, '') AS lecturerName,
               COUNT(DISTINCT tvl.Masv) AS studentCount,
               COALESCE(attendance.present, 0) AS present,
@@ -361,9 +352,8 @@ app.get('/api/classes', requireAuth, async (request, response) => {
          WHERE mine.Malop = lhp.Malop
            AND mine.Masv = ?
        )
-       GROUP BY lhp.Malop, lhp.Tenlop, lhp.Hocky,
-                lhp.Namhoc, lhp.Magv, lhp.Thoigianbatdau,
-                lhp.Thoigianketthuc, nd.Hoten, attendance.present,
+      GROUP BY lhp.Malop, lhp.Tenlop, lhp.Hocky,
+          lhp.Thoigianbatdau, lhp.Magv, nd.Hoten, attendance.present,
                 attendance.late, attendance.absent, attendance.sessions
        ORDER BY lhp.Malop`,
       [request.auth.sub, request.auth.sub],
@@ -1415,7 +1405,7 @@ app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admi
     const [rows] = await pool.query(
             `SELECT nd.Mand AS id, nd.Hoten AS name,
               nd.Email AS email, nd.Vaitro AS role,
-              nd.Trangthainguoidung AS status
+              nd.Trangthaind AS status
              FROM nguoidung nd ORDER BY nd.Hoten`,
     );
     return response.json({ items: rows });
@@ -1429,25 +1419,54 @@ app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admi
 app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (_request, response) => {
   try {
     const [rows] = await pool.query(
-            `SELECT lhp.Malop AS id, lhp.Malop AS code, lhp.Tenlop AS name,
-              lhp.Magv AS lecturerId,
-              lhp.Hocky AS semester, lhp.Namhoc AS schoolYear,
-              DATE_FORMAT(lhp.Thoigianbatdau, '%Y-%m-%d') AS startDate,
-              DATE_FORMAT(lhp.Thoigianketthuc, '%Y-%m-%d') AS endDate,
+      `SELECT lhp.Malop AS id, lhp.Malop AS code, lhp.Tenlop AS name,
+              lhp.Magv AS lecturerId, lhp.Madv AS departmentId,
+              mh.Mabomon AS majorId, bm.Tenbomon AS majorName,
+              bm.Maloptat AS majorAbbreviation, lhp.Makhoa AS cohortCode,
+              lhp.Mamon AS subjectId, mh.Mamon AS subjectCode,
+              mh.Tenmon AS subjectName, lhp.Thoigianbatdau AS startTime,
+              lhp.Hocky AS semester,
+              lhp.Trangthailop AS status,
               COALESCE(nd.Hoten, '') AS lecturerName,
               COUNT(tvl.Masv) AS studentCount
-             FROM lophocphan lhp
-             LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-             LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
-             LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
-             GROUP BY lhp.Malop, lhp.Tenlop, lhp.Hocky, lhp.Namhoc,
-                      lhp.Thoigianbatdau, lhp.Thoigianketthuc, nd.Hoten
-             ORDER BY lhp.Malop`,
+       FROM lophocphan lhp
+       INNER JOIN monhoc mh ON mh.Mamon = lhp.Mamon
+       INNER JOIN bomon bm ON bm.Mabomon = mh.Mabomon
+       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
+       LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
+       GROUP BY lhp.Malop, lhp.Tenlop, lhp.Magv, lhp.Madv, mh.Mabomon,
+                bm.Tenbomon, bm.Maloptat, lhp.Makhoa, lhp.Mamon, mh.Mamon,
+                mh.Tenmon, lhp.Thoigianbatdau, lhp.Hocky, lhp.Trangthailop, nd.Hoten
+       ORDER BY lhp.Malop`,
     );
     return response.json({ items: rows });
   } catch (error) {
     console.error('Admin classes error:', error.message);
     return response.status(500).json({ message: 'Không thể tải lớp học.' });
+  }
+});
+
+app.get('/api/admin/class-options', requireAuth, requireRole('Quản trị viên', 'admin'), async (_request, response) => {
+  try {
+    const [cohorts] = await pool.query(
+      `SELECT MaKhoa AS code FROM QuyUocKhoa
+       UNION
+       SELECT DISTINCT MaKhoa AS code FROM sinhvien
+       ORDER BY code DESC`,
+    );
+    const [subjects] = await pool.query(
+      `SELECT mh.Mamon AS id, mh.Mamon AS code, mh.Tenmon AS name,
+              mh.Hocky AS semester, bm.Mabomon AS majorId,
+              bm.Tenbomon AS majorName, bm.Madv AS departmentId
+       FROM monhoc mh
+       INNER JOIN bomon bm ON bm.Mabomon = mh.Mabomon
+       ORDER BY mh.Tenmon, mh.Mamon`,
+    );
+    return response.json({ cohorts, subjects });
+  } catch (error) {
+    console.error('Admin class options error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải môn học và khóa sinh viên.' });
   }
 });
 
@@ -1468,49 +1487,60 @@ app.get('/api/admin/lecturers', requireAuth, requireRole('Quản trị viên', '
 
 app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const {
-    sourceClassId,
-    semester = '',
-    schoolYear = '',
+    name,
+    subjectId,
+    cohortCode,
+    semester,
+    startTime,
     lecturerId = null,
-    startDate,
-    endDate,
   } = request.body || {};
-  if (typeof sourceClassId !== 'string' || !sourceClassId.trim()
-    || !isValidClassDateRange(startDate, endDate, schoolYear)) {
+  const normalizedName = typeof name === 'string' ? name.trim() : '';
+  const normalizedSubjectId = typeof subjectId === 'string' ? subjectId.trim() : '';
+  const normalizedCohortCode = typeof cohortCode === 'string' ? cohortCode.trim() : '';
+  const normalizedStartTime = normalizeDateTime(startTime);
+  if (!normalizedName || !normalizedSubjectId || !normalizedCohortCode || !normalizedStartTime) {
     return response.status(400).json({
-      message: 'Môn học có sẵn và khoảng ngày học kỳ hợp lệ là bắt buộc.',
+      message: 'Tên lớp, môn học, khóa sinh viên và thời gian bắt đầu là bắt buộc.',
     });
+  }
+  const requestedSemester = typeof semester === 'string' ? semester.trim() : '';
+  if (requestedSemester && !['HK1', 'HK2', 'HK3'].includes(requestedSemester)) {
+    return response.status(400).json({ message: 'Học kỳ không hợp lệ.' });
   }
   const normalizedLecturerId = typeof lecturerId === 'string' && lecturerId.trim()
     ? lecturerId.trim()
     : null;
-  if (!normalizedLecturerId) {
-    return response.status(400).json({ message: 'Vui lòng chọn giảng viên.' });
-  }
 
   try {
-    const [[sourceClass]] = await pool.execute(
-      'SELECT Tenlop AS name FROM lophocphan WHERE Malop = ?',
-      [sourceClassId.trim()],
+    const [[subject]] = await pool.execute(
+      `SELECT mh.Mamon, mh.Hocky, bm.Madv AS departmentId
+       FROM monhoc mh
+       INNER JOIN bomon bm ON bm.Mabomon = mh.Mabomon
+       WHERE mh.Mamon = ?`,
+      [normalizedSubjectId],
     );
-    if (!sourceClass || !String(sourceClass.name || '').trim()) {
+    if (!subject) {
       return response.status(400).json({ message: 'Môn học đã chọn không tồn tại.' });
     }
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const id = generateRecordId('CL');
-      try {
-        await pool.execute(
-          `INSERT INTO lophocphan
-           (Malop, Magv, Tenlop, Hocky, Namhoc, Thoigianbatdau,
-            Thoigianketthuc, Trangthailop)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'Đang học')`,
-          [id, normalizedLecturerId, sourceClass.name, String(semester).trim(), String(schoolYear).trim(), startDate, endDate],
-        );
-        return response.status(201).json({ id, message: 'Tạo lớp thành công.' });
-      } catch (error) {
-        if (error.code !== 'ER_DUP_ENTRY' || attempt === 2) throw error;
-      }
+    const [cohorts] = await pool.execute(
+      `SELECT MaKhoa FROM QuyUocKhoa WHERE MaKhoa = ?
+       UNION
+       SELECT MaKhoa FROM sinhvien WHERE MaKhoa = ? LIMIT 1`,
+      [normalizedCohortCode, normalizedCohortCode],
+    );
+    if (cohorts.length === 0) {
+      return response.status(400).json({ message: 'Khóa sinh viên đã chọn không tồn tại.' });
     }
+    const normalizedSemester = requestedSemester || `HK${subject.Hocky}`;
+
+    await pool.execute(
+      `INSERT INTO lophocphan
+       (Malop, Magv, Madv, Mamon, Makhoa, Tenlop, Hocky, Trangthailop, Thoigianbatdau)
+       VALUES ('', ?, ?, ?, ?, ?, ?, 'Đang học', ?)`,
+      [normalizedLecturerId, subject.departmentId, normalizedSubjectId,
+        normalizedCohortCode, normalizedName, normalizedSemester, normalizedStartTime],
+    );
+    return response.status(201).json({ message: 'Tạo lớp thành công.' });
   } catch (error) {
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
       return response.status(400).json({ message: 'Giảng viên không tồn tại.' });
@@ -1523,16 +1553,20 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
 app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const {
     name,
-    semester = '',
-    schoolYear = '',
+    semester,
+    startTime,
     lecturerId = null,
-    startDate,
-    endDate,
   } = request.body || {};
-  if (typeof name !== 'string' || !name.trim()
-    || !isValidClassDateRange(startDate, endDate, schoolYear)) {
+  if (typeof name !== 'string' || !name.trim()) {
     return response.status(400).json({
-      message: 'Tên lớp hợp lệ và ngày kết thúc phải bằng hoặc sau ngày bắt đầu.',
+      message: 'Vui lòng nhập tên lớp hợp lệ.',
+    });
+  }
+  const normalizedStartTime = normalizeDateTime(startTime);
+  if (!['HK1', 'HK2', 'HK3'].includes(semester)
+      || !normalizedStartTime) {
+    return response.status(400).json({
+      message: 'Học kỳ hoặc thời gian bắt đầu không hợp lệ.',
     });
   }
   const normalizedLecturerId = typeof lecturerId === 'string' && lecturerId.trim()
@@ -1552,10 +1586,9 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
     }
     await connection.execute(
       `UPDATE lophocphan
-         SET Magv = ?, Tenlop = ?, Hocky = ?, Namhoc = ?,
-           Thoigianbatdau = ?, Thoigianketthuc = ?
+         SET Magv = ?, Tenlop = ?, Hocky = ?, Thoigianbatdau = ?
        WHERE Malop = ?`,
-        [normalizedLecturerId, name.trim(), String(semester).trim(), String(schoolYear).trim(), startDate, endDate, request.params.classId],
+        [normalizedLecturerId, name.trim(), semester, normalizedStartTime, request.params.classId],
     );
     await connection.commit();
     return response.json({ message: 'Cập nhật lớp thành công.' });
@@ -1637,7 +1670,6 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
 ensureAttendanceLocationColumns()
   .then(async () => {
     await ensureAttendanceDeviceClaimsTable();
-    await ensureClassPeriodColumns();
     await synchronizeEventStatuses();
     const statusSyncTimer = setInterval(() => {
       synchronizeEventStatuses().catch((error) => {

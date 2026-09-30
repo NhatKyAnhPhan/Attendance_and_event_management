@@ -31,6 +31,33 @@ class ClassRepository {
         .toList();
   }
 
+  Future<ClassOptions> getClassOptions() async {
+    final body = await _client.get('/api/admin/class-options');
+    final cohorts = body['cohorts'];
+    final subjects = body['subjects'];
+    return ClassOptions(
+      cohorts: cohorts is List
+          ? cohorts
+                .whereType<Map>()
+                .map(
+                  (item) =>
+                      ClassCohort.fromJson(Map<String, dynamic>.from(item)),
+                )
+                .toList()
+          : const [],
+      subjects: subjects is List
+          ? subjects
+                .whereType<Map>()
+                .map(
+                  (item) => ClassSubjectOption.fromJson(
+                    Map<String, dynamic>.from(item),
+                  ),
+                )
+                .toList()
+          : const [],
+    );
+  }
+
   Future<List<ClassLecturer>> getLecturers() async {
     final body = await _client.get('/api/admin/lecturers');
     final items = body['items'];
@@ -42,22 +69,22 @@ class ClassRepository {
   }
 
   Future<void> createClass({
-    required String sourceClassId,
+    required String name,
+    required String subjectId,
+    required String cohortCode,
     required String semester,
-    required String schoolYear,
+    required String startTime,
     required String? lecturerId,
-    required DateTime startDate,
-    required DateTime endDate,
   }) async {
     await _client.post(
       '/api/admin/classes',
       data: {
-        'sourceClassId': sourceClassId,
+        'name': name,
+        'subjectId': subjectId,
+        'cohortCode': cohortCode,
         'semester': semester,
-        'schoolYear': schoolYear,
+        'startTime': startTime,
         'lecturerId': lecturerId,
-        'startDate': _dateOnly(startDate),
-        'endDate': _dateOnly(endDate),
       },
     );
   }
@@ -66,20 +93,16 @@ class ClassRepository {
     required String id,
     required String name,
     required String semester,
-    required String schoolYear,
+    required String startTime,
     required String? lecturerId,
-    required DateTime startDate,
-    required DateTime endDate,
   }) async {
     await _client.put(
       '/api/admin/classes/$id',
       data: {
         'name': name,
         'semester': semester,
-        'schoolYear': schoolYear,
+        'startTime': startTime,
         'lecturerId': lecturerId,
-        'startDate': _dateOnly(startDate),
-        'endDate': _dateOnly(endDate),
       },
     );
   }
@@ -87,9 +110,4 @@ class ClassRepository {
   Future<void> deleteClass(String id) async {
     await _client.delete('/api/admin/classes/$id');
   }
-
-  String _dateOnly(DateTime value) =>
-      '${value.year.toString().padLeft(4, '0')}-'
-      '${value.month.toString().padLeft(2, '0')}-'
-      '${value.day.toString().padLeft(2, '0')}';
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:intl/intl.dart';
 
 import '../../controllers/admin_classes_controller.dart';
 import '../../controllers/auth_controller.dart';
@@ -39,7 +38,8 @@ class _ClassesPageState extends State<ClassesPage> {
           item.name,
           item.lecturerName,
           item.semester,
-          item.schoolYear,
+          item.startTime,
+          item.subjectCode,
           item.room,
           item.schedule,
         ].any((value) => value.toLowerCase().contains(query));
@@ -95,8 +95,8 @@ class _ClassesPageState extends State<ClassesPage> {
                   title: Text(item.name),
                   subtitle: Text(
                     '${item.code}  |  ${item.lecturerName}\n'
-                    '${item.semester} · ${item.schoolYear}\n'
-                    '${_periodLabel(item)}',
+                    '${item.semester} · ${_dateTimeLabel(item.startTime)}\n'
+                    '${item.subjectCode} · ${item.majorName} · Khóa ${item.cohortCode}',
                   ),
                   isThreeLine: true,
                   trailing: Row(
@@ -144,9 +144,11 @@ class _ClassesPageState extends State<ClassesPage> {
             Text('Mã lớp: ${item.code}'),
             Text('Giảng viên: ${item.lecturerName}'),
             Text('Học kỳ: ${item.semester}'),
-            Text('Năm học: ${item.schoolYear}'),
-            Text('Bắt đầu: ${_formatClassDate(item.startDate)}'),
-            Text('Kết thúc: ${_formatClassDate(item.endDate)}'),
+            Text('Thời gian bắt đầu: ${_dateTimeLabel(item.startTime)}'),
+            Text('Môn học: ${item.subjectCode}'),
+            Text('Bộ môn: ${item.majorName}'),
+            Text('Khóa: ${item.cohortCode}'),
+            Text('Trạng thái: ${item.status}'),
             Text('Sĩ số: ${item.studentCount}'),
           ],
         ),
@@ -165,15 +167,24 @@ class _ClassesPageState extends State<ClassesPage> {
     AdminClassesController controller, {
     ClassModel? item,
   }) async {
+    await controller.loadClassOptions();
+    if (!context.mounted) return;
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: item?.name ?? '');
-    final semesterController = TextEditingController(
-      text: item?.semester ?? '',
-    );
-    DateTime? schoolYearDate = _parseSchoolYear(item?.schoolYear);
-    DateTime? startDate = item?.startDate;
-    DateTime? endDate = item?.endDate;
-    String? sourceClassId = item?.id;
+    ClassSubjectOption? selectedSubject;
+    for (final subject in controller.subjects) {
+      if (subject.id == item?.subjectId) {
+        selectedSubject = subject;
+        break;
+      }
+    }
+    String? cohortCode = item?.cohortCode.isNotEmpty == true
+        ? item!.cohortCode
+        : null;
+    String? semester = item?.semester.isNotEmpty == true
+        ? item!.semester
+        : _semesterCode(selectedSubject?.semester);
+    DateTime? startTime = DateTime.tryParse(item?.startTime ?? '')?.toLocal();
     String? lecturerId = item?.lecturerId.isEmpty == true
         ? null
         : item?.lecturerId;
@@ -181,301 +192,254 @@ class _ClassesPageState extends State<ClassesPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(item == null ? 'Tạo lớp' : 'Chỉnh sửa lớp'),
-          content: SizedBox(
-            width: 440,
-            child: Form(
-              key: formKey,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (item == null)
-                      DropdownButtonFormField<String>(
-                        initialValue: sourceClassId,
-                        decoration: const InputDecoration(
-                          labelText: 'Mã môn · Tên môn',
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text(item == null ? 'Tạo lớp' : 'Chỉnh sửa lớp'),
+            content: SizedBox(
+              width: 440,
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (item == null)
+                        DropdownButtonFormField<ClassSubjectOption>(
+                          initialValue: selectedSubject,
+                          decoration: const InputDecoration(
+                            labelText: 'Môn học',
+                          ),
+                          items: controller.subjects
+                              .map(
+                                (subject) =>
+                                    DropdownMenuItem<ClassSubjectOption>(
+                                      value: subject,
+                                      child: Text(
+                                        '${subject.code} · ${subject.name}',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                              )
+                              .toList(),
+                          onChanged: (value) => setState(() {
+                            selectedSubject = value;
+                            if (value != null) {
+                              nameController.text = value.name;
+                              semester = _semesterCode(value.semester);
+                            }
+                          }),
+                          validator: (value) =>
+                              value == null ? 'Vui lòng chọn môn học' : null,
+                        )
+                      else
+                        InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Môn học',
+                          ),
+                          child: Text(
+                            '${item.subjectCode} · ${selectedSubject?.name ?? item.name}',
+                          ),
                         ),
-                        items: controller.items
-                            .map(
-                              (course) => DropdownMenuItem<String>(
-                                value: course.id,
-                                child: Text(
-                                  '${course.code} · ${course.name}',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) =>
-                            setState(() => sourceClassId = value),
-                        validator: (value) => value == null
-                            ? 'Vui lòng chọn môn học có sẵn'
-                            : null,
-                      )
-                    else
+                      const SizedBox(height: 12),
                       TextFormField(
                         controller: nameController,
-                        decoration: const InputDecoration(labelText: 'Tên lớp'),
+                        decoration: const InputDecoration(
+                          labelText: 'Tên lớp học phần',
+                        ),
                         validator: (value) =>
                             value == null || value.trim().isEmpty
                             ? 'Vui lòng nhập tên lớp'
                             : null,
                       ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: semesterController,
-                      decoration: const InputDecoration(labelText: 'Học kỳ'),
-                    ),
-                    const SizedBox(height: 12),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Năm học'),
-                      subtitle: Text(_schoolYearLabel(schoolYearDate)),
-                      trailing: const Icon(Icons.calendar_today_outlined),
-                      onTap: () async {
-                        final selected = await _pickSchoolYear(
-                          context,
-                          schoolYearDate,
-                        );
-                        if (!context.mounted || selected == null) return;
-                        setState(() {
-                          schoolYearDate = DateTime(selected.year, 1, 1);
-                          if (startDate != null &&
-                              startDate!.year < selected.year) {
-                            startDate = null;
-                            endDate = null;
-                          }
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Ngày bắt đầu học kỳ'),
-                      subtitle: Text(_formatClassDate(startDate)),
-                      trailing: const Icon(Icons.calendar_today_outlined),
-                      onTap: () async {
-                        if (schoolYearDate == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Vui lòng chọn năm học trước.'),
-                            ),
-                          );
-                          return;
-                        }
-                        final selected = await _pickClassDate(
-                          context,
-                          startDate,
-                          firstDate: DateTime(schoolYearDate!.year, 1, 1),
-                        );
-                        if (!context.mounted) return;
-                        if (selected != null) {
-                          if (endDate != null && endDate!.isBefore(selected)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Ngày bắt đầu không được sau ngày kết thúc.',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          setState(() => startDate = selected);
-                        }
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Ngày kết thúc học kỳ'),
-                      subtitle: Text(_formatClassDate(endDate)),
-                      trailing: const Icon(Icons.calendar_today_outlined),
-                      onTap: () async {
-                        if (startDate == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Vui lòng chọn ngày bắt đầu trước.',
-                              ),
-                            ),
-                          );
-                          return;
-                        }
-                        final selected = await _pickClassDate(
-                          context,
-                          endDate,
-                          firstDate: startDate!,
-                        );
-                        if (!context.mounted) return;
-                        if (selected != null) {
-                          if (startDate != null &&
-                              selected.isBefore(startDate!)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Ngày kết thúc phải bằng hoặc sau ngày bắt đầu.',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-                          setState(() => endDate = selected);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: lecturerId,
-                      decoration: const InputDecoration(
-                        labelText: 'Giảng viên',
+                      const SizedBox(height: 12),
+                      InputDecorator(
+                        decoration: const InputDecoration(labelText: 'Bộ môn'),
+                        child: Text(
+                          selectedSubject?.majorName ?? item?.majorName ?? '',
+                        ),
                       ),
-                      items: [
-                        if (item != null)
+                      const SizedBox(height: 12),
+                      if (item == null)
+                        DropdownButtonFormField<String>(
+                          initialValue: cohortCode,
+                          decoration: const InputDecoration(
+                            labelText: 'Khóa sinh viên',
+                          ),
+                          items: controller.cohorts
+                              .map(
+                                (cohort) => DropdownMenuItem<String>(
+                                  value: cohort.code,
+                                  child: Text(cohort.code),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) =>
+                              setState(() => cohortCode = value),
+                          validator: (value) => value == null
+                              ? 'Vui lòng chọn khóa sinh viên'
+                              : null,
+                        )
+                      else
+                        InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Khóa sinh viên',
+                          ),
+                          child: Text(item.cohortCode),
+                        ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                          key: ValueKey(semester),
+                        initialValue: semester,
+                        decoration: const InputDecoration(labelText: 'Học kỳ'),
+                        items: const ['HK1', 'HK2', 'HK3']
+                            .map(
+                              (value) => DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(value),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) => setState(() => semester = value),
+                        validator: (value) =>
+                            value == null ? 'Vui lòng chọn học kỳ' : null,
+                      ),
+                      const SizedBox(height: 8),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Thời gian bắt đầu'),
+                        subtitle: Text(
+                          startTime == null
+                              ? 'Chưa chọn'
+                              : _dateTimeLabel(startTime!.toIso8601String()),
+                        ),
+                        trailing: const Icon(Icons.calendar_month_outlined),
+                        onTap: () async {
+                          final selected = await _pickStartTime(
+                            context,
+                            startTime,
+                          );
+                          if (!context.mounted || selected == null) return;
+                          setState(() => startTime = selected);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: lecturerId,
+                        decoration: const InputDecoration(
+                          labelText: 'Giảng viên',
+                        ),
+                        items: [
                           const DropdownMenuItem<String>(
                             value: null,
                             child: Text('Chưa phân công'),
                           ),
-                        ...controller.lecturers.map(
-                          (lecturer) => DropdownMenuItem<String>(
-                            value: lecturer.id,
-                            child: Text(lecturer.name),
+                          ...controller.lecturers.map(
+                            (lecturer) => DropdownMenuItem<String>(
+                              value: lecturer.id,
+                              child: Text(lecturer.name),
+                            ),
                           ),
-                        ),
-                      ],
-                      onChanged: (value) => setState(() => lecturerId = value),
-                      validator: (value) => item == null && value == null
-                          ? 'Vui lòng chọn giảng viên'
-                          : null,
-                    ),
-                  ],
+                        ],
+                        onChanged: (value) =>
+                            setState(() => lecturerId = value),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Hủy'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                if (!formKey.currentState!.validate()) return;
-                if (startDate == null || endDate == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Vui lòng chọn ngày bắt đầu và kết thúc.'),
-                    ),
-                  );
-                  return;
-                }
-                if (schoolYearDate == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Vui lòng chọn năm học.')),
-                  );
-                  return;
-                }
-                if (!isValidClassDateRange(
-                  startDate!,
-                  endDate!,
-                  schoolYear: schoolYearDate!.year,
-                )) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Ngày bắt đầu phải từ năm học đã chọn và ngày kết thúc không được trước ngày bắt đầu.',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-                try {
-                  final semester = semesterController.text.trim();
-                  final schoolYear =
-                      '${schoolYearDate!.year}-${schoolYearDate!.year + 1}';
-                  if (item == null) {
-                    await controller.createClass(
-                      sourceClassId: sourceClassId!,
-                      semester: semester,
-                      schoolYear: schoolYear,
-                      lecturerId: lecturerId,
-                      startDate: startDate!,
-                      endDate: endDate!,
-                    );
-                  } else {
-                    await controller.updateClass(
-                      id: item.id,
-                      name: nameController.text.trim(),
-                      semester: semester,
-                      schoolYear: schoolYear,
-                      lecturerId: lecturerId,
-                      startDate: startDate!,
-                      endDate: endDate!,
-                    );
-                  }
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                } catch (exception) {
-                  if (context.mounted) {
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Hủy'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  if (!formKey.currentState!.validate()) return;
+                  if (startTime == null) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(exception.toString())),
+                      const SnackBar(
+                        content: Text('Vui lòng chọn thời gian bắt đầu.'),
+                      ),
                     );
+                    return;
                   }
-                }
-              },
-              child: Text(item == null ? 'Lưu' : 'Cập nhật'),
-            ),
-          ],
-        ),
+                  try {
+                    if (item == null) {
+                      await controller.createClass(
+                        name: nameController.text.trim(),
+                        subjectId: selectedSubject!.id,
+                        cohortCode: cohortCode!,
+                        semester: semester!,
+                        startTime: _formatDateTime(startTime!),
+                        lecturerId: lecturerId,
+                      );
+                    } else {
+                      await controller.updateClass(
+                        id: item.id,
+                        name: nameController.text.trim(),
+                        semester: semester!,
+                        startTime: _formatDateTime(startTime!),
+                        lecturerId: lecturerId,
+                      );
+                    }
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  } catch (exception) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(exception.toString())),
+                      );
+                    }
+                  }
+                },
+                child: Text(item == null ? 'Lưu' : 'Cập nhật'),
+              ),
+            ],
+          );
+        },
       ),
     );
     nameController.dispose();
-    semesterController.dispose();
   }
 
-  Future<DateTime?> _pickSchoolYear(
+  Future<DateTime?> _pickStartTime(
     BuildContext context,
-    DateTime? initialDate,
+    DateTime? initialDateTime,
   ) async {
-    final today = DateUtils.dateOnly(DateTime.now());
-    final selected = await showDatePicker(
+    final now = DateTime.now();
+    final initial = initialDateTime ?? now;
+    final date = await showDatePicker(
       context: context,
-      initialDate: initialDate ?? today,
+      initialDate: DateUtils.dateOnly(initial),
       firstDate: DateTime(2000),
       lastDate: DateTime(2100, 12, 31),
-      helpText: 'Chọn năm học bắt đầu',
+      helpText: 'Chọn ngày bắt đầu',
     );
-    return selected == null ? null : DateTime(selected.year, 1, 1);
-  }
-
-  Future<DateTime?> _pickClassDate(
-    BuildContext context,
-    DateTime? initialDate, {
-    DateTime? firstDate,
-  }) async {
-    final minimum = DateUtils.dateOnly(firstDate ?? DateTime(2000));
-    final requested = DateUtils.dateOnly(initialDate ?? DateTime.now());
-    final selected = await showDatePicker(
+    if (date == null || !context.mounted) return null;
+    final time = await showTimePicker(
       context: context,
-      initialDate: requested.isBefore(minimum) ? minimum : requested,
-      firstDate: minimum,
-      lastDate: DateTime(2100, 12, 31),
+      initialTime: TimeOfDay.fromDateTime(initialDateTime ?? now),
     );
-    return selected == null ? null : DateUtils.dateOnly(selected);
+    if (time == null) return null;
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
   }
 
-  static String _formatClassDate(DateTime? date) =>
-      date == null ? 'Chưa thiết lập' : DateFormat('dd/MM/yyyy').format(date);
-
-  static DateTime? _parseSchoolYear(String? value) {
-    final year = int.tryParse(value?.split('-').first ?? '');
-    return year == null ? null : DateTime(year, 1, 1);
+  static String? _semesterCode(String? value) {
+    final semesterNumber = int.tryParse(value ?? '');
+    return semesterNumber == null ? null : 'HK$semesterNumber';
   }
 
-  static String _schoolYearLabel(DateTime? date) =>
-      date == null ? 'Chưa thiết lập' : '${date.year}-${date.year + 1}';
+  static String _formatDateTime(DateTime value) {
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return '${value.year}-${twoDigits(value.month)}-${twoDigits(value.day)} '
+        '${twoDigits(value.hour)}:${twoDigits(value.minute)}:00';
+  }
 
-  static String _periodLabel(ClassModel item) =>
-      '${_formatClassDate(item.startDate)} - ${_formatClassDate(item.endDate)}';
+  static String _dateTimeLabel(String value) {
+    final dateTime = DateTime.tryParse(value)?.toLocal();
+    if (dateTime == null) return value;
+    return _formatDateTime(dateTime).substring(0, 16);
+  }
 
   Future<void> _confirmDelete(
     BuildContext context,

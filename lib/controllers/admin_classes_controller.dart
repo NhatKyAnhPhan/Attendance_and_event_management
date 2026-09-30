@@ -10,6 +10,8 @@ class AdminClassesController extends GetxController {
   final ClassRepository _repository;
   final RxList<ClassModel> items = <ClassModel>[].obs;
   final RxList<ClassLecturer> lecturers = <ClassLecturer>[].obs;
+  final RxList<ClassCohort> cohorts = <ClassCohort>[].obs;
+  final RxList<ClassSubjectOption> subjects = <ClassSubjectOption>[].obs;
   final RxBool loading = false.obs;
   final RxString error = ''.obs;
 
@@ -18,6 +20,7 @@ class AdminClassesController extends GetxController {
     super.onInit();
     load();
     loadLecturers();
+    loadClassOptions();
   }
 
   Future<void> load() async {
@@ -40,21 +43,32 @@ class AdminClassesController extends GetxController {
     }
   }
 
+  Future<void> loadClassOptions() async {
+    try {
+      final options = await _repository.getClassOptions();
+      cohorts.assignAll(options.cohorts);
+      subjects.assignAll(options.subjects);
+    } catch (_) {
+      cohorts.clear();
+      subjects.clear();
+    }
+  }
+
   Future<void> createClass({
-    required String sourceClassId,
+    required String name,
+    required String subjectId,
+    required String cohortCode,
     required String semester,
-    required String schoolYear,
+    required String startTime,
     required String? lecturerId,
-    required DateTime startDate,
-    required DateTime endDate,
   }) async {
     await _repository.createClass(
-      sourceClassId: sourceClassId,
+      name: name,
+      subjectId: subjectId,
+      cohortCode: cohortCode,
       semester: semester,
-      schoolYear: schoolYear,
+      startTime: startTime,
       lecturerId: lecturerId,
-      startDate: startDate,
-      endDate: endDate,
     );
     await load();
   }
@@ -63,19 +77,15 @@ class AdminClassesController extends GetxController {
     required String id,
     required String name,
     required String semester,
-    required String schoolYear,
+    required String startTime,
     required String? lecturerId,
-    required DateTime startDate,
-    required DateTime endDate,
   }) async {
     await _repository.updateClass(
       id: id,
       name: name,
       semester: semester,
-      schoolYear: schoolYear,
+      startTime: startTime,
       lecturerId: lecturerId,
-      startDate: startDate,
-      endDate: endDate,
     );
     await load();
   }

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-
+import 'package:get/get.dart';
 import '../../../core/constants/admin_page.dart';
 import '../../../core/constants/role.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../widgets/huit_logo_mark.dart';
+import '../../lecturer_profile/lecturer_profile_page.dart';
 
 class _NavItem {
   final IconData icon;
@@ -209,44 +210,52 @@ class AppSidebar extends StatelessWidget {
             child: Column(
               children: [
                 if (!collapsed)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    margin: const EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(
+                   Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Material(
                       color: c.muted,
                       borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: c.primary,
-                            shape: BoxShape.circle,
+                    child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: role == Role.lecturer || role == Role.organizer
+                            ? () => _openProfile(context)
+                            : null,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
                           ),
-                          child: Text(
-                            role.shortCode,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
+                        child: Row(
+                            children: [
+                              Container(
+                                width: 32,
+                                height: 32,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: c.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Text(
+                                  role.shortCode,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  role.label,
+                                  style: AppTextStyles.bodySm(c.foreground)
+                                      .copyWith(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            role.label,
-                            style: AppTextStyles.bodySm(c.foreground)
-                                .copyWith(fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 Material(
@@ -278,5 +287,17 @@ class AppSidebar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+void _openProfile(BuildContext context) {
+    final scaffold = Scaffold.maybeOf(context);
+    if (scaffold?.isDrawerOpen ?? false) {
+      scaffold!.closeDrawer();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Get.to<void>(() => const LecturerProfilePage());
+      });
+      return;
+    }
+    Get.to<void>(() => const LecturerProfilePage());
   }
 }

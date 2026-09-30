@@ -11,7 +11,13 @@ import 'data/api/api_client.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
-  ApiClient.configureBaseUrl(prefs.getString('apiBaseUrl'));
+  var apiBaseUrl = prefs.getString('apiBaseUrl');
+  if (apiBaseUrl == 'http://127.0.0.1:3001' ||
+      apiBaseUrl == 'http://10.0.2.2:3001') {
+    apiBaseUrl = apiBaseUrl!.replaceFirst(':3001', ':3000');
+    await prefs.setString('apiBaseUrl', apiBaseUrl);
+  }
+  ApiClient.configureBaseUrl(apiBaseUrl);
 
   // Controller nền tảng, cần có trước khi bất kỳ trang nào build.
   Get.put(ThemeController());

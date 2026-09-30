@@ -21,10 +21,16 @@ class ClassModel {
   final String lecturerId;
   final String lecturerName;
   final int studentCount;
-  final String semester; // vd "2024-2025 HK2"
-  final String schoolYear;
-  final DateTime? startDate;
-  final DateTime? endDate;
+  final String semester;
+  final String startTime;
+  final String subjectId;
+  final String subjectCode;
+  final String departmentId;
+  final String majorId;
+  final String majorName;
+  final String majorAbbreviation;
+  final String cohortCode;
+  final String status;
   final String room; // phòng học mặc định
   final String schedule; // vd "Thứ 3, 13:00–15:00"
 
@@ -37,9 +43,15 @@ class ClassModel {
     required this.lecturerName,
     required this.studentCount,
     required this.semester,
-    this.schoolYear = '',
-    this.startDate,
-    this.endDate,
+    this.startTime = '',
+    this.subjectId = '',
+    this.subjectCode = '',
+    this.departmentId = '',
+    this.majorId = '',
+    this.majorName = '',
+    this.majorAbbreviation = '',
+    this.cohortCode = '',
+    this.status = '',
     required this.room,
     required this.schedule,
   });
@@ -57,9 +69,15 @@ class ClassModel {
       lecturerName: json['lecturerName'] as String? ?? '',
       studentCount: json['studentCount'] as int? ?? 0,
       semester: json['semester'] as String? ?? '',
-      schoolYear: json['schoolYear'] as String? ?? '',
-      startDate: DateTime.tryParse(json['startDate']?.toString() ?? ''),
-      endDate: DateTime.tryParse(json['endDate']?.toString() ?? ''),
+      startTime: json['startTime']?.toString() ?? '',
+      subjectId: json['subjectId']?.toString() ?? '',
+      subjectCode: json['subjectCode']?.toString() ?? '',
+      departmentId: json['departmentId']?.toString() ?? '',
+      majorId: json['majorId']?.toString() ?? '',
+      majorName: json['majorName']?.toString() ?? '',
+      majorAbbreviation: json['majorAbbreviation']?.toString() ?? '',
+      cohortCode: json['cohortCode']?.toString() ?? '',
+      status: json['status']?.toString() ?? '',
       room: json['room'] as String? ?? '',
       schedule: json['schedule'] as String? ?? '',
     );
@@ -75,21 +93,66 @@ class ClassModel {
     'lecturerName': lecturerName,
     'studentCount': studentCount,
     'semester': semester,
-    'schoolYear': schoolYear,
-    'startDate': startDate?.toIso8601String(),
-    'endDate': endDate?.toIso8601String(),
+    'startTime': startTime,
+    'subjectId': subjectId,
+    'subjectCode': subjectCode,
+    'departmentId': departmentId,
+    'majorId': majorId,
+    'majorName': majorName,
+    'majorAbbreviation': majorAbbreviation,
+    'cohortCode': cohortCode,
+    'status': status,
     'room': room,
     'schedule': schedule,
   };
 }
 
-bool isValidClassDateRange(
-  DateTime startDate,
-  DateTime endDate, {
-  int? schoolYear,
-}) =>
-    !endDate.isBefore(startDate) &&
-    (schoolYear == null || startDate.year >= schoolYear);
+class ClassCohort {
+  final String code;
+
+  const ClassCohort({required this.code});
+
+  factory ClassCohort.fromJson(Map<String, dynamic> json) =>
+      ClassCohort(code: json['code']?.toString() ?? '');
+}
+
+class ClassOptions {
+  final List<ClassCohort> cohorts;
+  final List<ClassSubjectOption> subjects;
+
+  const ClassOptions({required this.cohorts, required this.subjects});
+}
+
+class ClassSubjectOption {
+  final String id;
+  final String code;
+  final String name;
+  final String majorId;
+  final String majorName;
+  final String departmentId;
+  final String semester;
+
+  const ClassSubjectOption({
+    required this.id,
+    required this.code,
+    required this.name,
+    required this.majorId,
+    required this.majorName,
+    required this.departmentId,
+    required this.semester,
+  });
+
+  factory ClassSubjectOption.fromJson(Map<String, dynamic> json) =>
+      ClassSubjectOption(
+        id: json['id']?.toString() ?? '',
+        code: json['code']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        majorId: json['majorId']?.toString() ?? '',
+        majorName: json['majorName']?.toString() ?? '',
+        departmentId: json['departmentId']?.toString() ?? '',
+        semester: json['semester']?.toString() ?? '',
+      );
+}
 
 class ClassLecturer {
   final String id;
