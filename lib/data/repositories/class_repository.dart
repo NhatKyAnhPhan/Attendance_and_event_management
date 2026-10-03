@@ -1,4 +1,5 @@
 import '../api/api_client.dart';
+import '../api/endpoints.dart';
 import '../models/class_model.dart';
 import '../models/student_summaries.dart';
 
@@ -9,7 +10,7 @@ class ClassRepository {
 
   // Đọc danh sách lớp từ API và chuyển từng bản ghi thành model ứng dụng.
   Future<List<StudentClassSummary>> getStudentClasses() async {
-    final body = await _client.get('/api/classes');
+    final body = await _client.get(ApiEndpoints.classes);
     final items = body['items'];
     if (items is! List) return const [];
     return items
@@ -19,6 +20,13 @@ class ClassRepository {
               StudentClassSummary.fromJson(Map<String, dynamic>.from(item)),
         )
         .toList();
+  }
+
+  Future<void> joinClass(String classCode) async {
+    await _client.post(
+      ApiEndpoints.joinClass,
+      data: {'classCode': classCode.trim()},
+    );
   }
 
   Future<List<ClassModel>> getManagedClasses() async {
