@@ -90,6 +90,18 @@ class AdminClassesController extends GetxController {
     await load();
   }
 
+  Future<ClassStudentImportResult> importStudents({
+    required String classId,
+    required List<String> studentIds,
+  }) async {
+    final result = await _repository.importStudents(
+      classId: classId,
+      studentIds: studentIds,
+    );
+    await load();
+    return result;
+  }
+
   Future<void> deleteClass(String id) async {
     await _repository.deleteClass(id);
     await load();

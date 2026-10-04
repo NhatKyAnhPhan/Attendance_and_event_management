@@ -22,21 +22,25 @@ class ClassRepository {
         .toList();
   }
 
-  Future<void> joinClass(String classCode) async {
-    await _client.post(
-      ApiEndpoints.joinClass,
-      data: {'classCode': classCode.trim()},
-    );
-  }
-
   Future<List<ClassModel>> getManagedClasses() async {
-    final body = await _client.get('/api/admin/classes');
+    final body = await _client.get(ApiEndpoints.adminClasses);
     final items = body['items'];
     if (items is! List) return const [];
     return items
         .whereType<Map>()
         .map((item) => ClassModel.fromJson(Map<String, dynamic>.from(item)))
         .toList();
+  }
+
+  Future<ClassStudentImportResult> importStudents({
+    required String classId,
+    required List<String> studentIds,
+  }) async {
+    final body = await _client.post(
+      '${ApiEndpoints.adminClasses}/$classId/students/import',
+      data: {'studentIds': studentIds},
+    );
+    return ClassStudentImportResult.fromJson(body);
   }
 
   Future<ClassOptions> getClassOptions() async {
@@ -85,7 +89,7 @@ class ClassRepository {
     required String? lecturerId,
   }) async {
     await _client.post(
-      '/api/admin/classes',
+      ApiEndpoints.adminClasses,
       data: {
         'name': name,
         'subjectId': subjectId,
@@ -105,7 +109,7 @@ class ClassRepository {
     required String? lecturerId,
   }) async {
     await _client.put(
-      '/api/admin/classes/$id',
+      '${ApiEndpoints.adminClasses}/$id',
       data: {
         'name': name,
         'semester': semester,
@@ -116,6 +120,6 @@ class ClassRepository {
   }
 
   Future<void> deleteClass(String id) async {
-    await _client.delete('/api/admin/classes/$id');
+    await _client.delete('${ApiEndpoints.adminClasses}/$id');
   }
 }

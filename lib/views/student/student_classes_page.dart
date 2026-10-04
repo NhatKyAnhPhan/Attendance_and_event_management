@@ -17,57 +17,6 @@ class StudentClassesPage extends StatefulWidget {
 
 class _StudentClassesPageState extends State<StudentClassesPage> {
   String _query = '';
-  bool _joining = false;
-
-  Future<void> _joinClass(ClassesController controller) async {
-    final codeController = TextEditingController();
-    final classCode = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Tham gia lớp học'),
-        content: TextField(
-          controller: codeController,
-          autofocus: true,
-          textCapitalization: TextCapitalization.characters,
-          decoration: const InputDecoration(
-            labelText: 'Mã lớp',
-            hintText: 'Nhập mã lớp do giảng viên cung cấp',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (value) => Navigator.pop(dialogContext, value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, codeController.text),
-            child: const Text('Tham gia'),
-          ),
-        ],
-      ),
-    );
-    codeController.dispose();
-
-    final normalizedCode = classCode?.trim() ?? '';
-    if (normalizedCode.isEmpty || !mounted) return;
-
-    setState(() => _joining = true);
-    try {
-      await controller.joinClass(normalizedCode);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Tham gia lớp thành công.')));
-    } catch (exception) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(exception.toString())));
-    } finally {
-      if (mounted) setState(() => _joining = false);
-    }
-  }
 
   /// Hiển thị lớp và kết quả điểm danh lấy từ API sinh viên.
   @override
@@ -120,23 +69,6 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
                   style: AppTextStyles.bodySm(c.mutedForeground),
                 ),
               ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _joining ? null : () => _joinClass(controller),
-                icon: _joining
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.group_add_outlined),
-                label: Text(_joining ? 'Đang tham gia...' : 'Tham gia lớp'),
-              ),
             ),
           ),
           Padding(

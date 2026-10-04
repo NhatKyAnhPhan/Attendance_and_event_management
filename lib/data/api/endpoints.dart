@@ -6,7 +6,7 @@ class ApiEndpoints {
   static const currentUser = '/api/me';
   static const events = '/api/events';
   static const classes = '/api/classes';
-  static const joinClass = '/api/classes/join';
+  static const adminClasses = '/api/admin/classes';
   static const attendance = '/api/attendance';
   static const attendanceSessions = '/api/attendance/sessions';
   static const adminAttendanceSessions = '/api/admin/attendance/sessions';

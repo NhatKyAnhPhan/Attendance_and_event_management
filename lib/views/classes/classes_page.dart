@@ -1,3 +1,5 @@
+import 'package:excel/excel.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -18,6 +20,7 @@ class ClassesPage extends StatefulWidget {
 
 class _ClassesPageState extends State<ClassesPage> {
   String _query = '';
+  final Set<String> _importingClassIds = {};
 
   @override
   Widget build(BuildContext context) {
@@ -103,7 +106,16 @@ class _ClassesPageState extends State<ClassesPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text('${item.studentCount} SV'),
-                      if (canManage)
+                      if (_importingClassIds.contains(item.id))
+                        const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      else if (canManage)
                         PopupMenuButton<String>(
                           tooltip: 'Thao tác lớp',
                           onSelected: (action) {
@@ -111,9 +123,19 @@ class _ClassesPageState extends State<ClassesPage> {
                               _showClassDialog(context, controller, item: item);
                             } else if (action == 'delete') {
                               _confirmDelete(context, controller, item);
+                            } else if (action == 'import') {
+                              _importStudentsFromExcel(
+                                context,
+                                controller,
+                                item,
+                              );
                             }
                           },
                           itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: 'import',
+                              child: Text('Nhập sinh viên từ Excel'),
+                            ),
                             PopupMenuItem(
                               value: 'edit',
                               child: Text('Chỉnh sửa'),
@@ -130,6 +152,172 @@ class _ClassesPageState extends State<ClassesPage> {
         ),
       );
     });
+  }
+
+  Future<void> _importStudentsFromExcel(
+    BuildContext context,
+    AdminClassesController controller,
+    ClassModel item,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Định dạng file Excel'),
+        content: const Text(
+          'Chọn file .xlsx có tiêu đề cột MSSV, Mã SV hoặc Mã sinh viên ở dòng đầu. '
+          'Nếu mã sinh viên có số 0 ở đầu, hãy định dạng cột đó là Văn bản trong Excel.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Chọn file'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    FilePickerResult? selection;
+    try {
+      selection = await FilePicker.pickFiles(
+        dialogTitle: 'Chọn Excel có cột MSSV hoặc Mã sinh viên',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        allowMultiple: false,
+        withData: true,
+      );
+    } on Exception catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể mở file Excel: $exception')),
+      );
+      return;
+    }
+    if (selection == null || selection.files.isEmpty || !context.mounted) {
+      return;
+    }
+
+    final file = selection.files.single;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không đọc được nội dung file Excel.')),
+      );
+      return;
+    }
+
+    try {
+      if (!context.mounted) return;
+      setState(() => _importingClassIds.add(item.id));
+
+      final workbook = Excel.decodeBytes(bytes);
+      if (workbook.tables.isEmpty) {
+        throw const FormatException('File Excel không có trang tính dữ liệu.');
+      }
+      final rows = workbook.tables.values.first.rows;
+      if (rows.isEmpty) {
+        throw const FormatException('Trang tính Excel không có dữ liệu.');
+      }
+
+      final header = rows.first.map(_excelCellText).toList();
+      final idColumn = header.indexWhere(_isStudentIdHeader);
+      if (idColumn < 0) {
+        throw const FormatException(
+          'Cột mã sinh viên cần có tiêu đề MSSV, Mã SV hoặc Mã sinh viên.',
+        );
+      }
+
+      final uniqueIds = <String>{};
+      final studentIds = <String>[];
+      var duplicateRows = 0;
+      for (final row in rows.skip(1)) {
+        if (idColumn >= row.length) continue;
+        final studentId = _excelCellText(row[idColumn]).trim();
+        if (studentId.isEmpty) continue;
+        if (uniqueIds.add(studentId.toUpperCase())) {
+          studentIds.add(studentId);
+        } else {
+          duplicateRows++;
+        }
+      }
+      if (studentIds.isEmpty) {
+        throw const FormatException(
+          'Không tìm thấy mã sinh viên nào trong file Excel.',
+        );
+      }
+      if (studentIds.length > 2000) {
+        throw const FormatException(
+          'Mỗi lần chỉ có thể nhập tối đa 2.000 sinh viên.',
+        );
+      }
+
+      final result = await controller.importStudents(
+        classId: item.id,
+        studentIds: studentIds,
+      );
+      if (!context.mounted) return;
+
+      final details = <String>[
+        'Đã thêm: ${result.importedCount} sinh viên.',
+        'Đã có trong lớp: ${result.alreadyMemberCount} sinh viên.',
+        if (duplicateRows > 0) 'Mã trùng trong file: $duplicateRows dòng.',
+        if (result.unknownStudentIds.isNotEmpty)
+          'Không tìm thấy trong hệ thống (${result.unknownStudentIds.length}): '
+              '${result.unknownStudentIds.take(10).join(', ')}'
+              '${result.unknownStudentIds.length > 10 ? ', ...' : ''}',
+      ];
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Kết quả nhập sinh viên · ${item.code}'),
+          content: Text(details.join('\n')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+    } on FormatException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+    } catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(exception.toString())));
+    } finally {
+      if (mounted) setState(() => _importingClassIds.remove(item.id));
+    }
+  }
+
+  static String _excelCellText(Data? cell) {
+    final value = cell?.value;
+    return switch (value) {
+      TextCellValue(:final value) =>
+        value.text ??
+            value.children?.map((span) => span.text ?? '').join() ??
+            '',
+      _ => value?.toString() ?? '',
+    };
+  }
+
+  static bool _isStudentIdHeader(String header) {
+    final normalized = header.toLowerCase().replaceAll(RegExp(r'[\s_.-]'), '');
+    return const {
+      'mssv',
+      'masv',
+      'mãsv',
+      'mãsinhviên',
+      'studentid',
+      'studentcode',
+    }.contains(normalized);
   }
 
   Future<void> _showClassDetails(BuildContext context, ClassModel item) async {
@@ -288,7 +476,7 @@ class _ClassesPageState extends State<ClassesPage> {
                         ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
-                          key: ValueKey(semester),
+                        key: ValueKey(semester),
                         initialValue: semester,
                         decoration: const InputDecoration(labelText: 'Học kỳ'),
                         items: const ['HK1', 'HK2', 'HK3']

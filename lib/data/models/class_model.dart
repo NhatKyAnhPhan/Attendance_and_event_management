@@ -165,3 +165,27 @@ class ClassLecturer {
     name: json['name']?.toString() ?? '',
   );
 }
+
+class ClassStudentImportResult {
+  final int importedCount;
+  final int alreadyMemberCount;
+  final List<String> unknownStudentIds;
+
+  const ClassStudentImportResult({
+    required this.importedCount,
+    required this.alreadyMemberCount,
+    required this.unknownStudentIds,
+  });
+
+  factory ClassStudentImportResult.fromJson(Map<String, dynamic> json) =>
+      ClassStudentImportResult(
+        importedCount: int.tryParse(json['importedCount']?.toString() ?? '') ?? 0,
+        alreadyMemberCount:
+            int.tryParse(json['alreadyMemberCount']?.toString() ?? '') ?? 0,
+        unknownStudentIds: json['unknownStudentIds'] is List
+            ? (json['unknownStudentIds'] as List)
+                  .map((id) => id.toString())
+                  .toList()
+            : const [],
+      );
+}

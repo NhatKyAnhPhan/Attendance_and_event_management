@@ -1447,6 +1447,89 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
   }
 });
 
+// Nhập danh sách sinh viên đã có trong hệ thống vào một lớp học phần.
+app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  const { studentIds } = request.body || {};
+  if (!Array.isArray(studentIds) || studentIds.length === 0 || studentIds.length > 2000) {
+    return response.status(400).json({
+      message: 'Danh sách mã sinh viên phải có từ 1 đến 2.000 mã.',
+    });
+  }
+  if (studentIds.some((id) => typeof id !== 'string' || !id.trim() || id.trim().length > 64)) {
+    return response.status(400).json({
+      message: 'Danh sách chứa mã sinh viên không hợp lệ.',
+    });
+  }
+
+  const uniqueIdsByKey = new Map();
+  for (const studentId of studentIds) {
+    const normalizedId = studentId.trim();
+    const key = normalizedId.toUpperCase();
+    if (!uniqueIdsByKey.has(key)) uniqueIdsByKey.set(key, normalizedId);
+  }
+  const normalizedIds = [...uniqueIdsByKey.values()];
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [[classInfo]] = await connection.execute(
+      'SELECT Malop FROM lophocphan WHERE Malop = ? FOR UPDATE',
+      [request.params.classId],
+    );
+    if (!classInfo) {
+      await connection.rollback();
+      return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+    }
+
+    const placeholders = normalizedIds.map(() => '?').join(', ');
+    const [students] = await connection.execute(
+      `SELECT Masv FROM sinhvien WHERE Masv IN (${placeholders})`,
+      normalizedIds,
+    );
+    const knownIds = new Set(students.map((student) => String(student.Masv).toUpperCase()));
+    const unknownStudentIds = normalizedIds.filter((id) => !knownIds.has(id.toUpperCase()));
+    const validIds = normalizedIds.filter((id) => knownIds.has(id.toUpperCase()));
+
+    let existingIds = new Set();
+    if (validIds.length > 0) {
+      const validPlaceholders = validIds.map(() => '?').join(', ');
+      const [existingMembers] = await connection.execute(
+        `SELECT Masv FROM thanhvienlop
+         WHERE Malop = ? AND Masv IN (${validPlaceholders})`,
+        [classInfo.Malop, ...validIds],
+      );
+      existingIds = new Set(
+        existingMembers.map((student) => String(student.Masv).toUpperCase()),
+      );
+    }
+
+    const newIds = validIds.filter((id) => !existingIds.has(id));
+    for (let offset = 0; offset < newIds.length; offset += 250) {
+      const batch = newIds.slice(offset, offset + 250);
+      const values = batch.map(() => '(?, ?)').join(', ');
+      const params = batch.flatMap((studentId) => [classInfo.Malop, studentId]);
+      await connection.execute(
+        `INSERT INTO thanhvienlop (Malop, Masv) VALUES ${values}`,
+        params,
+      );
+    }
+
+    await connection.commit();
+    return response.status(200).json({
+      importedCount: newIds.length,
+      alreadyMemberCount: existingIds.size,
+      unknownStudentIds,
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Import class students error:', error.message);
+    return response.status(500).json({ message: 'Không thể nhập sinh viên vào lớp.' });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 app.get('/api/admin/class-options', requireAuth, requireRole('Quản trị viên', 'admin'), async (_request, response) => {
   try {
     const [cohorts] = await pool.query(

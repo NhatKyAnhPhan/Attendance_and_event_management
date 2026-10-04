@@ -28,8 +28,4 @@ class ClassesController extends GetxController {
     }
   }
 
-  Future<void> joinClass(String classCode) async {
-    await _repository.joinClass(classCode);
-    await load();
-  }
 }
