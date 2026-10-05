@@ -1,3 +1,5 @@
+import '../../core/utils/archive_policy.dart';
+
 enum EventRegistrationStatus { notRegistered, pending, approved, rejected }
 
 /// Đơn vị có thể đứng tên tổ chức sự kiện.
@@ -82,7 +84,14 @@ class OrganizerEventSummary {
   final String location;
   final DateTime startTime;
   final DateTime endTime;
+  final String storedStatus;
+
+  bool get isClosed => storedStatus == 'Đã đóng';
+
+  bool get isArchived => isClosed || isOlderThanOneYear(startTime);
+
   String get status {
+    if (isClosed) return storedStatus;
     final now = DateTime.now();
     if (now.isBefore(startTime)) return 'Sắp diễn ra';
     if (now.isBefore(endTime)) return 'Đang diễn ra';
@@ -99,6 +108,7 @@ class OrganizerEventSummary {
     required this.location,
     required this.startTime,
     required this.endTime,
+    this.storedStatus = '',
     required this.capacity,
     required this.registeredCount,
   });
@@ -114,6 +124,7 @@ class OrganizerEventSummary {
       endTime: DateTime.parse(
         json['endTime']?.toString() ?? json['startTime'].toString(),
       ),
+      storedStatus: json['status']?.toString() ?? '',
       capacity: (json['capacity'] as num?)?.toInt() ?? 0,
       registeredCount: (json['registeredCount'] as num?)?.toInt() ?? 0,
     );

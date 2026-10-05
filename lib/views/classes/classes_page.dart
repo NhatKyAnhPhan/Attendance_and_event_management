@@ -8,7 +8,10 @@ import '../../controllers/auth_controller.dart';
 import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../core/utils/excel_file_decoder.dart';
+import '../../core/utils/semester.dart';
 import '../../data/models/class_model.dart';
+import '../../widgets/student_roster_list.dart';
 import '../../widgets/app_search_field.dart';
 
 class ClassesPage extends StatefulWidget {
@@ -20,6 +23,7 @@ class ClassesPage extends StatefulWidget {
 
 class _ClassesPageState extends State<ClassesPage> {
   String _query = '';
+  bool _showArchived = false;
   final Set<String> _importingClassIds = {};
 
   @override
@@ -35,6 +39,7 @@ class _ClassesPageState extends State<ClassesPage> {
       }
       final query = _query.trim().toLowerCase();
       final filteredItems = controller.items.where((item) {
+        if (item.isArchived != _showArchived) return false;
         return [
           item.id,
           item.code,
@@ -69,6 +74,22 @@ class _ClassesPageState extends State<ClassesPage> {
               ],
             ),
             const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('Lớp đang mở'),
+                  selected: !_showArchived,
+                  onSelected: (_) => setState(() => _showArchived = false),
+                ),
+                ChoiceChip(
+                  label: const Text('Lớp đã đóng / quá 1 năm'),
+                  selected: _showArchived,
+                  onSelected: (_) => setState(() => _showArchived = true),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             AppSearchField(
               colors: c,
               hintText: 'Tìm tên lớp, mã lớp, giảng viên...',
@@ -88,18 +109,21 @@ class _ClassesPageState extends State<ClassesPage> {
             if (controller.items.isNotEmpty && filteredItems.isEmpty)
               const Padding(
                 padding: EdgeInsets.only(top: 48),
-                child: Center(child: Text('Không tìm thấy lớp học phù hợp.')),
+                child: Center(
+                  child: Text('Không có lớp học phù hợp trong mục này.'),
+                ),
               ),
             ...filteredItems.map(
               (item) => Card(
                 margin: const EdgeInsets.only(bottom: 10),
                 child: ListTile(
-                  onTap: () => _showClassDetails(context, item),
+                  onTap: () => _showClassDetails(context, controller, item),
                   title: Text(item.name),
                   subtitle: Text(
                     '${item.code}  |  ${item.lecturerName}\n'
                     '${item.semester} · ${_dateTimeLabel(item.startTime)}\n'
-                    '${item.subjectCode} · ${item.majorName} · Khóa ${item.cohortCode}',
+                    '${item.subjectCode} · ${item.majorName} · Khóa ${item.cohortCode}'
+                    '${item.isArchived ? '\n${item.isClosed ? 'Đã đóng' : 'Đã mở quá 1 năm'}' : ''}',
                   ),
                   isThreeLine: true,
                   trailing: Row(
@@ -123,6 +147,8 @@ class _ClassesPageState extends State<ClassesPage> {
                               _showClassDialog(context, controller, item: item);
                             } else if (action == 'delete') {
                               _confirmDelete(context, controller, item);
+                            } else if (action == 'close') {
+                              _confirmClose(context, controller, item);
                             } else if (action == 'import') {
                               _importStudentsFromExcel(
                                 context,
@@ -131,16 +157,25 @@ class _ClassesPageState extends State<ClassesPage> {
                               );
                             }
                           },
-                          itemBuilder: (context) => const [
-                            PopupMenuItem(
-                              value: 'import',
-                              child: Text('Nhập sinh viên từ Excel'),
+                          itemBuilder: (context) => [
+                            if (!item.isArchived) ...[
+                              const PopupMenuItem(
+                                value: 'import',
+                                child: Text('Nhập sinh viên từ Excel'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Chỉnh sửa'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'close',
+                                child: Text('Đóng lớp'),
+                              ),
+                            ],
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Xóa'),
                             ),
-                            PopupMenuItem(
-                              value: 'edit',
-                              child: Text('Chỉnh sửa'),
-                            ),
-                            PopupMenuItem(value: 'delete', child: Text('Xóa')),
                           ],
                         ),
                     ],
@@ -215,7 +250,7 @@ class _ClassesPageState extends State<ClassesPage> {
       if (!context.mounted) return;
       setState(() => _importingClassIds.add(item.id));
 
-      final workbook = Excel.decodeBytes(bytes);
+      final workbook = decodeExcelWorkbook(bytes);
       if (workbook.tables.isEmpty) {
         throw const FormatException('File Excel không có trang tính dữ liệu.');
       }
@@ -320,33 +355,90 @@ class _ClassesPageState extends State<ClassesPage> {
     }.contains(normalized);
   }
 
-  Future<void> _showClassDetails(BuildContext context, ClassModel item) async {
+  Future<void> _showClassDetails(
+    BuildContext context,
+    AdminClassesController controller,
+    ClassModel item,
+  ) async {
+    final students = controller.getClassStudents(item.id);
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(item.name),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Mã lớp: ${item.code}'),
-            Text('Giảng viên: ${item.lecturerName}'),
-            Text('Học kỳ: ${item.semester}'),
-            Text('Thời gian bắt đầu: ${_dateTimeLabel(item.startTime)}'),
-            Text('Môn học: ${item.subjectCode}'),
-            Text('Bộ môn: ${item.majorName}'),
-            Text('Khóa: ${item.cohortCode}'),
-            Text('Trạng thái: ${item.status}'),
-            Text('Sĩ số: ${item.studentCount}'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Đóng'),
+      builder: (dialogContext) {
+        final colors = AppColors.of(
+          Theme.of(dialogContext).brightness == Brightness.dark,
+        );
+        return AlertDialog(
+          title: Text(item.name),
+          content: SizedBox(
+            width: 680,
+            height: MediaQuery.sizeOf(dialogContext).height * 0.72,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  height: 190,
+                  child: Scrollbar(
+                    child: ListView(
+                      padding: EdgeInsets.zero,
+                      children: [
+                        Text('Mã lớp: ${item.code}'),
+                        Text('Giảng viên: ${item.lecturerName}'),
+                        Text('Học kỳ: ${item.semester}'),
+                        Text(
+                          'Thời gian bắt đầu: ${_dateTimeLabel(item.startTime)}',
+                        ),
+                        Text('Môn học: ${item.subjectCode}'),
+                        Text('Bộ môn: ${item.majorName}'),
+                        Text('Khóa: ${item.cohortCode}'),
+                        Text('Trạng thái: ${item.status}'),
+                        Text('Sĩ số: ${item.studentCount}'),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Danh sách sinh viên (${item.studentCount})',
+                  style: Theme.of(dialogContext).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: FutureBuilder(
+                    future: students,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        return const Center(
+                          child: CircularProgressIndicator(),
+                        );
+                      }
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            'Không tải được danh sách sinh viên: ${snapshot.error}',
+                            textAlign: TextAlign.center,
+                          ),
+                        );
+                      }
+                      return StudentRosterList(
+                        students: snapshot.data ?? const [],
+                        mutedColor: colors.mutedForeground,
+                        dividerColor: colors.border,
+                        emptyMessage: 'Lớp chưa có sinh viên.',
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -369,9 +461,6 @@ class _ClassesPageState extends State<ClassesPage> {
     String? cohortCode = item?.cohortCode.isNotEmpty == true
         ? item!.cohortCode
         : null;
-    String? semester = item?.semester.isNotEmpty == true
-        ? item!.semester
-        : _semesterCode(selectedSubject?.semester);
     DateTime? startTime = DateTime.tryParse(item?.startTime ?? '')?.toLocal();
     String? lecturerId = item?.lecturerId.isEmpty == true
         ? null
@@ -413,7 +502,6 @@ class _ClassesPageState extends State<ClassesPage> {
                             selectedSubject = value;
                             if (value != null) {
                               nameController.text = value.name;
-                              semester = _semesterCode(value.semester);
                             }
                           }),
                           validator: (value) =>
@@ -475,30 +563,14 @@ class _ClassesPageState extends State<ClassesPage> {
                           child: Text(item.cohortCode),
                         ),
                       const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(semester),
-                        initialValue: semester,
-                        decoration: const InputDecoration(labelText: 'Học kỳ'),
-                        items: const ['HK1', 'HK2', 'HK3']
-                            .map(
-                              (value) => DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(value),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) => setState(() => semester = value),
-                        validator: (value) =>
-                            value == null ? 'Vui lòng chọn học kỳ' : null,
-                      ),
-                      const SizedBox(height: 8),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Thời gian bắt đầu'),
                         subtitle: Text(
                           startTime == null
                               ? 'Chưa chọn'
-                              : _dateTimeLabel(startTime!.toIso8601String()),
+                              : '${_dateTimeLabel(startTime!.toIso8601String())}'
+                                    '\nHọc kỳ tự động: ${semesterForDate(startTime!)}',
                         ),
                         trailing: const Icon(Icons.calendar_month_outlined),
                         onTap: () async {
@@ -507,7 +579,9 @@ class _ClassesPageState extends State<ClassesPage> {
                             startTime,
                           );
                           if (!context.mounted || selected == null) return;
-                          setState(() => startTime = selected);
+                          setState(() {
+                            startTime = selected;
+                          });
                         },
                       ),
                       const SizedBox(height: 12),
@@ -558,7 +632,7 @@ class _ClassesPageState extends State<ClassesPage> {
                         name: nameController.text.trim(),
                         subjectId: selectedSubject!.id,
                         cohortCode: cohortCode!,
-                        semester: semester!,
+                        semester: semesterForDate(startTime!),
                         startTime: _formatDateTime(startTime!),
                         lecturerId: lecturerId,
                       );
@@ -566,7 +640,7 @@ class _ClassesPageState extends State<ClassesPage> {
                       await controller.updateClass(
                         id: item.id,
                         name: nameController.text.trim(),
-                        semester: semester!,
+                        semester: semesterForDate(startTime!),
                         startTime: _formatDateTime(startTime!),
                         lecturerId: lecturerId,
                       );
@@ -612,11 +686,6 @@ class _ClassesPageState extends State<ClassesPage> {
     return DateTime(date.year, date.month, date.day, time.hour, time.minute);
   }
 
-  static String? _semesterCode(String? value) {
-    final semesterNumber = int.tryParse(value ?? '');
-    return semesterNumber == null ? null : 'HK$semesterNumber';
-  }
-
   static String _formatDateTime(DateTime value) {
     String twoDigits(int number) => number.toString().padLeft(2, '0');
     return '${value.year}-${twoDigits(value.month)}-${twoDigits(value.day)} '
@@ -651,13 +720,50 @@ class _ClassesPageState extends State<ClassesPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !context.mounted) return;
     try {
       await controller.deleteClass(item.id);
     } catch (exception) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(exception.toString())));
+      }
+    }
+  }
+
+  Future<void> _confirmClose(
+    BuildContext context,
+    AdminClassesController controller,
+    ClassModel item,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Đóng lớp học?'),
+        content: Text(
+          'Lớp "${item.name}" sẽ được đưa vào mục đã đóng. '
+          'Bạn vẫn có thể xem chi tiết và xóa lớp.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Đóng lớp'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await controller.closeClass(item.id);
+    } catch (exception) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(exception.toString())));
       }
     }
   }

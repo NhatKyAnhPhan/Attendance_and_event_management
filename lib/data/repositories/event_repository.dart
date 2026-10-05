@@ -1,5 +1,6 @@
 import '../api/api_client.dart';
 import '../models/event_model.dart';
+import '../models/student_roster_entry.dart';
 import '../models/student_summaries.dart';
 
 class EventRepository {
@@ -24,6 +25,22 @@ class EventRepository {
   // Lấy dữ liệu chi tiết của sự kiện theo mã định danh.
   Future<Map<String, dynamic>> getEventDetails(String eventId) async {
     return _client.get('/api/events/$eventId');
+  }
+
+  Future<List<StudentRosterEntry>> getEventStudents(String eventId) async {
+    final body = await _client.get(
+      '/api/organizer/events/$eventId/students',
+    );
+    final items = body['items'];
+    if (items is! List) return const [];
+    return items
+        .whereType<Map>()
+        .map(
+          (item) => StudentRosterEntry.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .toList();
   }
 
   // Gửi yêu cầu đăng ký và trạng thái xác nhận trùng lịch học.
@@ -115,5 +132,9 @@ class EventRepository {
   // Xóa sự kiện theo mã định danh.
   Future<void> deleteOrganizerEvent(String id) async {
     await _client.delete('/api/organizer/events/$id');
+  }
+
+  Future<void> closeOrganizerEvent(String id) async {
+    await _client.post('/api/organizer/events/$id/close');
   }
 }

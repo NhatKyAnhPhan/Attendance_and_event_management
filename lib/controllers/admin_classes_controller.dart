@@ -1,6 +1,7 @@
 import 'package:get/get.dart';
 
 import '../data/models/class_model.dart';
+import '../data/models/student_roster_entry.dart';
 import '../data/repositories/class_repository.dart';
 
 class AdminClassesController extends GetxController {
@@ -102,8 +103,17 @@ class AdminClassesController extends GetxController {
     return result;
   }
 
+  Future<List<StudentRosterEntry>> getClassStudents(String classId) {
+    return _repository.getClassStudents(classId);
+  }
+
   Future<void> deleteClass(String id) async {
     await _repository.deleteClass(id);
+    await load();
+  }
+
+  Future<void> closeClass(String id) async {
+    await _repository.closeClass(id);
     await load();
   }
 }

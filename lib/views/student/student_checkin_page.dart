@@ -15,7 +15,9 @@ import '../../data/api/endpoints.dart';
 /// Mục 14 bản thiết kế — "Student Mobile: QR Scanner, Processing state,
 /// Success, Expired QR, Invalid QR, Already checked in".
 class StudentCheckinPage extends StatefulWidget {
-  const StudentCheckinPage({super.key});
+  final bool isActive;
+
+  const StudentCheckinPage({super.key, this.isActive = true});
 
   @override
   State<StudentCheckinPage> createState() => _StudentCheckinPageState();
@@ -74,6 +76,14 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   }
 
   @override
+  void didUpdateWidget(covariant StudentCheckinPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive && !widget.isActive) {
+      _reset();
+    }
+  }
+
+  @override
   void dispose() {
     _lineCtrl.dispose();
     _qrController.dispose();
@@ -82,15 +92,14 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     super.dispose();
   }
 
-  // Chuyển sang trạng thái quét và khởi động QR hoặc camera khuôn mặt.
+  // Hiển thị scanner; MobileScanner tự khởi động khi widget được gắn vào cây.
   void _startScan() {
+    if (!widget.isActive || _state == _ScanState.scanning) return;
     setState(() {
       _state = _ScanState.scanning;
       _errorMessage = null;
     });
-    if (_method == _ScanMethod.qr) {
-      _qrController.start();
-    } else {
+    if (_method == _ScanMethod.face) {
       _startFaceCamera();
     }
   }

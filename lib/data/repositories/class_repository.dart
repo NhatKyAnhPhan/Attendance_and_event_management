@@ -1,6 +1,7 @@
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/class_model.dart';
+import '../models/student_roster_entry.dart';
 import '../models/student_summaries.dart';
 
 class ClassRepository {
@@ -29,6 +30,22 @@ class ClassRepository {
     return items
         .whereType<Map>()
         .map((item) => ClassModel.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
+  Future<List<StudentRosterEntry>> getClassStudents(String classId) async {
+    final body = await _client.get(
+      '${ApiEndpoints.adminClasses}/$classId/students',
+    );
+    final items = body['items'];
+    if (items is! List) return const [];
+    return items
+        .whereType<Map>()
+        .map(
+          (item) => StudentRosterEntry.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
         .toList();
   }
 
@@ -121,5 +138,9 @@ class ClassRepository {
 
   Future<void> deleteClass(String id) async {
     await _client.delete('${ApiEndpoints.adminClasses}/$id');
+  }
+
+  Future<void> closeClass(String id) async {
+    await _client.post('${ApiEndpoints.adminClasses}/$id/close');
   }
 }

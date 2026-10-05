@@ -1,3 +1,5 @@
+import '../../core/utils/archive_policy.dart';
+
 /// Góp ý giảng viên: phải phân biệt rõ 2 loại lớp — sinh viên "Join" (tự
 /// động thêm vào) chứ không "đăng ký" như sự kiện.
 enum ClassType {
@@ -33,6 +35,12 @@ class ClassModel {
   final String status;
   final String room; // phòng học mặc định
   final String schedule; // vd "Thứ 3, 13:00–15:00"
+
+  bool get isClosed => status.toLowerCase() == 'đã đóng';
+
+  bool get isArchived =>
+      isClosed ||
+      isOlderThanOneYear(DateTime.tryParse(startTime)?.toLocal());
 
   const ClassModel({
     required this.id,

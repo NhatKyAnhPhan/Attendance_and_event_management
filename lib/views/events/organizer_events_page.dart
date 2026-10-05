@@ -9,6 +9,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/event_model.dart';
 import '../../widgets/app_search_field.dart';
+import '../../widgets/student_roster_list.dart';
 
 class OrganizerEventsPage extends StatefulWidget {
   const OrganizerEventsPage({super.key});
@@ -19,6 +20,7 @@ class OrganizerEventsPage extends StatefulWidget {
 
 class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
+  bool _showArchived = false;
 
   // Hiển thị danh sách sự kiện cùng các thao tác theo vai trò.
   @override
@@ -35,6 +37,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       final canDeleteEvents = auth.role.value == Role.admin;
       final query = _query.trim().toLowerCase();
       final filteredItems = controller.items.where((event) {
+        if (event.isArchived != _showArchived) return false;
         return [
           event.id,
           event.name,
@@ -77,6 +80,22 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ],
             ),
             const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('Sự kiện đang mở'),
+                  selected: !_showArchived,
+                  onSelected: (_) => setState(() => _showArchived = false),
+                ),
+                ChoiceChip(
+                  label: const Text('Sự kiện đã đóng / quá 1 năm'),
+                  selected: _showArchived,
+                  onSelected: (_) => setState(() => _showArchived = true),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             AppSearchField(
               colors: colors,
               hintText: 'Tìm tên sự kiện, địa điểm, trạng thái...',
@@ -93,7 +112,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             if (controller.items.isNotEmpty && filteredItems.isEmpty)
               const Padding(
                 padding: EdgeInsets.only(top: 48),
-                child: Center(child: Text('Không tìm thấy sự kiện phù hợp.')),
+                child: Center(
+                  child: Text('Không có sự kiện phù hợp trong mục này.'),
+                ),
               ),
             ...filteredItems.map(
               (event) => Card(
@@ -111,15 +132,15 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                       '${event.location}\n'
                       '${DateFormat('dd/MM/yyyy HH:mm').format(event.startTime)} - '
                       '${DateFormat('HH:mm').format(event.endTime)}\n'
-                      'Đăng ký: ${event.registeredCount}/${event.capacity}',
+                      'Đăng ký: ${event.registeredCount}/${event.capacity}'
+                      '${event.isArchived ? '\n${event.isClosed ? 'Đã đóng' : 'Đã diễn ra quá 1 năm'}' : ''}',
                     ),
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Chip(label: Text(event.status)),
-                      if ((canManageEvents && _canEditEvent(event)) ||
-                          canDeleteEvents)
+                      if (canManageEvents || canDeleteEvents)
                         PopupMenuButton<String>(
                           tooltip: 'Thao tác sự kiện',
                           onSelected: (action) {
@@ -131,6 +152,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                               );
                             } else if (action == 'delete') {
                               _confirmDelete(context, controller, event);
+                            } else if (action == 'close') {
+                              _confirmClose(context, controller, event);
                             }
                           },
                           itemBuilder: (context) => [
@@ -138,6 +161,11 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                               const PopupMenuItem(
                                 value: 'edit',
                                 child: Text('Chỉnh sửa'),
+                              ),
+                            if (canManageEvents && !event.isArchived)
+                              const PopupMenuItem(
+                                value: 'close',
+                                child: Text('Đóng sự kiện'),
                               ),
                             if (canDeleteEvents)
                               const PopupMenuItem(
@@ -164,130 +192,175 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     OrganizerEventSummary event,
   ) async {
     final detailsFuture = controller.getEventDetails(event.id);
+    final studentsFuture = controller.getEventStudents(event.id);
+    final colors = AppColors.of(
+      Theme.of(context).brightness == Brightness.dark,
+    );
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(event.name),
-        content: SizedBox(
-          width: 560,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.65,
-            ),
-            child: FutureBuilder<Map<String, dynamic>>(
-              future: detailsFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text('Không tải được chi tiết: ${snapshot.error}'),
-                  );
-                }
+          title: Text(event.name),
+          content: SizedBox(
+            width: 700,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
+              ),
+              child: FutureBuilder<Map<String, dynamic>>(
+                future: detailsFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text('Không tải được chi tiết: ${snapshot.error}'),
+                    );
+                  }
 
-                final details = snapshot.data ?? const <String, dynamic>{};
-                final benefits = details['benefits'] is List
-                    ? (details['benefits'] as List).whereType<Map>().toList()
-                    : const <Map>[];
-                final rules = details['rules'] is List
-                    ? (details['rules'] as List).whereType<Map>().toList()
-                    : const <Map>[];
-                final description = details['description']?.toString().trim();
+                  final details = snapshot.data ?? const <String, dynamic>{};
+                  final benefits = details['benefits'] is List
+                      ? (details['benefits'] as List).whereType<Map>().toList()
+                      : const <Map>[];
+                  final rules = details['rules'] is List
+                      ? (details['rules'] as List).whereType<Map>().toList()
+                      : const <Map>[];
+                  final description = details['description']?.toString().trim();
 
-                return SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _detailSection('Thông tin sự kiện', [
-                        _detailRow('Mã sự kiện', event.id),
-                        _detailRow('Trạng thái', event.status),
-                        _detailRow(
-                          'Đơn vị tổ chức',
-                          details['organizerName']?.toString() ??
-                              event.organizerId,
-                        ),
-                        _detailRow(
-                          'Thời gian bắt đầu',
-                          DateFormat('dd/MM/yyyy HH:mm')
-                              .format(event.startTime),
-                        ),
-                        _detailRow(
-                          'Thời gian kết thúc',
-                          DateFormat('dd/MM/yyyy HH:mm').format(event.endTime),
-                        ),
-                        _detailRow('Địa điểm', event.location),
-                        _detailRow(
-                          'Số lượng đăng ký',
-                          '${details['registeredCount'] ?? event.registeredCount}/${details['capacity'] ?? event.capacity}',
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-                      _detailSection('Mô tả', [
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 160),
-                          child: Scrollbar(
-                            child: SingleChildScrollView(
-                              child: Text(
-                                description == null || description.isEmpty
-                                    ? 'Chưa có mô tả cho sự kiện này.'
-                                    : description,
+                  return SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _detailSection('Thông tin sự kiện', [
+                          _detailRow('Mã sự kiện', event.id),
+                          _detailRow('Trạng thái', event.status),
+                          _detailRow(
+                            'Đơn vị tổ chức',
+                            details['organizerName']?.toString() ??
+                                event.organizerId,
+                          ),
+                          _detailRow(
+                            'Thời gian bắt đầu',
+                            DateFormat('dd/MM/yyyy HH:mm')
+                                .format(event.startTime),
+                          ),
+                          _detailRow(
+                            'Thời gian kết thúc',
+                            DateFormat('dd/MM/yyyy HH:mm')
+                                .format(event.endTime),
+                          ),
+                          _detailRow('Địa điểm', event.location),
+                          _detailRow(
+                            'Số lượng đăng ký',
+                            '${details['registeredCount'] ?? event.registeredCount}/${details['capacity'] ?? event.capacity}',
+                          ),
+                        ]),
+                        const SizedBox(height: 16),
+                        _detailSection('Mô tả', [
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 160),
+                            child: Scrollbar(
+                              child: SingleChildScrollView(
+                                child: Text(
+                                  description == null || description.isEmpty
+                                      ? 'Chưa có mô tả cho sự kiện này.'
+                                      : description,
+                                ),
                               ),
                             ),
                           ),
+                        ]),
+                        const SizedBox(height: 16),
+                        _detailSection(
+                          'Quyền lợi',
+                          benefits.isEmpty
+                              ? [const Text('Chưa có thông tin quyền lợi.')]
+                              : benefits.map((benefit) {
+                                  final type = benefit['type']?.toString();
+                                  final points = benefit['points'];
+                                  final content = benefit['content']
+                                      ?.toString();
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Text(
+                                      [
+                                        if (type != null && type.isNotEmpty)
+                                          type,
+                                        if (points != null) '$points điểm',
+                                        if (content != null &&
+                                            content.isNotEmpty)
+                                          content,
+                                      ].join(' · '),
+                                    ),
+                                  );
+                                }).toList(),
                         ),
-                      ]),
-                      const SizedBox(height: 16),
-                      _detailSection(
-                        'Quyền lợi',
-                        benefits.isEmpty
-                            ? [const Text('Chưa có thông tin quyền lợi.')]
-                            : benefits.map((benefit) {
-                                final type = benefit['type']?.toString();
-                                final points = benefit['points'];
-                                final content = benefit['content']?.toString();
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Text(
-                                    [
-                                      if (type != null && type.isNotEmpty) type,
-                                      if (points != null) '$points điểm',
-                                      if (content != null && content.isNotEmpty)
-                                        content,
-                                    ].join(' · '),
-                                  ),
-                                );
-                              }).toList(),
-                      ),
-                      const SizedBox(height: 16),
-                      _detailSection(
-                        'Nội quy',
-                        rules.isEmpty
-                            ? [const Text('Chưa có nội quy cho sự kiện này.')]
-                            : rules.map((rule) {
-                                final order = rule['sortOrder']?.toString();
-                                final text = rule['text']?.toString() ?? '';
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Text(
-                                    order == null ? text : '$order. $text',
-                                  ),
-                                );
-                              }).toList(),
-                      ),
-                    ],
-                  ),
-                );
-              },
+                        const SizedBox(height: 16),
+                        _detailSection(
+                          'Nội quy',
+                          rules.isEmpty
+                              ? [const Text('Chưa có nội quy cho sự kiện này.')]
+                              : rules.map((rule) {
+                                  final order = rule['sortOrder']?.toString();
+                                  final text = rule['text']?.toString() ?? '';
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Text(
+                                      order == null ? text : '$order. $text',
+                                    ),
+                                  );
+                                }).toList(),
+                        ),
+                        const SizedBox(height: 16),
+                        _detailSection(
+                          'Danh sách sinh viên đăng ký '
+                          '(${event.registeredCount})',
+                          [
+                            SizedBox(
+                              height: 260,
+                              child: FutureBuilder(
+                                future: studentsFuture,
+                                builder: (context, studentSnapshot) {
+                                  if (studentSnapshot.connectionState !=
+                                      ConnectionState.done) {
+                                    return const Center(
+                                      child: CircularProgressIndicator(),
+                                    );
+                                  }
+                                  if (studentSnapshot.hasError) {
+                                    return Center(
+                                      child: Text(
+                                        'Không tải được danh sách sinh viên: '
+                                        '${studentSnapshot.error}',
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    );
+                                  }
+                                  return StudentRosterList(
+                                    students: studentSnapshot.data ?? const [],
+                                    mutedColor: colors.mutedForeground,
+                                    dividerColor: colors.border,
+                                    emptyMessage:
+                                        'Chưa có sinh viên đăng ký sự kiện.',
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Đóng'),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
       ),
     );
   }
@@ -521,7 +594,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   // Kiểm tra sự kiện chưa kết thúc, chưa quá một ngày và không kéo dài quá 24 giờ.
   static bool _canEditEvent(OrganizerEventSummary event) {
     final now = DateTime.now();
-    return event.endTime.isAfter(now) &&
+    return !event.isArchived &&
+        event.endTime.isAfter(now) &&
         now.difference(event.startTime) <= const Duration(days: 1) &&
         event.endTime.difference(event.startTime) <= const Duration(days: 1);
   }
@@ -670,6 +744,43 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(exception.toString())));
+      }
+    }
+  }
+
+  Future<void> _confirmClose(
+    BuildContext context,
+    OrganizerEventsController controller,
+    OrganizerEventSummary event,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Đóng sự kiện?'),
+        content: Text(
+          'Sự kiện "${event.name}" sẽ được đưa vào mục đã đóng. '
+          'Bạn vẫn có thể xem chi tiết và xóa sự kiện.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Đóng sự kiện'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await controller.closeEvent(event.id);
+    } catch (exception) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(exception.toString())));
       }
     }
   }

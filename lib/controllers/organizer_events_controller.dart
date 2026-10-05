@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'dart:async';
 
 import '../data/models/event_model.dart';
+import '../data/models/student_roster_entry.dart';
 import '../data/repositories/event_repository.dart';
 
 class OrganizerEventsController extends GetxController {
@@ -71,6 +72,10 @@ class OrganizerEventsController extends GetxController {
     return _repository.getEventDetails(eventId);
   }
 
+  Future<List<StudentRosterEntry>> getEventStudents(String eventId) {
+    return _repository.getEventStudents(eventId);
+  }
+
   // Gọi repository để tạo, sửa hoặc xóa rồi tải lại danh sách.
   Future<void> createEvent({
     required String name,
@@ -116,6 +121,11 @@ class OrganizerEventsController extends GetxController {
   // Xóa sự kiện rồi đồng bộ lại danh sách đang hiển thị.
   Future<void> deleteEvent(String id) async {
     await _repository.deleteOrganizerEvent(id);
+    await load();
+  }
+
+  Future<void> closeEvent(String id) async {
+    await _repository.closeOrganizerEvent(id);
     await load();
   }
 }

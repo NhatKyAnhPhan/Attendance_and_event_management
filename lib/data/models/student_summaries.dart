@@ -53,6 +53,7 @@ class StudentEventSummary {
   final DateTime? registeredAt;
   final DateTime? startTime;
   final DateTime? endTime;
+  final String status;
 
   const StudentEventSummary({
     required this.id,
@@ -63,13 +64,17 @@ class StudentEventSummary {
     this.registeredAt,
     this.startTime,
     this.endTime,
+    this.status = '',
   });
 
   /// Kiểm tra trạng thái kết thúc theo thời gian sự kiện từ API.
-  bool get isEnded => endTime != null && !DateTime.now().isBefore(endTime!);
+  bool get isEnded =>
+      status == 'Đã đóng' ||
+      (endTime != null && !DateTime.now().isBefore(endTime!));
 
   /// Tính trạng thái sự kiện theo thời gian bắt đầu và kết thúc thực tế.
   String get eventStatus {
+    if (status == 'Đã đóng') return status;
     final end = endTime;
     if (end == null) return '';
     final now = DateTime.now();
@@ -91,6 +96,7 @@ class StudentEventSummary {
       startTime: DateTime.tryParse(json['startTime']?.toString() ?? '')
           ?.toLocal(),
       endTime: DateTime.tryParse(json['endTime']?.toString() ?? '')?.toLocal(),
+      status: json['status']?.toString() ?? '',
     );
   }
 }

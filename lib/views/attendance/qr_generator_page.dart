@@ -135,7 +135,18 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
                   ),
                   items: _sessions.map((session) {
                     final id = session['classSessionId']?.toString() ?? '';
-                    final label = '${session['content'] ?? 'Buổi học'} · $id';
+                    final classId = session['classId']?.toString() ?? '';
+                    final className = session['className']?.toString().trim();
+                    final subjectName = session['subjectName']
+                        ?.toString()
+                        .trim();
+                    final classLabel = className?.isNotEmpty == true
+                        ? className
+                        : 'Không có tên lớp ($classId)';
+                    final subjectLabel = subjectName?.isNotEmpty == true
+                        ? ' · $subjectName'
+                        : '';
+                    final label = '$classLabel$subjectLabel · Buổi $id';
                     return DropdownMenuItem(value: id, child: Text(label));
                   }).toList(),
                   onChanged: (value) =>

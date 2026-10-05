@@ -24,6 +24,7 @@ const pool = mysql.createPool({
 });
 
 const eventStatusSql = `CASE
+  WHEN sk.Trangthaisukien = 'Đã đóng' THEN 'Đã đóng'
   WHEN NOW() < sk.Thoigianbatdau THEN 'Sắp diễn ra'
   WHEN NOW() < sk.Thoigianketthuc THEN 'Đang diễn ra'
   ELSE 'Đã kết thúc'
@@ -33,7 +34,8 @@ async function synchronizeEventStatuses() {
   await pool.query(
     `UPDATE sukien sk
      SET Trangthaisukien = ${eventStatusSql}
-     WHERE NOT (Trangthaisukien <=> ${eventStatusSql})`,
+     WHERE Trangthaisukien <> 'Đã đóng'
+       AND NOT (Trangthaisukien <=> ${eventStatusSql})`,
   );
 }
 
@@ -386,7 +388,8 @@ app.get('/api/events', requireAuth, async (request, response) => {
          ON dkMine.Masukien = sk.Masukien
         AND dkMine.Masv = ?
        GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, dv.Tendv,
-                sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Diadiem,
+                sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien,
+                sk.Diadiem,
                 sk.Soluongtoida, dkMine.Masv, dkMine.Trangthaidangky,
                 dkMine.Ngaydangky
        ORDER BY sk.Thoigianbatdau`,
@@ -461,13 +464,19 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
     await connection.beginTransaction();
     const [[event]] = await connection.execute(
       `SELECT Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
-              Soluongtoida AS capacity
+              Soluongtoida AS capacity, Trangthaisukien AS status
        FROM sukien WHERE Masukien = ? FOR UPDATE`,
       [request.params.eventId],
     );
     if (!event) {
       await connection.rollback();
       return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    if (event.status === 'Đã đóng') {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Sự kiện đã đóng, không thể đăng ký.',
+      });
     }
     if (new Date(event.endTime) <= new Date()) {
       await connection.rollback();
@@ -781,11 +790,14 @@ function createAttendanceQr(sessionId, expiresAt, coordinates) {
 app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
   try {
     const [rows] = await pool.execute(
-            `SELECT b.Mabuoi AS classSessionId, b.Noidung AS content,
-              b.Malop AS classId, b.Thoigianbatdau AS startTime,
+      `SELECT b.Mabuoi AS classSessionId, b.Malop AS classId,
+              COALESCE(lhp.Tenlop, '') AS className,
+              COALESCE(mh.Tenmon, '') AS subjectName,
+              b.Thoigianbatdau AS startTime,
               b.Thoigianketthuc AS endTime
              FROM buoi b
              LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+             LEFT JOIN monhoc mh ON mh.Mamon = lhp.Mamon
              WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
              ORDER BY b.Thoigianbatdau DESC`,
       [request.auth.role, request.auth.sub],
@@ -886,7 +898,8 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
 
   try {
     const [[classSession]] = await pool.execute(
-      `SELECT b.Mabuoi AS id
+      `SELECT b.Mabuoi AS id, lhp.Trangthailop AS classStatus,
+              (lhp.Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
        FROM buoi b
        LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
        WHERE b.Mabuoi = ?
@@ -895,6 +908,11 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
       [classSessionId, request.auth.role, request.auth.sub],
     );
     if (!classSession) return response.status(404).json({ message: 'Không tìm thấy buổi học.' });
+    if (classSession.classStatus === 'Đã đóng' || Number(classSession.isArchived)) {
+      return response.status(409).json({
+        message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể mở điểm danh.',
+      });
+    }
 
     const openedAt = new Date();
     const closedAt = new Date(openedAt.getTime() + duration * 60 * 1000);
@@ -1133,7 +1151,7 @@ app.get('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 
        FROM sukien sk
        LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
       GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, sk.Diadiem,
-                sk.Thoigianbatdau, sk.Thoigianketthuc,
+               sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien,
                 sk.Soluongtoida
        ORDER BY sk.Thoigianbatdau`,
     );
@@ -1141,6 +1159,50 @@ app.get('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 
   } catch (error) {
     console.error('Organizer events error:', error.message);
     return response.status(500).json({ message: 'Không thể tải sự kiện.' });
+  }
+});
+
+app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên'), async (request, response) => {
+  const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
+  try {
+    const [[event]] = await pool.execute(
+      `SELECT sk.Masukien AS id,
+              EXISTS (
+                SELECT 1 FROM donvi dv
+                WHERE dv.Madv = sk.Madv AND dv.Manv = ?
+              ) AS isOrganizer
+       FROM sukien sk
+       WHERE sk.Masukien = ?
+       LIMIT 1`,
+      [request.auth.sub, request.params.eventId],
+    );
+    if (!event) {
+      return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    if (!isAdmin && !event.isOrganizer) {
+      return response.status(403).json({
+        message: 'Bạn không phụ trách sự kiện này.',
+      });
+    }
+
+    const [rows] = await pool.execute(
+      `SELECT dk.Masv AS studentId,
+              COALESCE(nd.Hoten, dk.Masv) AS studentName,
+              COALESCE(nd.Email, '') AS email,
+              COALESCE(dk.Trangthaidangky, '') AS status,
+              DATE_FORMAT(dk.Ngaydangky, '%d/%m/%Y') AS dateLabel
+       FROM dangkysukien dk
+       LEFT JOIN nguoidung nd ON nd.Mand = dk.Masv
+       WHERE dk.Masukien = ?
+       ORDER BY dk.Ngaydangky DESC, nd.Hoten, dk.Masv`,
+      [request.params.eventId],
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Organizer event students error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải danh sách sinh viên đăng ký sự kiện.',
+    });
   }
 });
 
@@ -1221,12 +1283,21 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị
     try {
       await connection.beginTransaction();
       const [[existing]] = await connection.execute(
-        'SELECT Thoigianbatdau AS startTime, Thoigianketthuc AS endTime FROM sukien WHERE Masukien = ? FOR UPDATE',
+        `SELECT Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
+                Trangthaisukien AS status,
+                (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
+         FROM sukien WHERE Masukien = ? FOR UPDATE`,
         [request.params.eventId],
       );
       if (!existing) {
         await connection.rollback();
         return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+      }
+      if (existing.status === 'Đã đóng' || Number(existing.isArchived)) {
+        await connection.rollback();
+        return response.status(409).json({
+          message: 'Sự kiện đã đóng hoặc đã quá 1 năm nên không thể chỉnh sửa.',
+        });
       }
       const existingStart = new Date(existing.startTime).valueOf();
       const existingEnd = new Date(existing.endTime).valueOf();
@@ -1283,6 +1354,28 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị
     }
     console.error('Update organizer event error:', error.message);
     return response.status(500).json({ message: 'Không thể cập nhật sự kiện.' });
+  }
+});
+
+app.post('/api/organizer/events/:eventId/close', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'event_organizer', 'Cán bộ', 'Nhân viên'), async (request, response) => {
+  try {
+    const [result] = await pool.execute(
+      `UPDATE sukien SET Trangthaisukien = 'Đã đóng'
+       WHERE Masukien = ? AND COALESCE(Trangthaisukien, '') <> 'Đã đóng'`,
+      [request.params.eventId],
+    );
+    if (result.affectedRows === 0) {
+      const [[event]] = await pool.execute(
+        'SELECT Masukien FROM sukien WHERE Masukien = ? LIMIT 1',
+        [request.params.eventId],
+      );
+      if (!event) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+      return response.status(409).json({ message: 'Sự kiện đã được đóng.' });
+    }
+    return response.json({ message: 'Đóng sự kiện thành công.' });
+  } catch (error) {
+    console.error('Close organizer event error:', error.message);
+    return response.status(500).json({ message: 'Không thể đóng sự kiện.' });
   }
 });
 
@@ -1447,6 +1540,43 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
   }
 });
 
+app.get('/api/admin/classes/:classId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+  const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
+  try {
+    const [[classInfo]] = await pool.execute(
+      'SELECT Malop AS id, Magv AS lecturerId FROM lophocphan WHERE Malop = ? LIMIT 1',
+      [request.params.classId],
+    );
+    if (!classInfo) {
+      return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+    }
+    if (!isAdmin && String(classInfo.lecturerId) !== String(request.auth.sub)) {
+      return response.status(403).json({
+        message: 'Bạn không phụ trách lớp học này.',
+      });
+    }
+
+    const [rows] = await pool.execute(
+      `SELECT tvl.Masv AS studentId,
+              COALESCE(nd.Hoten, tvl.Masv) AS studentName,
+              COALESCE(nd.Email, '') AS email,
+              COALESCE(tvl.TrangThaiThanhVien, '') AS status,
+              DATE_FORMAT(tvl.NgayThamGia, '%d/%m/%Y') AS dateLabel
+       FROM thanhvienlop tvl
+       LEFT JOIN nguoidung nd ON nd.Mand = tvl.Masv
+       WHERE tvl.Malop = ?
+       ORDER BY nd.Hoten, tvl.Masv`,
+      [request.params.classId],
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Class students error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải danh sách sinh viên của lớp.',
+    });
+  }
+});
+
 // Nhập danh sách sinh viên đã có trong hệ thống vào một lớp học phần.
 app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const { studentIds } = request.body || {};
@@ -1474,12 +1604,20 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
     await connection.beginTransaction();
 
     const [[classInfo]] = await connection.execute(
-      'SELECT Malop FROM lophocphan WHERE Malop = ? FOR UPDATE',
+      `SELECT Malop, Trangthailop AS status,
+              (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
+       FROM lophocphan WHERE Malop = ? FOR UPDATE`,
       [request.params.classId],
     );
     if (!classInfo) {
       await connection.rollback();
       return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+    }
+    if (classInfo.status === 'Đã đóng' || Number(classInfo.isArchived)) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể thêm sinh viên.',
+      });
     }
 
     const placeholders = normalizedIds.map(() => '?').join(', ');
@@ -1507,11 +1645,15 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
     const newIds = validIds.filter((id) => !existingIds.has(id));
     for (let offset = 0; offset < newIds.length; offset += 250) {
       const batch = newIds.slice(offset, offset + 250);
-      const values = batch.map(() => '(?, ?)').join(', ');
-      const params = batch.flatMap((studentId) => [classInfo.Malop, studentId]);
+      const values = batch.map(() => '(?, ?, CURRENT_DATE, ?)').join(', ');
       await connection.execute(
-        `INSERT INTO thanhvienlop (Malop, Masv) VALUES ${values}`,
-        params,
+        `INSERT INTO thanhvienlop (Malop, Masv, NgayThamGia, TrangThaiThanhVien)
+         VALUES ${values}`,
+        batch.flatMap((studentId) => [
+          classInfo.Malop,
+          studentId,
+          'Đang tham gia',
+        ]),
       );
     }
 
@@ -1628,6 +1770,11 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
       return response.status(400).json({ message: 'Giảng viên không tồn tại.' });
     }
+    if (error.sqlState === '45000') {
+      const message = error.sqlMessage || 'Không thể tạo lớp theo quy tắc cơ sở dữ liệu.';
+      const status = message.includes('giới hạn 99 lớp') ? 409 : 400;
+      return response.status(status).json({ message });
+    }
     console.error('Create admin class error:', error.message);
     return response.status(500).json({ message: 'Không thể tạo lớp.' });
   }
@@ -1660,12 +1807,20 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[existing]] = await connection.execute(
-      'SELECT Malop FROM lophocphan WHERE Malop = ? FOR UPDATE',
+      `SELECT Malop, Trangthailop AS status,
+              (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
+       FROM lophocphan WHERE Malop = ? FOR UPDATE`,
       [request.params.classId],
     );
     if (!existing) {
       await connection.rollback();
       return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+    }
+    if (existing.status === 'Đã đóng' || Number(existing.isArchived)) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể chỉnh sửa.',
+      });
     }
     await connection.execute(
       `UPDATE lophocphan
@@ -1684,6 +1839,28 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
     return response.status(500).json({ message: 'Không thể cập nhật lớp.' });
   } finally {
     connection?.release();
+  }
+});
+
+app.post('/api/admin/classes/:classId/close', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  try {
+    const [result] = await pool.execute(
+      `UPDATE lophocphan SET Trangthailop = 'Đã đóng'
+       WHERE Malop = ? AND COALESCE(Trangthailop, '') <> 'Đã đóng'`,
+      [request.params.classId],
+    );
+    if (result.affectedRows === 0) {
+      const [[classInfo]] = await pool.execute(
+        'SELECT Malop FROM lophocphan WHERE Malop = ? LIMIT 1',
+        [request.params.classId],
+      );
+      if (!classInfo) return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+      return response.status(409).json({ message: 'Lớp đã được đóng.' });
+    }
+    return response.json({ message: 'Đóng lớp thành công.' });
+  } catch (error) {
+    console.error('Close admin class error:', error.message);
+    return response.status(500).json({ message: 'Không thể đóng lớp.' });
   }
 });
 
@@ -1740,7 +1917,7 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
              FROM sukien sk
              LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
              GROUP BY sk.Masukien, sk.Tensukien, sk.Diadiem,
-          sk.Thoigianbatdau, sk.Thoigianketthuc
+          sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien
             ORDER BY sk.Thoigianbatdau`,
     );
     return response.json({ items: rows });

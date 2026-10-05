@@ -50,7 +50,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       ),
       const StudentClassesPage(),
       const StudentEventsPage(),
-      const StudentCheckinPage(),
+      StudentCheckinPage(isActive: _index == 3),
       const StudentProfilePage(),
     ];
 
