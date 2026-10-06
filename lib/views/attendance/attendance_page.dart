@@ -10,6 +10,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../widgets/app_search_field.dart';
 import '../../widgets/app_badge.dart';
 import '../../widgets/statistics_charts.dart';
+import 'attendance_roster_page.dart';
 import 'qr_generator_page.dart';
 
 class AttendancePage extends StatefulWidget {
@@ -198,7 +199,21 @@ class _AttendancePageState extends State<AttendancePage> {
               ),
               const SizedBox(height: 12),
               ...sessions.map(
-                (session) => _SessionCard(session: session, c: c),
+                (session) => _SessionCard(
+                  session: session,
+                  c: c,
+                  onOpenRoster: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => AttendanceRosterPage(
+                        sessionId: session['id']?.toString() ?? '',
+                        title: session['className']?.toString().isNotEmpty ==
+                                true
+                            ? session['className'].toString()
+                            : 'Danh sách điểm danh',
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ],
           ],
@@ -236,8 +251,13 @@ class _AttendancePageState extends State<AttendancePage> {
 class _SessionCard extends StatelessWidget {
   final Map<String, dynamic> session;
   final AppColors c;
+  final VoidCallback onOpenRoster;
 
-  const _SessionCard({required this.session, required this.c});
+  const _SessionCard({
+    required this.session,
+    required this.c,
+    required this.onOpenRoster,
+  });
 
   /// Hiển thị thông tin phiên và số liệu truy vấn được.
   @override
@@ -309,6 +329,15 @@ class _SessionCard extends StatelessWidget {
                 color: c.danger,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: onOpenRoster,
+              icon: const Icon(Icons.groups_outlined),
+              label: const Text('Danh sách sinh viên'),
+            ),
           ),
         ],
       ),

@@ -10,6 +10,10 @@ class ApiEndpoints {
   static const attendance = '/api/attendance';
   static const attendanceSessions = '/api/attendance/sessions';
   static const adminAttendanceSessions = '/api/admin/attendance/sessions';
+
+  /// Tạo endpoint lấy danh sách sinh viên của phiên điểm danh.
+  static String attendanceSessionStudents(String sessionId) =>
+      '$adminAttendanceSessions/${Uri.encodeComponent(sessionId)}/students';
   static const attendanceCheckIn = '/api/attendance/check-in';
   static const attendanceFaceCheckIn = '/api/attendance/face-check-in';
   static const reports = '/api/reports';

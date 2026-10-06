@@ -786,6 +786,43 @@ function createAttendanceQr(sessionId, expiresAt, coordinates) {
   );
 }
 
+// Tìm phiên điểm danh và xác minh người dùng có quyền quản lý phiên đó.
+async function findManagedAttendanceSession(sessionId, auth) {
+  const [[session]] = await pool.execute(
+    `SELECT bpd.Mabuoidiemdanh AS id, b.Malop AS classId,
+            COALESCE(lhp.Tenlop, '') AS className,
+            COALESCE(b.Noidung, '') AS sessionName,
+            bpd.Trangthaidiemdanh AS status,
+            bpd.Thoigiandong AS closedAt,
+            (bpd.Thoigiandong > NOW()) AS notExpired
+     FROM buoidiemdanh bpd
+     INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+     LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+     WHERE bpd.Mabuoidiemdanh = ?
+       AND (
+         ? IN ('Quản trị viên', 'admin')
+         OR (? IN ('Giảng viên', 'lecturer') AND lhp.Magv = ?)
+         OR (
+           ? IN ('Cán bộ', 'Nhân viên', 'organizer', 'staff')
+           AND EXISTS (
+             SELECT 1 FROM donvi dv
+             WHERE dv.Madv = lhp.Madv AND dv.Manv = ?
+           )
+         )
+       )
+     LIMIT 1`,
+    [
+      sessionId,
+      auth.role,
+      auth.role,
+      auth.sub,
+      auth.role,
+      auth.sub,
+    ],
+  );
+  return session;
+}
+
 // Tải các buổi học mà giảng viên hoặc quản trị viên được phép mở điểm danh.
 app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
   try {
@@ -810,7 +847,7 @@ app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
 });
 
 // Lấy các phiên điểm danh cùng số lượt có mặt, trễ và vắng từ cơ sở dữ liệu.
-app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'Cán bộ', 'Nhân viên', 'organizer', 'staff'), async (request, response) => {
   try {
     const [rows] = await pool.execute(
       `SELECT bpd.Mabuoidiemdanh AS id, b.Malop AS classId,
@@ -826,17 +863,173 @@ app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị
        INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
        LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
        LEFT JOIN ketquadiemdanh kd ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
-       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
+       WHERE (
+         ? IN ('Quản trị viên', 'admin')
+         OR (? IN ('Giảng viên', 'lecturer') AND lhp.Magv = ?)
+         OR (
+           ? IN ('Cán bộ', 'Nhân viên', 'organizer', 'staff')
+           AND EXISTS (
+             SELECT 1 FROM donvi dv
+             WHERE dv.Madv = lhp.Madv AND dv.Manv = ?
+           )
+         )
+       )
        GROUP BY bpd.Mabuoidiemdanh, b.Malop, lhp.Tenlop,
                 b.Noidung, bpd.Thoigianmo, bpd.Thoigiandong,
                 bpd.Phuongthuc, bpd.Trangthaidiemdanh
        ORDER BY bpd.Thoigianmo DESC`,
-      [request.auth.role, request.auth.sub],
+      [
+        request.auth.role,
+        request.auth.role,
+        request.auth.sub,
+        request.auth.role,
+        request.auth.sub,
+      ],
     );
     return response.json({ items: rows });
   } catch (error) {
     console.error('Admin attendance sessions error:', error.message);
     return response.status(500).json({ message: 'Không thể tải phiên điểm danh.' });
+  }
+});
+
+// Trả danh sách sinh viên cùng trạng thái điểm danh của một phiên được phép quản lý.
+app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'Cán bộ', 'Nhân viên', 'organizer', 'staff'), async (request, response) => {
+  try {
+    const session = await findManagedAttendanceSession(
+      request.params.sessionId,
+      request.auth,
+    );
+    if (!session) {
+      return response.status(404).json({
+        message: 'Không tìm thấy phiên điểm danh hoặc bạn không phụ trách phiên này.',
+      });
+    }
+
+    const [items] = await pool.execute(
+      `SELECT tvl.Masv AS studentId,
+              COALESCE(nd.Hoten, tvl.Masv) AS studentName,
+              COALESCE(nd.Email, '') AS email,
+              kd.Maketqua AS attendanceId,
+              kd.Trangthaiketqua AS attendanceStatus,
+              kd.Thoigiandiemdanh AS checkedInAt
+       FROM buoidiemdanh bpd
+       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+       INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
+       LEFT JOIN nguoidung nd ON nd.Mand = tvl.Masv
+       LEFT JOIN ketquadiemdanh kd
+         ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
+        AND kd.Masv = tvl.Masv
+       WHERE bpd.Mabuoidiemdanh = ?
+       ORDER BY nd.Hoten, tvl.Masv`,
+      [request.params.sessionId],
+    );
+    return response.json({
+      session: {
+        ...session,
+        canEdit: session.status === 'Đang mở' && Number(session.notExpired) === 1,
+      },
+      items,
+    });
+  } catch (error) {
+    console.error('Attendance roster error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải danh sách sinh viên điểm danh.',
+    });
+  }
+});
+
+// Ghi nhận hoặc cập nhật kết quả điểm danh thủ công của sinh viên trong phiên đang mở.
+app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'Cán bộ', 'Nhân viên', 'organizer', 'staff'), async (request, response) => {
+  const statusLabels = new Map([
+    ['present', 'Có mặt'],
+    ['late', 'Đi trễ'],
+    ['absent', 'Vắng mặt'],
+  ]);
+  const attendanceStatus = statusLabels.get(request.body?.status);
+  if (!attendanceStatus) {
+    return response.status(400).json({
+      message: 'Trạng thái điểm danh không hợp lệ.',
+    });
+  }
+
+  let connection;
+  try {
+    const session = await findManagedAttendanceSession(
+      request.params.sessionId,
+      request.auth,
+    );
+    if (!session) {
+      return response.status(404).json({
+        message: 'Không tìm thấy phiên điểm danh hoặc bạn không phụ trách phiên này.',
+      });
+    }
+    if (session.status !== 'Đang mở' || Number(session.notExpired) !== 1) {
+      return response.status(409).json({
+        message: 'Phiên điểm danh đã đóng hoặc hết hạn.',
+      });
+    }
+
+    const [[student]] = await pool.execute(
+      `SELECT tvl.Masv AS id
+       FROM thanhvienlop tvl
+       INNER JOIN buoi b ON b.Malop = tvl.Malop
+       INNER JOIN buoidiemdanh bpd ON bpd.Mabuoi = b.Mabuoi
+       WHERE bpd.Mabuoidiemdanh = ? AND tvl.Masv = ?
+       LIMIT 1`,
+      [request.params.sessionId, request.params.studentId],
+    );
+    if (!student) {
+      return response.status(404).json({
+        message: 'Sinh viên không thuộc lớp của phiên điểm danh này.',
+      });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [[existing]] = await connection.execute(
+      `SELECT Maketqua AS id
+       FROM ketquadiemdanh
+       WHERE Mabuoidiemdanh = ? AND Masv = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [request.params.sessionId, request.params.studentId],
+    );
+
+    if (existing) {
+      await connection.execute(
+        `UPDATE ketquadiemdanh
+         SET Thoigiandiemdanh = NOW(), Trangthaiketqua = ?
+         WHERE Maketqua = ?`,
+        [attendanceStatus, existing.id],
+      );
+    } else {
+      await connection.execute(
+        `INSERT INTO ketquadiemdanh
+         (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Mabuoidiemdanh, Masv)
+         VALUES (?, NOW(), ?, ?, ?)`,
+        [
+          makeId('RS'),
+          attendanceStatus,
+          request.params.sessionId,
+          request.params.studentId,
+        ],
+      );
+    }
+    await connection.commit();
+    return response.json({
+      message: 'Đã cập nhật điểm danh thủ công.',
+      studentId: request.params.studentId,
+      status: attendanceStatus,
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Manual attendance error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể cập nhật điểm danh thủ công.',
+    });
+  } finally {
+    connection?.release();
   }
 });
 

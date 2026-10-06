@@ -654,7 +654,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
 
   String get _failureTitle {
     final message = _errorMessage ?? '';
-    for (final category in ['Sai lớp', 'Sai tài khoản', 'Sai sinh viên']) {
+    for (final category in ['Điểm danh thất bại', 'Điểm danh thất bại', 'Điểm danh thất bại']) {
       if (message.startsWith('$category:')) return category;
     }
     return 'Không thể xác thực';

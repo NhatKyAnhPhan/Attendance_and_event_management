@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+
 import '../../../core/constants/admin_page.dart';
 import '../../../core/constants/role.dart';
 import '../../../core/theme/app_colors.dart';
@@ -36,6 +37,7 @@ const _lecturerNav = [
 
 const _organizerNav = [
   _NavItem(Icons.home_outlined, AdminPage.dashboard),
+  _NavItem(Icons.check_box_outlined, AdminPage.attendance),
   _NavItem(Icons.event_outlined, AdminPage.events),
   _NavItem(Icons.workspace_premium_outlined, AdminPage.certificates),
   _NavItem(Icons.forum_outlined, AdminPage.feedback),
@@ -210,12 +212,12 @@ class AppSidebar extends StatelessWidget {
             child: Column(
               children: [
                 if (!collapsed)
-                   Padding(
+                  Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Material(
                       color: c.muted,
                       borderRadius: BorderRadius.circular(8),
-                    child: InkWell(
+                      child: InkWell(
                         borderRadius: BorderRadius.circular(8),
                         onTap: role == Role.lecturer || role == Role.organizer
                             ? () => _openProfile(context)
@@ -225,7 +227,7 @@ class AppSidebar extends StatelessWidget {
                             horizontal: 10,
                             vertical: 8,
                           ),
-                        child: Row(
+                          child: Row(
                             children: [
                               Container(
                                 width: 32,
@@ -289,7 +291,7 @@ class AppSidebar extends StatelessWidget {
     );
   }
 
-void _openProfile(BuildContext context) {
+  void _openProfile(BuildContext context) {
     final scaffold = Scaffold.maybeOf(context);
     if (scaffold?.isDrawerOpen ?? false) {
       scaffold!.closeDrawer();
