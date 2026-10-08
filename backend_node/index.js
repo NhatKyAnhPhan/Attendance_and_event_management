@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
 const { createUpdateProfileHandler } = require('./profile_handler');
+const { createCertificatePdf, createMailTransport } = require('./certificate_mailer');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -114,6 +115,19 @@ async function ensureAttendanceDeviceClaimsTable() {
        ADD PRIMARY KEY (device_id, attendance_session_id)`,
     );
   }
+}
+
+async function ensureEventAttendanceTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS event_attendance (
+       event_id VARCHAR(64) NOT NULL,
+       student_id VARCHAR(64) NOT NULL,
+       device_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       checked_in_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (event_id, student_id),
+       UNIQUE KEY unique_event_attendance_device (event_id, device_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
 }
 
 app.use(cors());
@@ -758,6 +772,138 @@ function readCoordinates(body) {
   return { latitude, longitude };
 }
 
+async function checkInEventAttendance(request, response, payload, deviceId) {
+  if (typeof payload.eventId !== 'string' || !payload.eventId) {
+    return response.status(410).json({ message: 'Mã QR sự kiện không hợp lệ.' });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[event]] = await connection.execute(
+      `SELECT sk.Masukien AS id, sk.Tensukien AS name,
+              COALESCE(sk.Diadiem, '') AS location,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime,
+              sk.Trangthaisukien AS status,
+              CASE
+                WHEN NOW() >= sk.Thoigianbatdau
+                  AND NOW() < sk.Thoigianketthuc
+                  AND sk.Trangthaisukien <> 'Đã đóng' THEN 1
+                ELSE 0
+              END AS isOpen
+       FROM sukien sk
+       WHERE sk.Masukien = ?
+       FOR UPDATE`,
+      [payload.eventId],
+    );
+    if (!event || Number(event.isOpen) !== 1) {
+      await connection.rollback();
+      return response.status(410).json({
+        message: 'Sự kiện chưa diễn ra, đã kết thúc hoặc đã bị đóng.',
+      });
+    }
+
+    const [[registration]] = await connection.execute(
+      `SELECT Trangthaidangky AS status
+       FROM dangkysukien
+       WHERE Masukien = ? AND Masv = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [event.id, request.auth.sub],
+    );
+    if (!registration
+        || ['từ chối', 'đã hủy', 'hủy'].includes(
+          String(registration.status || '').trim().toLowerCase(),
+        )) {
+      await connection.rollback();
+      return response.status(403).json({
+        message: 'Bạn cần có đăng ký hợp lệ cho sự kiện mới được điểm danh.',
+      });
+    }
+
+    await connection.execute(
+      `INSERT INTO event_attendance (event_id, student_id, device_id)
+       VALUES (?, ?, ?)`,
+      [event.id, request.auth.sub, deviceId],
+    );
+    const [[attendee]] = await connection.execute(
+      `SELECT sk.Masukien AS eventId, sk.Tensukien AS eventName,
+              sk.Diadiem AS location, sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime,
+              COALESCE(dv.Tendv, '') AS organizerName,
+              ea.checked_in_at AS checkedInAt,
+              nd.Mand AS studentId, COALESCE(nd.Hoten, nd.Mand) AS studentName
+       FROM event_attendance ea
+       INNER JOIN sukien sk ON sk.Masukien = ea.event_id
+       LEFT JOIN donvi dv ON dv.Madv = sk.Madv
+       INNER JOIN nguoidung nd ON nd.Mand = ea.student_id
+       WHERE ea.event_id = ? AND ea.student_id = ?
+       LIMIT 1`,
+      [event.id, request.auth.sub],
+    );
+    await connection.commit();
+    return response.status(201).json({
+      message: 'Điểm danh sự kiện thành công.',
+      status: 'Có mặt',
+      ...attendee,
+    });
+  } catch (error) {
+    await connection.rollback();
+    if (error.code === 'ER_DUP_ENTRY') {
+      return response.status(409).json({
+        message: 'Bạn đã điểm danh sự kiện này hoặc thiết bị đã được dùng.',
+      });
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+app.post('/api/events/attendance/check-in', requireAuth, async (request, response) => {
+  const { qrToken, deviceId } = request.body || {};
+  if (typeof qrToken !== 'string' || qrToken.length === 0) {
+    return response.status(400).json({ message: 'Thiếu mã QR sự kiện.' });
+  }
+  if (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId)) {
+    return response.status(400).json({ message: 'Không xác định được thiết bị điểm danh.' });
+  }
+  if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
+    return response.status(403).json({
+      message: 'Sai tài khoản: hãy đăng nhập bằng tài khoản sinh viên để điểm danh.',
+    });
+  }
+
+  try {
+    const [[student]] = await pool.execute(
+      'SELECT Masv AS id FROM sinhvien WHERE Masv = ? LIMIT 1',
+      [request.auth.sub],
+    );
+    if (!student) {
+      return response.status(403).json({
+        message: 'Sai sinh viên: tài khoản này chưa được liên kết với hồ sơ sinh viên.',
+      });
+    }
+
+    const payload = jwt.verify(qrToken, jwtSecret);
+    if (payload.type !== 'event-attendance') {
+      return response.status(410).json({ message: 'Mã QR không phải mã điểm danh sự kiện.' });
+    }
+    return await checkInEventAttendance(request, response, payload, deviceId);
+  } catch (error) {
+    if (error.name === 'TokenExpiredError' || error.name === 'JsonWebTokenError') {
+      return response.status(410).json({
+        message: 'Mã QR sự kiện không hợp lệ hoặc đã hết hạn.',
+      });
+    }
+    console.error('Event check-in error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể ghi nhận điểm danh sự kiện.',
+    });
+  }
+});
+
 // Tính khoảng cách giữa hai tọa độ bằng công thức Haversine.
 function distanceInMeters(first, second) {
   const earthRadius = 6371000;
@@ -1355,6 +1501,237 @@ app.get('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 
   }
 });
 
+app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên', 'event_organizer'), async (request, response) => {
+  const isAdmin = ['quản trị viên', 'admin'].includes(
+    String(request.auth.role || '').trim().toLowerCase(),
+  );
+  try {
+    const [[event]] = await pool.execute(
+      `SELECT sk.Masukien AS id, sk.Tensukien AS name,
+              sk.Thoigianketthuc AS endTime,
+              sk.Trangthaisukien AS status,
+              EXISTS (
+                SELECT 1 FROM donvi dv
+                WHERE dv.Madv = sk.Madv AND dv.Manv = ?
+              ) AS isOrganizer
+       FROM sukien sk
+       WHERE sk.Masukien = ?
+       LIMIT 1`,
+      [request.auth.sub, request.params.eventId],
+    );
+    if (!event) {
+      return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    if (!isAdmin && !Number(event.isOrganizer)) {
+      return response.status(403).json({
+        message: 'Bạn không phụ trách sự kiện này.',
+      });
+    }
+    const expiresAt = new Date(event.endTime);
+    if (event.status === 'Đã đóng' || expiresAt <= new Date()) {
+      return response.status(409).json({
+        message: 'Không thể tạo QR cho sự kiện đã đóng hoặc đã kết thúc.',
+      });
+    }
+    const expiresIn = Math.floor(expiresAt.getTime() / 1000) - Math.floor(Date.now() / 1000);
+    if (expiresIn <= 0) {
+      return response.status(409).json({
+        message: 'Sự kiện sắp kết thúc, không thể tạo mã QR mới.',
+      });
+    }
+    const qr = jwt.sign(
+      { type: 'event-attendance', eventId: event.id },
+      jwtSecret,
+      { expiresIn },
+    );
+    return response.json({
+      eventId: event.id,
+      eventName: event.name,
+      expiresAt,
+      qr,
+    });
+  } catch (error) {
+    console.error('Create event attendance QR error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tạo mã QR điểm danh sự kiện.',
+    });
+  }
+});
+
+app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên', 'event_organizer'), async (request, response) => {
+  const isAdmin = ['quản trị viên', 'admin'].includes(
+    String(request.auth.role || '').trim().toLowerCase(),
+  );
+  let connection;
+  try {
+    const [[event]] = await pool.execute(
+      `SELECT sk.Masukien AS id, sk.Tensukien AS name,
+              sk.Diadiem AS location,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime,
+              sk.Trangthaisukien AS status,
+              EXISTS (
+                SELECT 1 FROM donvi dv
+                WHERE dv.Madv = sk.Madv AND dv.Manv = ?
+              ) AS isOrganizer
+       FROM sukien sk
+       WHERE sk.Masukien = ?
+       LIMIT 1`,
+      [request.auth.sub, request.params.eventId],
+    );
+    if (!event) {
+      return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    if (!isAdmin && !Number(event.isOrganizer)) {
+      return response.status(403).json({
+        message: 'Bạn không phụ trách sự kiện này.',
+      });
+    }
+    if (new Date(event.endTime) > new Date()) {
+      return response.status(409).json({
+        message: 'Chỉ có thể gửi chứng nhận sau khi sự kiện kết thúc.',
+      });
+    }
+
+    const [attendees] = await pool.execute(
+      `SELECT ea.student_id AS studentId,
+              COALESCE(nd.Hoten, ea.student_id) AS studentName,
+              COALESCE(nd.Email, '') AS email
+       FROM event_attendance ea
+       LEFT JOIN nguoidung nd ON nd.Mand = ea.student_id
+       WHERE ea.event_id = ?
+       ORDER BY ea.checked_in_at, ea.student_id`,
+      [event.id],
+    );
+    if (attendees.length === 0) {
+      return response.status(409).json({
+        message: 'Chưa có sinh viên điểm danh sự kiện để cấp chứng nhận.',
+      });
+    }
+
+    let mailTransport;
+    try {
+      mailTransport = createMailTransport();
+      await mailTransport.verify();
+    } catch (error) {
+      console.error('SMTP configuration error:', error.message);
+      return response.status(503).json({
+        message: `Không thể kết nối SMTP: ${error.message}`,
+      });
+    }
+
+    const publicBaseUrl = (
+      process.env.PUBLIC_API_BASE_URL
+      || `${request.protocol}://${request.get('host')}`
+    ).replace(/\/+$/, '');
+    let sent = 0;
+    const failures = [];
+
+    for (const attendee of attendees) {
+      if (!attendee.email.trim()) {
+        failures.push({
+          studentId: attendee.studentId,
+          message: `${attendee.studentName}: tài khoản chưa có email.`,
+        });
+        continue;
+      }
+
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        await connection.execute(
+          `SELECT checked_in_at
+           FROM event_attendance
+           WHERE event_id = ? AND student_id = ?
+           FOR UPDATE`,
+          [event.id, attendee.studentId],
+        );
+        const [[existingCertificate]] = await connection.execute(
+          `SELECT Machungnhan AS id, Ngaycap AS issuedAt
+           FROM chungnhan
+           WHERE Masv = ? AND Masukien = ?
+           ORDER BY Ngaycap DESC, Machungnhan DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [attendee.studentId, event.id],
+        );
+        let certificateId = existingCertificate?.id;
+        let issuedAt = existingCertificate?.issuedAt;
+        if (!certificateId) {
+          const year = new Date().getFullYear();
+          certificateId = `GCN-${year}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+          await connection.execute(
+            `INSERT INTO chungnhan
+              (Machungnhan, Masv, Masukien, Ngaycap, Noidung, Trangthaichungnhan)
+             VALUES (?, ?, ?, NOW(), ?, 'Đã cấp')`,
+            [
+              certificateId,
+              attendee.studentId,
+              event.id,
+              `Giấy chứng nhận tham gia sự kiện ${event.name}`,
+            ],
+          );
+          issuedAt = new Date();
+        }
+        await connection.commit();
+        connection.release();
+        connection = null;
+
+        const verificationUrl =
+          `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificateId)}`;
+        const pdf = await createCertificatePdf({
+          studentName: attendee.studentName,
+          studentId: attendee.studentId,
+          eventName: event.name,
+          startTime: event.startTime,
+          endTime: event.endTime,
+          location: event.location,
+          certificateId,
+          issuedAt,
+          verificationUrl,
+        });
+        await mailTransport.sendMail({
+          from: process.env.SMTP_FROM,
+          to: attendee.email,
+          subject: `Chứng nhận tham gia sự kiện ${event.name}`,
+          text: `Xin chào ${attendee.studentName},\n\nBạn nhận được chứng nhận tham gia sự kiện "${event.name}". Chứng nhận PDF được đính kèm email này.\n\nBan tổ chức`,
+          attachments: [{
+            filename: `${certificateId}.pdf`,
+            content: pdf,
+            contentType: 'application/pdf',
+          }],
+        });
+        sent += 1;
+      } catch (error) {
+        if (connection) {
+          await connection.rollback();
+          connection.release();
+          connection = null;
+        }
+        console.error(
+          `Certificate delivery failed for ${attendee.studentId}:`,
+          error.message,
+        );
+        failures.push({
+          studentId: attendee.studentId,
+          message: `${attendee.studentName} (${attendee.email}): ${error.message}`,
+        });
+      }
+    }
+
+    return response.json({ eventId: event.id, sent, failures });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Send event certificates error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể gửi chứng nhận sự kiện.',
+    });
+  }
+});
+
 app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên'), async (request, response) => {
   const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
   try {
@@ -1383,9 +1760,13 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
               COALESCE(nd.Hoten, dk.Masv) AS studentName,
               COALESCE(nd.Email, '') AS email,
               COALESCE(dk.Trangthaidangky, '') AS status,
+              CASE WHEN ea.checked_in_at IS NULL
+                   THEN 'Chưa điểm danh' ELSE 'Đã điểm danh QR' END AS attendanceStatus,
               DATE_FORMAT(dk.Ngaydangky, '%d/%m/%Y') AS dateLabel
        FROM dangkysukien dk
        LEFT JOIN nguoidung nd ON nd.Mand = dk.Masv
+       LEFT JOIN event_attendance ea
+         ON ea.event_id = dk.Masukien AND ea.student_id = dk.Masv
        WHERE dk.Masukien = ?
        ORDER BY dk.Ngaydangky DESC, nd.Hoten, dk.Masv`,
       [request.params.eventId],
@@ -1596,6 +1977,16 @@ app.delete('/api/organizer/events/:eventId', requireAuth, requireRole('Quản tr
         message: 'Không thể xóa sự kiện đã có người đăng ký.',
       });
     }
+    const [[attendanceCount]] = await connection.execute(
+      'SELECT COUNT(*) AS total FROM event_attendance WHERE event_id = ?',
+      [request.params.eventId],
+    );
+    if (Number(attendanceCount.total) > 0) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Không thể xóa sự kiện đã có dữ liệu điểm danh.',
+      });
+    }
     await connection.execute(
       'DELETE FROM sukien WHERE Masukien = ?',
       [request.params.eventId],
@@ -1610,6 +2001,32 @@ app.delete('/api/organizer/events/:eventId', requireAuth, requireRole('Quản tr
     });
   } finally {
     connection?.release();
+  }
+});
+
+app.get('/api/certificates/:certificateId', async (request, response) => {
+  try {
+    const [[certificate]] = await pool.execute(
+      `SELECT cn.Machungnhan AS certificateId,
+              COALESCE(nd.Hoten, cn.Masv) AS studentName,
+              cn.Masv AS studentId, sk.Tensukien AS eventName,
+              cn.Ngaycap AS issuedAt, cn.Trangthaichungnhan AS status
+       FROM chungnhan cn
+       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
+       LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
+       WHERE cn.Machungnhan = ?
+       LIMIT 1`,
+      [request.params.certificateId],
+    );
+    if (!certificate) {
+      return response.status(404).json({ message: 'Không tìm thấy chứng nhận.' });
+    }
+    return response.json(certificate);
+  } catch (error) {
+    console.error('Verify certificate error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể xác minh chứng nhận.',
+    });
   }
 });
 
@@ -2123,6 +2540,7 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
 ensureAttendanceLocationColumns()
   .then(async () => {
     await ensureAttendanceDeviceClaimsTable();
+    await ensureEventAttendanceTable();
     await synchronizeEventStatuses();
     const statusSyncTimer = setInterval(() => {
       synchronizeEventStatuses().catch((error) => {
@@ -2130,8 +2548,9 @@ ensureAttendanceLocationColumns()
       });
     }, 60_000);
     statusSyncTimer.unref();
-    app.listen(port, () => {
-      console.log(`API listening on http://localhost:${port}`);
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`API listening on http://0.0.0.0:${port}`);
+      console.log(`LAN URL: http://<IP_CUA_MAY_TINH>:${port}`);
     });
   })
   .catch((error) => {

@@ -128,4 +128,12 @@ class OrganizerEventsController extends GetxController {
     await _repository.closeOrganizerEvent(id);
     await load();
   }
+
+  Future<String> createAttendanceQr(String eventId) {
+    return _repository.createEventAttendanceQr(eventId);
+  }
+
+  Future<Map<String, dynamic>> sendCertificates(String eventId) {
+    return _repository.sendEventCertificates(eventId);
+  }
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -236,18 +237,27 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     _checkInBusy = true;
     await _qrController.stop();
     try {
-      final position = await _getCurrentPosition();
       final deviceId = await _getDeviceId();
-      final result = await _apiClient.post(
-        ApiEndpoints.attendanceCheckIn,
-        data: {
-          'qrToken': token,
-          'method': 'QR',
-          'deviceId': deviceId,
-          'latitude': position.latitude,
-          'longitude': position.longitude,
-        },
-      );
+      final isEventQr = _isEventAttendanceToken(token);
+      final Map<String, dynamic> result;
+      if (isEventQr) {
+        result = await _apiClient.post(
+          ApiEndpoints.eventAttendanceCheckIn,
+          data: {'qrToken': token, 'deviceId': deviceId},
+        );
+      } else {
+        final position = await _getCurrentPosition();
+        result = await _apiClient.post(
+          ApiEndpoints.attendanceCheckIn,
+          data: {
+            'qrToken': token,
+            'method': 'QR',
+            'deviceId': deviceId,
+            'latitude': position.latitude,
+            'longitude': position.longitude,
+          },
+        );
+      }
       if (mounted) {
         setState(() {
           _checkInDetails = result;
@@ -260,6 +270,19 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
         _errorMessage = error.message;
         _state = _ScanState.failed;
       });
+    }
+  }
+
+  bool _isEventAttendanceToken(String token) {
+    final segments = token.split('.');
+    if (segments.length != 3) return false;
+    try {
+      final payload = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(segments[1]))),
+      );
+      return payload is Map && payload['type'] == 'event-attendance';
+    } on FormatException {
+      return false;
     }
   }
 

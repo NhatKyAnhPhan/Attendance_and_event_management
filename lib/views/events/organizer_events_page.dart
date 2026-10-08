@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/organizer_events_controller.dart';
@@ -21,6 +22,7 @@ class OrganizerEventsPage extends StatefulWidget {
 class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
+  bool _sendingCertificates = false;
 
   // Hiển thị danh sách sự kiện cùng các thao tác theo vai trò.
   @override
@@ -199,170 +201,311 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-          title: Text(event.name),
-          content: SizedBox(
-            width: 700,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
-              ),
-              child: FutureBuilder<Map<String, dynamic>>(
-                future: detailsFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: Text('Không tải được chi tiết: ${snapshot.error}'),
-                    );
-                  }
-
-                  final details = snapshot.data ?? const <String, dynamic>{};
-                  final benefits = details['benefits'] is List
-                      ? (details['benefits'] as List).whereType<Map>().toList()
-                      : const <Map>[];
-                  final rules = details['rules'] is List
-                      ? (details['rules'] as List).whereType<Map>().toList()
-                      : const <Map>[];
-                  final description = details['description']?.toString().trim();
-
-                  return SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _detailSection('Thông tin sự kiện', [
-                          _detailRow('Mã sự kiện', event.id),
-                          _detailRow('Trạng thái', event.status),
-                          _detailRow(
-                            'Đơn vị tổ chức',
-                            details['organizerName']?.toString() ??
-                                event.organizerId,
-                          ),
-                          _detailRow(
-                            'Thời gian bắt đầu',
-                            DateFormat('dd/MM/yyyy HH:mm')
-                                .format(event.startTime),
-                          ),
-                          _detailRow(
-                            'Thời gian kết thúc',
-                            DateFormat('dd/MM/yyyy HH:mm')
-                                .format(event.endTime),
-                          ),
-                          _detailRow('Địa điểm', event.location),
-                          _detailRow(
-                            'Số lượng đăng ký',
-                            '${details['registeredCount'] ?? event.registeredCount}/${details['capacity'] ?? event.capacity}',
-                          ),
-                        ]),
-                        const SizedBox(height: 16),
-                        _detailSection('Mô tả', [
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxHeight: 160),
-                            child: Scrollbar(
-                              child: SingleChildScrollView(
-                                child: Text(
-                                  description == null || description.isEmpty
-                                      ? 'Chưa có mô tả cho sự kiện này.'
-                                      : description,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ]),
-                        const SizedBox(height: 16),
-                        _detailSection(
-                          'Quyền lợi',
-                          benefits.isEmpty
-                              ? [const Text('Chưa có thông tin quyền lợi.')]
-                              : benefits.map((benefit) {
-                                  final type = benefit['type']?.toString();
-                                  final points = benefit['points'];
-                                  final content = benefit['content']
-                                      ?.toString();
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Text(
-                                      [
-                                        if (type != null && type.isNotEmpty)
-                                          type,
-                                        if (points != null) '$points điểm',
-                                        if (content != null &&
-                                            content.isNotEmpty)
-                                          content,
-                                      ].join(' · '),
-                                    ),
-                                  );
-                                }).toList(),
-                        ),
-                        const SizedBox(height: 16),
-                        _detailSection(
-                          'Nội quy',
-                          rules.isEmpty
-                              ? [const Text('Chưa có nội quy cho sự kiện này.')]
-                              : rules.map((rule) {
-                                  final order = rule['sortOrder']?.toString();
-                                  final text = rule['text']?.toString() ?? '';
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Text(
-                                      order == null ? text : '$order. $text',
-                                    ),
-                                  );
-                                }).toList(),
-                        ),
-                        const SizedBox(height: 16),
-                        _detailSection(
-                          'Danh sách sinh viên đăng ký '
-                          '(${event.registeredCount})',
-                          [
-                            SizedBox(
-                              height: 260,
-                              child: FutureBuilder(
-                                future: studentsFuture,
-                                builder: (context, studentSnapshot) {
-                                  if (studentSnapshot.connectionState !=
-                                      ConnectionState.done) {
-                                    return const Center(
-                                      child: CircularProgressIndicator(),
-                                    );
-                                  }
-                                  if (studentSnapshot.hasError) {
-                                    return Center(
-                                      child: Text(
-                                        'Không tải được danh sách sinh viên: '
-                                        '${studentSnapshot.error}',
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    );
-                                  }
-                                  return StudentRosterList(
-                                    students: studentSnapshot.data ?? const [],
-                                    mutedColor: colors.mutedForeground,
-                                    dividerColor: colors.border,
-                                    emptyMessage:
-                                        'Chưa có sinh viên đăng ký sự kiện.',
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+        title: Text(event.name),
+        content: SizedBox(
+          width: 700,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
+            ),
+            child: FutureBuilder<Map<String, dynamic>>(
+              future: detailsFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text('Không tải được chi tiết: ${snapshot.error}'),
                   );
-                },
+                }
+
+                final details = snapshot.data ?? const <String, dynamic>{};
+                final benefits = details['benefits'] is List
+                    ? (details['benefits'] as List).whereType<Map>().toList()
+                    : const <Map>[];
+                final rules = details['rules'] is List
+                    ? (details['rules'] as List).whereType<Map>().toList()
+                    : const <Map>[];
+                final description = details['description']?.toString().trim();
+
+                return SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _detailSection('Thông tin sự kiện', [
+                        _detailRow('Mã sự kiện', event.id),
+                        _detailRow('Trạng thái', event.status),
+                        _detailRow(
+                          'Đơn vị tổ chức',
+                          details['organizerName']?.toString() ??
+                              event.organizerId,
+                        ),
+                        _detailRow(
+                          'Thời gian bắt đầu',
+                          DateFormat('dd/MM/yyyy HH:mm')
+                              .format(event.startTime),
+                        ),
+                        _detailRow(
+                          'Thời gian kết thúc',
+                          DateFormat('dd/MM/yyyy HH:mm').format(event.endTime),
+                        ),
+                        _detailRow('Địa điểm', event.location),
+                        _detailRow(
+                          'Số lượng đăng ký',
+                          '${details['registeredCount'] ?? event.registeredCount}/${details['capacity'] ?? event.capacity}',
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _detailSection('Mô tả', [
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 160),
+                          child: Scrollbar(
+                            child: SingleChildScrollView(
+                              child: Text(
+                                description == null || description.isEmpty
+                                    ? 'Chưa có mô tả cho sự kiện này.'
+                                    : description,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _detailSection(
+                        'Quyền lợi',
+                        benefits.isEmpty
+                            ? [const Text('Chưa có thông tin quyền lợi.')]
+                            : benefits.map((benefit) {
+                                final type = benefit['type']?.toString();
+                                final points = benefit['points'];
+                                final content = benefit['content']?.toString();
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    [
+                                      if (type != null && type.isNotEmpty) type,
+                                      if (points != null) '$points điểm',
+                                      if (content != null && content.isNotEmpty)
+                                        content,
+                                    ].join(' · '),
+                                  ),
+                                );
+                              }).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                      _detailSection(
+                        'Nội quy',
+                        rules.isEmpty
+                            ? [const Text('Chưa có nội quy cho sự kiện này.')]
+                            : rules.map((rule) {
+                                final order = rule['sortOrder']?.toString();
+                                final text = rule['text']?.toString() ?? '';
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    order == null ? text : '$order. $text',
+                                  ),
+                                );
+                              }).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                      _detailSection(
+                        'Danh sách sinh viên đăng ký '
+                        '(${event.registeredCount})',
+                        [
+                          SizedBox(
+                            height: 260,
+                            child: FutureBuilder(
+                              future: studentsFuture,
+                              builder: (context, studentSnapshot) {
+                                if (studentSnapshot.connectionState !=
+                                    ConnectionState.done) {
+                                  return const Center(
+                                    child: CircularProgressIndicator(),
+                                  );
+                                }
+                                if (studentSnapshot.hasError) {
+                                  return Center(
+                                    child: Text(
+                                      'Không tải được danh sách sinh viên: '
+                                      '${studentSnapshot.error}',
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  );
+                                }
+                                return StudentRosterList(
+                                  students: studentSnapshot.data ?? const [],
+                                  mutedColor: colors.mutedForeground,
+                                  dividerColor: colors.border,
+                                  emptyMessage:
+                                      'Chưa có sinh viên đăng ký sự kiện.',
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        actions: [
+          if (Get.find<AuthController>().canManageEvents &&
+              !event.isClosed &&
+              event.endTime.isAfter(DateTime.now()))
+            TextButton.icon(
+              onPressed: () =>
+                  _showEventAttendanceQr(dialogContext, controller, event),
+              icon: const Icon(Icons.qr_code_2),
+              label: const Text('QR điểm danh'),
+            ),
+          if (Get.find<AuthController>().canManageEvents &&
+              event.endTime.isBefore(DateTime.now()))
+            TextButton.icon(
+              onPressed: _sendingCertificates
+                  ? null
+                  : () => _confirmSendCertificates(
+                      dialogContext,
+                      controller,
+                      event,
+                    ),
+              icon: const Icon(Icons.email_outlined),
+              label: Text(
+                _sendingCertificates ? 'Đang gửi...' : 'Gửi chứng nhận',
+              ),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showEventAttendanceQr(
+    BuildContext context,
+    OrganizerEventsController controller,
+    OrganizerEventSummary event,
+  ) async {
+    try {
+      final qr = await controller.createAttendanceQr(event.id);
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('QR điểm danh sự kiện'),
+          content: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(event.name, textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                QrImageView(data: qr, size: 250),
+                Text(
+                  'Mã QR có hiệu lực đến ${DateFormat('dd/MM/yyyy HH:mm').format(event.endTime)}.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Không tạo được QR: $error')));
+    }
+  }
+
+  Future<void> _confirmSendCertificates(
+    BuildContext context,
+    OrganizerEventsController controller,
+    OrganizerEventSummary event,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Gửi chứng nhận qua email?'),
+        content: Text(
+          'Chứng nhận PDF sẽ chỉ gửi cho sinh viên đã điểm danh QR '
+          'sự kiện “${event.name}”.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Gửi'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    setState(() => _sendingCertificates = true);
+    try {
+      final result = await controller.sendCertificates(event.id);
+      if (!context.mounted) return;
+      final sent = result['sent'] as int? ?? 0;
+      final failures = result['failures'] is List
+          ? (result['failures'] as List)
+                .whereType<Map>()
+                .map((item) => item['message']?.toString() ?? '')
+                .where((message) => message.isNotEmpty)
+                .toList()
+          : const <String>[];
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Kết quả gửi chứng nhận'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Gửi thành công: $sent'),
+                  Text('Gửi thất bại: ${failures.length}'),
+                  for (final failure in failures)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(failure),
+                    ),
+                ],
               ),
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
+              onPressed: () => Navigator.pop(context),
               child: const Text('Đóng'),
             ),
           ],
-      ),
-    );
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không gửi được chứng nhận: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _sendingCertificates = false);
+    }
   }
 
   static Widget _detailSection(String title, List<Widget> children) {
@@ -778,9 +921,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       await controller.closeEvent(event.id);
     } catch (exception) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(exception.toString())));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(exception.toString())));
       }
     }
   }

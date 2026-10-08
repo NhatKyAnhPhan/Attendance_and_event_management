@@ -16,6 +16,11 @@ class ApiEndpoints {
       '$adminAttendanceSessions/${Uri.encodeComponent(sessionId)}/students';
   static const attendanceCheckIn = '/api/attendance/check-in';
   static const attendanceFaceCheckIn = '/api/attendance/face-check-in';
+  static const eventAttendanceCheckIn = '/api/events/attendance/check-in';
+  static String eventAttendanceQr(String eventId) =>
+      '/api/organizer/events/${Uri.encodeComponent(eventId)}/attendance/qr';
+  static String sendEventCertificates(String eventId) =>
+      '/api/organizer/events/${Uri.encodeComponent(eventId)}/certificates/send';
   static const reports = '/api/reports';
   static const attendanceReport = '/api/reports/attendance';
   static const staffCertificates = '/api/staff/certificates';

@@ -3,6 +3,7 @@ class StudentRosterEntry {
   final String studentName;
   final String email;
   final String status;
+  final String attendanceStatus;
   final String dateLabel;
 
   const StudentRosterEntry({
@@ -10,6 +11,7 @@ class StudentRosterEntry {
     required this.studentName,
     this.email = '',
     this.status = '',
+    this.attendanceStatus = '',
     this.dateLabel = '',
   });
 
@@ -19,6 +21,7 @@ class StudentRosterEntry {
       studentName: json['studentName']?.toString() ?? '',
       email: json['email']?.toString() ?? '',
       status: json['status']?.toString() ?? '',
+      attendanceStatus: json['attendanceStatus']?.toString() ?? '',
       dateLabel: json['dateLabel']?.toString() ?? '',
     );
   }

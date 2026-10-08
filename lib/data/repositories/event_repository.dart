@@ -1,4 +1,5 @@
 import '../api/api_client.dart';
+import '../api/endpoints.dart';
 import '../models/event_model.dart';
 import '../models/student_roster_entry.dart';
 import '../models/student_summaries.dart';
@@ -136,5 +137,23 @@ class EventRepository {
 
   Future<void> closeOrganizerEvent(String id) async {
     await _client.post('/api/organizer/events/$id/close');
+  }
+
+  Future<String> createEventAttendanceQr(String eventId) async {
+    final body = await _client.post(
+      ApiEndpoints.eventAttendanceQr(eventId),
+    );
+    final qr = body['qr']?.toString();
+    if (qr == null || qr.isEmpty) {
+      throw const FormatException('Máy chủ không trả về mã QR sự kiện.');
+    }
+    return qr;
+  }
+
+  Future<Map<String, dynamic>> sendEventCertificates(String eventId) {
+    return _client.post(
+      ApiEndpoints.sendEventCertificates(eventId),
+      receiveTimeout: const Duration(minutes: 10),
+    );
   }
 }

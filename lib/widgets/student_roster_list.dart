@@ -75,11 +75,27 @@ class _StudentRosterListState extends State<StudentRosterList> {
               ].join(' · '),
               style: AppTextStyles.bodyXs(widget.mutedColor),
             ),
-            trailing: student.status.isEmpty
+            trailing: student.status.isEmpty && student.attendanceStatus.isEmpty
                 ? null
-                : Text(
-                    student.status,
-                    style: AppTextStyles.bodyXs(widget.mutedColor),
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (student.status.isNotEmpty)
+                        Text(
+                          student.status,
+                          style: AppTextStyles.bodyXs(widget.mutedColor),
+                        ),
+                      if (student.attendanceStatus.isNotEmpty)
+                        Text(
+                          student.attendanceStatus,
+                          style: AppTextStyles.bodyXs(
+                            student.attendanceStatus == 'Đã điểm danh QR'
+                                ? Theme.of(context).colorScheme.primary
+                                : widget.mutedColor,
+                          ),
+                        ),
+                    ],
                   ),
           );
         },

@@ -1,14 +1,98 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/api/api_client.dart';
 import '../lecturer_profile/profile_view_model.dart';
 import '../lecturer_profile/widgets/profile_contact_editor.dart';
 import '../lecturer_profile/widgets/profile_info_section.dart';
 
-class StudentProfileContent extends StatelessWidget {
+class StudentProfileContent extends StatefulWidget {
   const StudentProfileContent({super.key});
+
+  @override
+  State<StudentProfileContent> createState() => _StudentProfileContentState();
+}
+
+class _StudentProfileContentState extends State<StudentProfileContent> {
+  final TextEditingController _apiUrlController = TextEditingController();
+  bool _isChecking = false;
+  bool? _isConnected;
+  String? _connectionMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadApiUrl();
+  }
+
+  @override
+  void dispose() {
+    _apiUrlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadApiUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedUrl = prefs.getString('apiBaseUrl') ?? ApiClient.baseUrl;
+    if (!mounted) return;
+    _apiUrlController.text = savedUrl;
+  }
+
+  Future<void> _saveApiUrl() async {
+    final rawUrl = _apiUrlController.text.trim();
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null || !uri.hasAuthority || !{'http', 'https'}.contains(uri.scheme)) {
+      setState(() {
+        _isConnected = false;
+        _connectionMessage = 'Nhập địa chỉ máy chủ HTTP hoặc HTTPS hợp lệ.';
+      });
+      return;
+    }
+
+    final baseUrl = rawUrl.replaceFirst(RegExp(r'/+$'), '');
+    ApiClient.configureBaseUrl(baseUrl);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('apiBaseUrl', baseUrl);
+    if (!mounted) return;
+    setState(() {
+      _isConnected = null;
+      _connectionMessage = 'Đã lưu địa chỉ máy chủ.';
+    });
+  }
+
+  Future<void> _checkConnection() async {
+    await _saveApiUrl();
+    if (!mounted || _isConnected == false) return;
+
+    setState(() {
+      _isChecking = true;
+      _connectionMessage = 'Đang kiểm tra kết nối...';
+    });
+
+    try {
+      final result = await ApiClient().get('/health');
+      final connected =
+          result['ok'] == true && result['database']?.toString() == 'connected';
+      if (!mounted) return;
+      setState(() {
+        _isConnected = connected;
+        _connectionMessage = connected
+            ? 'Máy chủ và cơ sở dữ liệu đang hoạt động.'
+            : 'Máy chủ phản hồi nhưng cơ sở dữ liệu chưa kết nối.';
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isConnected = false;
+        _connectionMessage = error.message;
+      });
+    } finally {
+      if (mounted) setState(() => _isChecking = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -109,6 +193,93 @@ class StudentProfileContent extends StatelessWidget {
                 value: profile.accountStatus,
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colors.card,
+              borderRadius: BorderRadius.circular(AppColors.radiusLg),
+              border: Border.all(color: colors.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.dns_outlined, color: colors.primary),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Máy chủ API',
+                      style: TextStyle(
+                        color: colors.foreground,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _apiUrlController,
+                  keyboardType: TextInputType.url,
+                  decoration: InputDecoration(
+                    hintText: 'http://192.168.1.20:3000',
+                    prefixIcon: const Icon(Icons.link),
+                    filled: true,
+                    fillColor: colors.background,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: colors.border),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _isChecking ? null : _checkConnection,
+                        icon: _isChecking
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.sync),
+                        label: const Text('Kiểm tra'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_connectionMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      if (_isConnected == true)
+                        Icon(Icons.check_circle, color: colors.success)
+                      else if (_isConnected == false)
+                        Icon(Icons.error_outline, color: colors.danger)
+                      else
+                        Icon(Icons.info_outline, color: colors.info),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _connectionMessage!,
+                          style: TextStyle(
+                            color: _isConnected == false
+                                ? colors.danger
+                                : _isConnected == true
+                                    ? colors.success
+                                    : colors.foreground,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
           ),
           const SizedBox(height: 20),
           OutlinedButton(

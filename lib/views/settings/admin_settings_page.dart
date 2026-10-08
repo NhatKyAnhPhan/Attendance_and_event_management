@@ -150,7 +150,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                       keyboardType: TextInputType.url,
                       decoration: InputDecoration(
                         labelText: 'Địa chỉ API',
-                        hintText: 'http://127.0.0.1:3001',
+                        hintText: 'http://192.168.1.10:3000',
                         prefixIcon: const Icon(Icons.link),
                         filled: true,
                         fillColor: colors.background,
