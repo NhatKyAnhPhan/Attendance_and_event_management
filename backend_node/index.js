@@ -58,6 +58,75 @@ function isValidEventTimeRange(startTime, endTime, { requireFutureStart = false,
     && (!requireFutureEnd || end > now);
 }
 
+const eventBenefitTypes = new Set([
+  'Điểm rèn luyện',
+  'Điểm công tác xã hội',
+  'Chứng nhận',
+  'Khác',
+]);
+
+function validateEventContent(body) {
+  const description = typeof body.description === 'string' ? body.description.trim() : '';
+  const benefits = body.benefits === undefined ? [] : body.benefits;
+  const rules = body.rules === undefined ? [] : body.rules;
+  if (description.length > 1000) {
+    return { message: 'Mô tả sự kiện không được vượt quá 1.000 ký tự.' };
+  }
+  if (!Array.isArray(benefits) || benefits.length > 20) {
+    return { message: 'Sự kiện có thể có tối đa 20 quyền lợi.' };
+  }
+  if (benefits.some((benefit) => !benefit || typeof benefit !== 'object'
+    || !eventBenefitTypes.has(benefit.type)
+    || !Number.isInteger(Number(benefit.points))
+    || Number(benefit.points) < 0
+    || typeof benefit.content !== 'string'
+    || !benefit.content.trim()
+    || benefit.content.trim().length > 500)) {
+    return { message: 'Thông tin quyền lợi không hợp lệ.' };
+  }
+  if (!Array.isArray(rules) || rules.length > 30
+    || rules.some((rule) => typeof rule !== 'string'
+      || !rule.trim()
+      || rule.trim().length > 500)) {
+    return { message: 'Nội quy không hợp lệ (tối đa 30 nội dung, mỗi nội dung 500 ký tự).' };
+  }
+  return {
+    value: {
+      description,
+      benefits: benefits.map((benefit) => ({
+        type: benefit.type,
+        points: Number(benefit.points),
+        content: benefit.content.trim(),
+      })),
+      rules: rules.map((rule) => rule.trim()),
+    },
+  };
+}
+
+async function replaceEventContent(connection, eventId, content) {
+  await connection.execute(
+    'UPDATE sukien SET Mota = ? WHERE Masukien = ?',
+    [content.description, eventId],
+  );
+  await connection.execute('DELETE FROM quyenloi WHERE Masukien = ?', [eventId]);
+  await connection.execute('DELETE FROM noiquy WHERE Masukien = ?', [eventId]);
+
+  for (const benefit of content.benefits) {
+    await connection.execute(
+      `INSERT INTO quyenloi (Maquyenloi, Masukien, Loaiquyenloi, Sodiem, Noidung)
+       VALUES (?, ?, ?, ?, ?)`,
+      [generateRecordId('QL'), eventId, benefit.type, benefit.points, benefit.content],
+    );
+  }
+  for (const [index, rule] of content.rules.entries()) {
+    await connection.execute(
+      `INSERT INTO noiquy (Manoiquy, Masukien, Thutu, Noidung)
+       VALUES (?, ?, ?, ?)`,
+      [generateRecordId('NQ'), eventId, index + 1, rule],
+    );
+  }
+}
+
 function normalizeDateTime(value) {
   if (typeof value !== 'string') return null;
   const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(value.trim());
@@ -141,6 +210,13 @@ app.get('/', (_request, response) => {
   });
 });
 
+// Quy đổi các tên vai trò đồng nghĩa trong CSDL về tên mà các route đang kiểm tra.
+function normalizeRole(role) {
+  const value = String(role || '').trim();
+  if (value.toLowerCase() === 'công nhân viên') return 'Nhân viên';
+  return value;
+}
+
 function requireAuth(request, response, next) {
   const header = request.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
@@ -151,6 +227,7 @@ function requireAuth(request, response, next) {
 
   try {
     request.auth = jwt.verify(token, jwtSecret);
+    request.auth.role = normalizeRole(request.auth.role);
     return next();
   } catch (_error) {
     return response.status(401).json({ message: 'Phiên đăng nhập đã hết hạn.' });
@@ -169,6 +246,23 @@ function requireRole(...roles) {
     }
     return next();
   };
+}
+
+// Vai trò được quản lý sự kiện; người không phải admin chỉ thao tác trên đơn vị mình phụ trách.
+const eventManagerRoles = ['Quản trị viên', 'admin', 'Ban tổ chức', 'event_organizer', 'Cán bộ', 'Nhân viên'];
+
+function isAdminAuth(auth) {
+  return ['quản trị viên', 'admin'].includes(String(auth.role || '').trim().toLowerCase());
+}
+
+// Kiểm tra người dùng có phụ trách đơn vị tổ chức (DonVi.MaNV) hay không.
+async function managesUnit(executor, auth, unitId) {
+  if (isAdminAuth(auth)) return true;
+  const [[unit]] = await executor.execute(
+    'SELECT 1 AS ok FROM donvi WHERE Madv = ? AND Manv = ? LIMIT 1',
+    [unitId, auth.sub],
+  );
+  return Boolean(unit);
 }
 
 // Kiểm tra nhanh trạng thái kết nối giữa API và cơ sở dữ liệu.
@@ -246,9 +340,11 @@ app.get('/api/me', requireAuth, async (request, response) => {
   try {
     const [rows] = await pool.execute(
             `SELECT nd.Mand AS id, nd.Hoten AS name,
-              nd.Email AS email, nd.Vaitro AS role,
-              nd.Trangthaind AS status,
-              sv.Lop AS className, sv.Chuyennganh AS major,
+                    nd.Email AS email, nd.Vaitro AS role, nd.SDT AS phone,
+                    nd.DiaChi AS address, nd.NgaySinh AS birthDate,
+                    nd.GioiTinh AS gender, nd.QueQuan AS hometown,
+                    nd.Trangthaind AS status,
+                    sv.Lop AS className, sv.Chuyennganh AS major,
               gv.Bomon AS subjectDepartment, cnv.Chucvu AS position
              FROM nguoidung nd
              LEFT JOIN sinhvien sv ON sv.Masv = nd.Mand
@@ -335,6 +431,7 @@ app.get('/api/classes', requireAuth, async (request, response) => {
       `SELECT lhp.Malop AS id, lhp.Malop AS code,
               lhp.Tenlop AS name, lhp.Hocky AS semester,
               lhp.Thoigianbatdau AS startTime, lhp.Magv AS lecturerId,
+              lhp.Tinchi AS credits, lhp.Soluongtoida AS capacity,
               COALESCE(nd.Hoten, '') AS lecturerName,
               COUNT(DISTINCT tvl.Masv) AS studentCount,
               COALESCE(attendance.present, 0) AS present,
@@ -369,7 +466,8 @@ app.get('/api/classes', requireAuth, async (request, response) => {
            AND mine.Masv = ?
        )
       GROUP BY lhp.Malop, lhp.Tenlop, lhp.Hocky,
-          lhp.Thoigianbatdau, lhp.Magv, nd.Hoten, attendance.present,
+          lhp.Thoigianbatdau, lhp.Magv, lhp.Tinchi, lhp.Soluongtoida,
+          nd.Hoten, attendance.present,
                 attendance.late, attendance.absent, attendance.sessions
        ORDER BY lhp.Malop`,
       [request.auth.sub, request.auth.sub],
@@ -455,7 +553,7 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
     try {
       [rules] = await pool.execute(
       [
-        "SELECT Thutu AS sortOrder, Trangthainoiquy AS text",
+        "SELECT Thutu AS sortOrder, Noidung AS text",
         "FROM noiquy WHERE Masukien = ? ORDER BY Thutu",
       ].join(' '),
       [event.id],
@@ -467,6 +565,236 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
   } catch (error) {
     console.error('Event details error:', error.message);
     return response.status(500).json({ message: 'Không thể tải chi tiết sự kiện.' });
+  }
+});
+
+app.get('/api/events/:eventId/feedback', requireAuth, async (request, response) => {
+  try {
+    const [[summary]] = await pool.execute(
+      `SELECT COALESCE(AVG(SoSao), 0) AS averageRating,
+              COUNT(*) AS ratingCount
+       FROM danhgia WHERE Masukien = ?`,
+      [request.params.eventId],
+    );
+    const [items] = await pool.execute(
+      `SELECT dg.SoSao AS rating,
+              COALESCE(NULLIF(dg.Noidung, ''), ph.Noidung, '') AS comment,
+              COALESCE(dg.Thoigiandanhgia, ph.Thoigiangui) AS createdAt
+       FROM danhgia dg
+       LEFT JOIN phanhoi ph
+         ON ph.Masv = dg.Masv AND ph.Masukien = dg.Masukien
+       WHERE dg.Masukien = ?
+       ORDER BY dg.Thoigiandanhgia DESC`,
+      [request.params.eventId],
+    );
+    return response.json({
+      averageRating: Number(summary.averageRating),
+      ratingCount: Number(summary.ratingCount),
+      items,
+    });
+  } catch (error) {
+    console.error('Event feedback error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải phản hồi sự kiện.' });
+  }
+});
+
+app.post('/api/events/:eventId/feedback', requireAuth, async (request, response) => {
+  const { rating, comment } = request.body || {};
+  if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
+    return response.status(403).json({ message: 'Chỉ sinh viên mới được gửi đánh giá.' });
+  }
+  if (!Number.isInteger(Number(rating))
+    || Number(rating) < 1
+    || Number(rating) > 5
+    || typeof comment !== 'string'
+    || !comment.trim()
+    || comment.trim().length > 2000) {
+    return response.status(400).json({
+      message: 'Vui lòng chọn từ 1 đến 5 sao và nhập phản hồi tối đa 2.000 ký tự.',
+    });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [[event]] = await connection.execute(
+      `SELECT Masukien AS id FROM sukien
+       WHERE Masukien = ? AND (Thoigianketthuc <= NOW() OR Trangthaisukien = 'Đã đóng')
+       FOR UPDATE`,
+      [request.params.eventId],
+    );
+    if (!event) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Chỉ có thể đánh giá sự kiện đã kết thúc hoặc đã đóng.',
+      });
+    }
+    const [[registration]] = await connection.execute(
+      `SELECT Masv FROM dangkysukien
+       WHERE Masukien = ? AND Masv = ?
+         AND Trangthaidangky NOT IN ('Đã hủy', 'Từ chối')
+       LIMIT 1`,
+      [event.id, request.auth.sub],
+    );
+    if (!registration) {
+      await connection.rollback();
+      return response.status(403).json({
+        message: 'Bạn cần đăng ký sự kiện trước khi gửi đánh giá.',
+      });
+    }
+
+    const normalizedComment = comment.trim();
+    await connection.execute(
+      `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Masukien)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
+         Thoigiandanhgia = CURRENT_TIMESTAMP`,
+      [
+        generateRecordId('DG'),
+        Number(rating),
+        normalizedComment,
+        request.auth.sub,
+        event.id,
+      ],
+    );
+    await connection.execute(
+      `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Masukien)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
+      [
+        generateRecordId('PH'),
+        normalizedComment,
+        request.auth.sub,
+        event.id,
+      ],
+    );
+    await connection.commit();
+    return response.json({ message: 'Gửi đánh giá thành công.' });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Submit event feedback error:', error.message);
+    return response.status(500).json({ message: 'Không thể gửi đánh giá sự kiện.' });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+app.get('/api/classes/:classId/feedback', requireAuth, async (request, response) => {
+  try {
+    const [[classInfo]] = await pool.execute(
+      'SELECT Malop FROM lophocphan WHERE Malop = ? LIMIT 1',
+      [request.params.classId],
+    );
+    if (!classInfo) {
+      return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+    }
+    const [[summary]] = await pool.execute(
+      `SELECT COALESCE(AVG(SoSao), 0) AS averageRating,
+              COUNT(*) AS ratingCount
+       FROM danhgia WHERE Malop = ?`,
+      [request.params.classId],
+    );
+    const [items] = await pool.execute(
+      `SELECT dg.SoSao AS rating,
+              COALESCE(NULLIF(dg.Noidung, ''), ph.Noidung, '') AS comment,
+              COALESCE(dg.Thoigiandanhgia, ph.Thoigiangui) AS createdAt
+       FROM danhgia dg
+       LEFT JOIN phanhoi ph
+         ON ph.Masv = dg.Masv AND ph.Malop = dg.Malop
+       WHERE dg.Malop = ?
+       ORDER BY dg.Thoigiandanhgia DESC`,
+      [request.params.classId],
+    );
+    return response.json({
+      averageRating: Number(summary.averageRating),
+      ratingCount: Number(summary.ratingCount),
+      items,
+    });
+  } catch (error) {
+    console.error('Class feedback error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải phản hồi lớp học.' });
+  }
+});
+
+app.post('/api/classes/:classId/feedback', requireAuth, async (request, response) => {
+  const { rating, comment } = request.body || {};
+  if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
+    return response.status(403).json({ message: 'Chỉ sinh viên mới được gửi đánh giá.' });
+  }
+  if (!Number.isInteger(Number(rating))
+    || Number(rating) < 1
+    || Number(rating) > 5
+    || typeof comment !== 'string'
+    || !comment.trim()
+    || comment.trim().length > 2000) {
+    return response.status(400).json({
+      message: 'Vui lòng chọn từ 1 đến 5 sao và nhập phản hồi tối đa 2.000 ký tự.',
+    });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [[classInfo]] = await connection.execute(
+      'SELECT Malop AS id FROM lophocphan WHERE Malop = ? FOR UPDATE',
+      [request.params.classId],
+    );
+    if (!classInfo) {
+      await connection.rollback();
+      return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+    }
+    const [[membership]] = await connection.execute(
+      `SELECT Masv FROM thanhvienlop
+       WHERE Malop = ? AND Masv = ? AND TrangThaiThanhVien <> 'Đã rút'
+       LIMIT 1`,
+      [classInfo.id, request.auth.sub],
+    );
+    if (!membership) {
+      await connection.rollback();
+      return response.status(403).json({
+        message: 'Bạn cần là thành viên của lớp trước khi gửi đánh giá.',
+      });
+    }
+
+    const normalizedComment = comment.trim();
+    await connection.execute(
+      `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Malop)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
+         Thoigiandanhgia = CURRENT_TIMESTAMP`,
+      [
+        generateRecordId('DG'),
+        Number(rating),
+        normalizedComment,
+        request.auth.sub,
+        classInfo.id,
+      ],
+    );
+    await connection.execute(
+      `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Malop)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
+      [
+        generateRecordId('PH'),
+        normalizedComment,
+        request.auth.sub,
+        classInfo.id,
+      ],
+    );
+    await connection.commit();
+    return response.json({ message: 'Gửi đánh giá lớp học thành công.' });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Submit class feedback error:', error.message);
+    return response.status(500).json({ message: 'Không thể gửi đánh giá lớp học.' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -800,7 +1128,7 @@ async function checkInEventAttendance(request, response, payload, deviceId) {
     if (!event || Number(event.isOpen) !== 1) {
       await connection.rollback();
       return response.status(410).json({
-        message: 'Sự kiện chưa diễn ra, đã kết thúc hoặc đã bị đóng.',
+        message: 'QR được nhận diện nhưng sự kiện chưa đến giờ điểm danh, đã kết thúc hoặc đã bị đóng.',
       });
     }
 
@@ -1477,9 +1805,9 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
 
 // Các tuyến quản lý sự kiện và đơn vị dành cho quản trị viên, ban tổ chức.
 // Lấy danh sách sự kiện phục vụ màn hình quản lý.
-app.get('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên'), async (_request, response) => {
+app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await pool.execute(
             `SELECT sk.Masukien AS id, sk.Tensukien AS name,
               sk.Madv AS organizerId,
               sk.Diadiem AS location, sk.Thoigianbatdau AS startTime,
@@ -1489,10 +1817,14 @@ app.get('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 
               COUNT(dk.Masv) AS registeredCount
        FROM sukien sk
        LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
+       WHERE ? = 1 OR EXISTS (
+         SELECT 1 FROM donvi dv WHERE dv.Madv = sk.Madv AND dv.Manv = ?
+       )
       GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, sk.Diadiem,
                sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien,
                 sk.Soluongtoida
        ORDER BY sk.Thoigianbatdau`,
+      [isAdminAuth(request.auth) ? 1 : 0, request.auth.sub],
     );
     return response.json({ items: rows });
   } catch (error) {
@@ -1781,11 +2113,14 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
 });
 
 // Lấy danh sách đơn vị để dùng trong biểu mẫu sự kiện.
-app.get('/api/organizer/units', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên'), async (_request, response) => {
+app.get('/api/organizer/units', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await pool.execute(
       `SELECT Madv AS id, Tendv AS name
-       FROM donvi ORDER BY Tendv`,
+       FROM donvi
+       WHERE ? = 1 OR Manv = ?
+       ORDER BY Tendv`,
+      [isAdminAuth(request.auth) ? 1 : 0, request.auth.sub],
     );
     return response.json({ items: rows });
   } catch (error) {
@@ -1795,11 +2130,13 @@ app.get('/api/organizer/units', requireAuth, requireRole('Quản trị viên', '
 });
 
 // Kiểm tra dữ liệu biểu mẫu và tạo sự kiện mới trong cơ sở dữ liệu.
-app.post('/api/organizer/events', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'event_organizer'), async (request, response) => {
-  const { name, organizerId, startTime, endTime, location, capacity } = request.body || {};
+app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
+  const body = request.body || {};
+  const { name, organizerId, startTime, endTime, location, capacity } = body;
   const parsedCapacity = Number(capacity);
   const parsedStart = new Date(startTime);
   const parsedEnd = new Date(endTime);
+  const contentResult = validateEventContent(body);
 
   if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
       || parsedCapacity <= 0
@@ -1808,21 +2145,45 @@ app.post('/api/organizer/events', requireAuth, requireRole('Quản trị viên',
       message: 'Thời gian sự kiện phải bắt đầu trong tương lai và kéo dài không quá 1 ngày.',
     });
   }
+  if (contentResult.message) {
+    return response.status(400).json({ message: contentResult.message });
+  }
 
   try {
+    if (!await managesUnit(pool, request.auth, organizerId.trim())) {
+      return response.status(403).json({
+        message: 'Bạn chỉ được tạo sự kiện cho đơn vị mình phụ trách.',
+      });
+    }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const id = generateRecordId('EV');
+      const connection = await pool.getConnection();
       try {
-        await pool.execute(
+        await connection.beginTransaction();
+        await connection.execute(
           `INSERT INTO sukien
-           (Masukien, Tensukien, Madv, Thoigianbatdau,
+           (Masukien, Tensukien, Madv, Mota, Thoigianbatdau,
             Thoigianketthuc, Diadiem, Soluongtoida, Trangthaisukien)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra')`,
-          [id, name.trim(), organizerId.trim(), parsedStart, parsedEnd, location.trim(), parsedCapacity],
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra')`,
+          [
+            id,
+            name.trim(),
+            organizerId.trim(),
+            contentResult.value.description,
+            parsedStart,
+            parsedEnd,
+            location.trim(),
+            parsedCapacity,
+          ],
         );
+        await replaceEventContent(connection, id, contentResult.value);
+        await connection.commit();
         return response.status(201).json({ id, message: 'Tạo sự kiện thành công.' });
       } catch (error) {
+        await connection.rollback();
         if (error.code !== 'ER_DUP_ENTRY' || attempt === 2) throw error;
+      } finally {
+        connection.release();
       }
     }
   } catch (error) {
@@ -1838,11 +2199,15 @@ app.post('/api/organizer/events', requireAuth, requireRole('Quản trị viên',
 });
 
 // Kiểm tra dữ liệu biểu mẫu và cập nhật sự kiện theo mã định danh.
-app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'event_organizer'), async (request, response) => {
-  const { name, organizerId, startTime, endTime, location, capacity } = request.body || {};
+app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
+  const body = request.body || {};
+  const { name, organizerId, startTime, endTime, location, capacity } = body;
   const parsedCapacity = Number(capacity);
   const parsedStart = new Date(startTime);
   const parsedEnd = new Date(endTime);
+  const hasEventContent = ['description', 'benefits', 'rules']
+    .some((field) => Object.hasOwn(body, field));
+  const contentResult = validateEventContent(body);
 
   if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
       || parsedCapacity <= 0
@@ -1851,13 +2216,17 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị
       message: 'Thời gian sự kiện phải hợp lệ, còn thời gian diễn ra và kéo dài không quá 1 ngày.',
     });
   }
+  if (hasEventContent && contentResult.message) {
+    return response.status(400).json({ message: contentResult.message });
+  }
 
   try {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
       const [[existing]] = await connection.execute(
-        `SELECT Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
+        `SELECT Madv AS organizerId,
+                Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
                 Trangthaisukien AS status,
                 (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
          FROM sukien WHERE Masukien = ? FOR UPDATE`,
@@ -1866,6 +2235,13 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị
       if (!existing) {
         await connection.rollback();
         return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+      }
+      if (!await managesUnit(connection, request.auth, existing.organizerId)
+          || !await managesUnit(connection, request.auth, organizerId.trim())) {
+        await connection.rollback();
+        return response.status(403).json({
+          message: 'Bạn chỉ được sửa sự kiện của đơn vị mình phụ trách.',
+        });
       }
       if (existing.status === 'Đã đóng' || Number(existing.isArchived)) {
         await connection.rollback();
@@ -1911,6 +2287,9 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị
          WHERE Masukien = ?`,
       [name.trim(), organizerId.trim(), parsedStart, parsedEnd, location.trim(), parsedCapacity, request.params.eventId],
       );
+      if (hasEventContent) {
+        await replaceEventContent(connection, request.params.eventId, contentResult.value);
+      }
       await connection.commit();
       if (result.affectedRows === 0) {
         return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
@@ -1931,8 +2310,16 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị
   }
 });
 
-app.post('/api/organizer/events/:eventId/close', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'event_organizer', 'Cán bộ', 'Nhân viên'), async (request, response) => {
+app.post('/api/organizer/events/:eventId/close', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   try {
+    const [[target]] = await pool.execute(
+      'SELECT Madv AS organizerId FROM sukien WHERE Masukien = ? LIMIT 1',
+      [request.params.eventId],
+    );
+    if (!target) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    if (!await managesUnit(pool, request.auth, target.organizerId)) {
+      return response.status(403).json({ message: 'Bạn không phụ trách sự kiện này.' });
+    }
     const [result] = await pool.execute(
       `UPDATE sukien SET Trangthaisukien = 'Đã đóng'
        WHERE Masukien = ? AND COALESCE(Trangthaisukien, '') <> 'Đã đóng'`,
@@ -1954,18 +2341,22 @@ app.post('/api/organizer/events/:eventId/close', requireAuth, requireRole('Quả
 });
 
 // Xóa sự kiện sau khi kiểm tra mã sự kiện và ràng buộc dữ liệu liên quan.
-app.delete('/api/organizer/events/:eventId', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+app.delete('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   let connection;
   try {
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[event]] = await connection.execute(
-      'SELECT Masukien FROM sukien WHERE Masukien = ? FOR UPDATE',
+      'SELECT Masukien, Madv AS organizerId FROM sukien WHERE Masukien = ? FOR UPDATE',
       [request.params.eventId],
     );
     if (!event) {
       await connection.rollback();
       return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    if (!await managesUnit(connection, request.auth, event.organizerId)) {
+      await connection.rollback();
+      return response.status(403).json({ message: 'Bạn không phụ trách sự kiện này.' });
     }
     const [[registrationCount]] = await connection.execute(
       'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masukien = ?',
@@ -2127,7 +2518,9 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
               mh.Mabomon AS majorId, bm.Tenbomon AS majorName,
               bm.Maloptat AS majorAbbreviation, lhp.Makhoa AS cohortCode,
               lhp.Mamon AS subjectId, mh.Mamon AS subjectCode,
-              mh.Tenmon AS subjectName, lhp.Thoigianbatdau AS startTime,
+              mh.Tenmon AS subjectName, lhp.Tinchi AS credits,
+              lhp.Soluongtoida AS capacity,
+              lhp.Thoigianbatdau AS startTime,
               lhp.Hocky AS semester,
               lhp.Trangthailop AS status,
               COALESCE(nd.Hoten, '') AS lecturerName,
@@ -2140,7 +2533,8 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
        LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
        GROUP BY lhp.Malop, lhp.Tenlop, lhp.Magv, lhp.Madv, mh.Mabomon,
                 bm.Tenbomon, bm.Maloptat, lhp.Makhoa, lhp.Mamon, mh.Mamon,
-                mh.Tenmon, lhp.Thoigianbatdau, lhp.Hocky, lhp.Trangthailop, nd.Hoten
+                mh.Tenmon, lhp.Tinchi, lhp.Soluongtoida,
+                lhp.Thoigianbatdau, lhp.Hocky, lhp.Trangthailop, nd.Hoten
        ORDER BY lhp.Malop`,
     );
     return response.json({ items: rows });
@@ -2292,6 +2686,7 @@ app.get('/api/admin/class-options', requireAuth, requireRole('Quản trị viên
     );
     const [subjects] = await pool.query(
       `SELECT mh.Mamon AS id, mh.Mamon AS code, mh.Tenmon AS name,
+              mh.Sotinchi AS credits,
               mh.Hocky AS semester, bm.Mabomon AS majorId,
               bm.Tenbomon AS majorName, bm.Madv AS departmentId
        FROM monhoc mh
@@ -2328,15 +2723,20 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
     semester,
     startTime,
     lecturerId = null,
+    capacity,
   } = request.body || {};
   const normalizedName = typeof name === 'string' ? name.trim() : '';
   const normalizedSubjectId = typeof subjectId === 'string' ? subjectId.trim() : '';
   const normalizedCohortCode = typeof cohortCode === 'string' ? cohortCode.trim() : '';
   const normalizedStartTime = normalizeDateTime(startTime);
+  const parsedCapacity = Number(capacity);
   if (!normalizedName || !normalizedSubjectId || !normalizedCohortCode || !normalizedStartTime) {
     return response.status(400).json({
       message: 'Tên lớp, môn học, khóa sinh viên và thời gian bắt đầu là bắt buộc.',
     });
+  }
+  if (!Number.isInteger(parsedCapacity) || parsedCapacity < 1) {
+    return response.status(400).json({ message: 'Sĩ số tối đa phải là số nguyên lớn hơn 0.' });
   }
   const requestedSemester = typeof semester === 'string' ? semester.trim() : '';
   if (requestedSemester && !['HK1', 'HK2', 'HK3'].includes(requestedSemester)) {
@@ -2370,10 +2770,12 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
 
     await pool.execute(
       `INSERT INTO lophocphan
-       (Malop, Magv, Madv, Mamon, Makhoa, Tenlop, Hocky, Trangthailop, Thoigianbatdau)
-       VALUES ('', ?, ?, ?, ?, ?, ?, 'Đang học', ?)`,
+       (Malop, Magv, Madv, Mamon, Makhoa, Tenlop, Hocky,
+        Soluongtoida, Trangthailop, Thoigianbatdau)
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, 'Đang học', ?)`,
       [normalizedLecturerId, subject.departmentId, normalizedSubjectId,
-        normalizedCohortCode, normalizedName, normalizedSemester, normalizedStartTime],
+        normalizedCohortCode, normalizedName, normalizedSemester,
+        parsedCapacity, normalizedStartTime],
     );
     return response.status(201).json({ message: 'Tạo lớp thành công.' });
   } catch (error) {
@@ -2396,11 +2798,16 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
     semester,
     startTime,
     lecturerId = null,
+    capacity,
   } = request.body || {};
+  const parsedCapacity = Number(capacity);
   if (typeof name !== 'string' || !name.trim()) {
     return response.status(400).json({
       message: 'Vui lòng nhập tên lớp hợp lệ.',
     });
+  }
+  if (!Number.isInteger(parsedCapacity) || parsedCapacity < 1) {
+    return response.status(400).json({ message: 'Sĩ số tối đa phải là số nguyên lớn hơn 0.' });
   }
   const normalizedStartTime = normalizeDateTime(startTime);
   if (!['HK1', 'HK2', 'HK3'].includes(semester)
@@ -2432,11 +2839,29 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
         message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể chỉnh sửa.',
       });
     }
+    const [[memberCount]] = await connection.execute(
+      'SELECT COUNT(*) AS total FROM thanhvienlop WHERE Malop = ?',
+      [request.params.classId],
+    );
+    if (parsedCapacity < Number(memberCount.total)) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Sĩ số tối đa không thể thấp hơn số sinh viên hiện có.',
+      });
+    }
     await connection.execute(
       `UPDATE lophocphan
-         SET Magv = ?, Tenlop = ?, Hocky = ?, Thoigianbatdau = ?
+         SET Magv = ?, Tenlop = ?, Hocky = ?, Thoigianbatdau = ?,
+             Soluongtoida = ?
        WHERE Malop = ?`,
-        [normalizedLecturerId, name.trim(), semester, normalizedStartTime, request.params.classId],
+      [
+        normalizedLecturerId,
+        name.trim(),
+        semester,
+        normalizedStartTime,
+        parsedCapacity,
+        request.params.classId,
+      ],
     );
     await connection.commit();
     return response.json({ message: 'Cập nhật lớp thành công.' });

@@ -122,14 +122,15 @@ class _ClassesPageState extends State<ClassesPage> {
                   subtitle: Text(
                     '${item.code}  |  ${item.lecturerName}\n'
                     '${item.semester} · ${_dateTimeLabel(item.startTime)}\n'
-                    '${item.subjectCode} · ${item.majorName} · Khóa ${item.cohortCode}'
+                    '${item.subjectCode} · ${item.majorName} · Khóa ${item.cohortCode}\n'
+                    '${item.credits} tín chỉ · Sĩ số ${item.studentCount}/${item.capacity}'
                     '${item.isArchived ? '\n${item.isClosed ? 'Đã đóng' : 'Đã mở quá 1 năm'}' : ''}',
                   ),
                   isThreeLine: true,
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('${item.studentCount} SV'),
+                      Text('${item.studentCount}/${item.capacity} SV'),
                       if (_importingClassIds.contains(item.id))
                         const Padding(
                           padding: EdgeInsets.all(12),
@@ -451,6 +452,9 @@ class _ClassesPageState extends State<ClassesPage> {
     if (!context.mounted) return;
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: item?.name ?? '');
+    final capacityController = TextEditingController(
+      text: item?.capacity.toString() ?? '50',
+    );
     ClassSubjectOption? selectedSubject;
     for (final subject in controller.subjects) {
       if (subject.id == item?.subjectId) {
@@ -492,7 +496,7 @@ class _ClassesPageState extends State<ClassesPage> {
                                     DropdownMenuItem<ClassSubjectOption>(
                                       value: subject,
                                       child: Text(
-                                        '${subject.code} · ${subject.name}',
+                                        '${subject.code} · ${subject.name} · ${subject.credits} tín chỉ',
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
@@ -513,7 +517,19 @@ class _ClassesPageState extends State<ClassesPage> {
                             labelText: 'Môn học',
                           ),
                           child: Text(
-                            '${item.subjectCode} · ${selectedSubject?.name ?? item.name}',
+                            '${item.subjectCode} · ${selectedSubject?.name ?? item.name}'
+                            '\n${item.credits} tín chỉ',
+                          ),
+                        ),
+                      if (item == null && selectedSubject != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Môn học có ${selectedSubject!.credits} tín chỉ.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                           ),
                         ),
                       const SizedBox(height: 12),
@@ -526,6 +542,22 @@ class _ClassesPageState extends State<ClassesPage> {
                             value == null || value.trim().isEmpty
                             ? 'Vui lòng nhập tên lớp'
                             : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: capacityController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Sĩ số tối đa',
+                          suffixText: 'sinh viên',
+                        ),
+                        validator: (value) {
+                          final capacity = int.tryParse(value?.trim() ?? '');
+                          if (capacity == null || capacity < 1) {
+                            return 'Nhập số lượng sinh viên lớn hơn 0.';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 12),
                       InputDecorator(
@@ -635,6 +667,7 @@ class _ClassesPageState extends State<ClassesPage> {
                         semester: semesterForDate(startTime!),
                         startTime: _formatDateTime(startTime!),
                         lecturerId: lecturerId,
+                        capacity: int.parse(capacityController.text.trim()),
                       );
                     } else {
                       await controller.updateClass(
@@ -643,6 +676,7 @@ class _ClassesPageState extends State<ClassesPage> {
                         semester: semesterForDate(startTime!),
                         startTime: _formatDateTime(startTime!),
                         lecturerId: lecturerId,
+                        capacity: int.parse(capacityController.text.trim()),
                       );
                     }
                     if (dialogContext.mounted) Navigator.pop(dialogContext);
@@ -662,6 +696,7 @@ class _ClassesPageState extends State<ClassesPage> {
       ),
     );
     nameController.dispose();
+    capacityController.dispose();
   }
 
   Future<DateTime?> _pickStartTime(

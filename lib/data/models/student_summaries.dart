@@ -4,6 +4,9 @@ class StudentClassSummary {
   final String lecturer;
   final String time;
   final String room;
+  final int studentCount;
+  final int capacity;
+  final int credits;
   final int present;
   final int late;
   final int absent;
@@ -16,6 +19,9 @@ class StudentClassSummary {
     required this.lecturer,
     required this.time,
     required this.room,
+    this.studentCount = 0,
+    this.capacity = 0,
+    this.credits = 0,
     required this.present,
     required this.late,
     required this.absent,
@@ -31,6 +37,9 @@ class StudentClassSummary {
       lecturer: json['lecturerName']?.toString() ?? '',
       time: json['schedule']?.toString() ?? '',
       room: json['room']?.toString() ?? '',
+      studentCount: _parseCount(json['studentCount']),
+      capacity: _parseCount(json['capacity']),
+      credits: _parseCount(json['credits']),
       present: _parseCount(json['present']),
       late: _parseCount(json['late']),
       absent: _parseCount(json['absent']),

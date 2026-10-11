@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:get/get.dart';
 
 import '../data/models/class_model.dart';
@@ -15,6 +17,7 @@ class AdminClassesController extends GetxController {
   final RxList<ClassSubjectOption> subjects = <ClassSubjectOption>[].obs;
   final RxBool loading = false.obs;
   final RxString error = ''.obs;
+  Timer? _refreshTimer;
 
   @override
   void onInit() {
@@ -22,6 +25,13 @@ class AdminClassesController extends GetxController {
     load();
     loadLecturers();
     loadClassOptions();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => load());
+  }
+
+  @override
+  void onClose() {
+    _refreshTimer?.cancel();
+    super.onClose();
   }
 
   Future<void> load() async {
@@ -62,6 +72,7 @@ class AdminClassesController extends GetxController {
     required String semester,
     required String startTime,
     required String? lecturerId,
+    required int capacity,
   }) async {
     await _repository.createClass(
       name: name,
@@ -70,6 +81,7 @@ class AdminClassesController extends GetxController {
       semester: semester,
       startTime: startTime,
       lecturerId: lecturerId,
+      capacity: capacity,
     );
     await load();
   }
@@ -80,6 +92,7 @@ class AdminClassesController extends GetxController {
     required String semester,
     required String startTime,
     required String? lecturerId,
+    required int capacity,
   }) async {
     await _repository.updateClass(
       id: id,
@@ -87,6 +100,7 @@ class AdminClassesController extends GetxController {
       semester: semester,
       startTime: startTime,
       lecturerId: lecturerId,
+      capacity: capacity,
     );
     await load();
   }

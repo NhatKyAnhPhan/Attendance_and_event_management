@@ -140,6 +140,8 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       _state = _ScanState.idle;
       _errorMessage = null;
       _faceDetected = false;
+      _faceBusy = false;
+      _checkInBusy = false;
       _checkInDetails = null;
     });
   }
@@ -235,8 +237,8 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     if (token.isEmpty) return;
 
     _checkInBusy = true;
-    await _qrController.stop();
     try {
+      await _qrController.stop();
       final deviceId = await _getDeviceId();
       final isEventQr = _isEventAttendanceToken(token);
       final Map<String, dynamic> result;
@@ -268,6 +270,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       if (!mounted) return;
       setState(() {
         _errorMessage = error.message;
+        _state = _ScanState.failed;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Không thể xử lý mã QR: $error';
         _state = _ScanState.failed;
       });
     }

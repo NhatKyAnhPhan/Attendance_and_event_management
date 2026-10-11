@@ -66,6 +66,95 @@ Future<void> _registerWithConflictHandling(
   }
 }
 
+Future<void> _showEventFeedbackDialog(
+  BuildContext context,
+  EventsController controller,
+  String eventId,
+) async {
+  final formKey = GlobalKey<FormState>();
+  final commentController = TextEditingController();
+  var rating = 5;
+
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Phản hồi và đánh giá sự kiện'),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    5,
+                    (index) => IconButton(
+                      tooltip: '${index + 1} sao',
+                      onPressed: () => setState(() => rating = index + 1),
+                      icon: Icon(
+                        index < rating ? Icons.star : Icons.star_border,
+                        color: const Color(0xFFF59E0B),
+                      ),
+                    ),
+                  ),
+                ),
+                TextFormField(
+                  controller: commentController,
+                  maxLines: 4,
+                  maxLength: 2000,
+                  decoration: const InputDecoration(
+                    labelText: 'Nội dung phản hồi',
+                    border: OutlineInputBorder(),
+                    alignLabelWithHint: true,
+                  ),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'Vui lòng nhập nội dung phản hồi.'
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              if (!formKey.currentState!.validate()) return;
+              try {
+                await controller.submitFeedback(
+                  eventId: eventId,
+                  rating: rating,
+                  comment: commentController.text.trim(),
+                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Đã gửi đánh giá sự kiện.')),
+                  );
+                }
+              } on ApiException catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(error.message)),
+                  );
+                }
+              }
+            },
+            child: const Text('Gửi'),
+          ),
+        ],
+      ),
+    ),
+  );
+  commentController.dispose();
+}
+
 // Tải chi tiết sự kiện và hiển thị modal để người dùng xem hoặc đăng ký.
 Future<void> _showEventDetails(
   BuildContext context,
@@ -229,6 +318,73 @@ Future<void> _showEventDetails(
                       ),
                     ),
                   ),
+                const SizedBox(height: 16),
+                Text(
+                  'Phản hồi và đánh giá',
+                  style: AppTextStyles.displayXs(c.foreground),
+                ),
+                const SizedBox(height: 8),
+                FutureBuilder<Map<String, dynamic>>(
+                  future: controller.getFeedback(event.id),
+                  builder: (context, feedbackSnapshot) {
+                    if (feedbackSnapshot.connectionState
+                        != ConnectionState.done) {
+                      return const LinearProgressIndicator();
+                    }
+                    if (feedbackSnapshot.hasError) {
+                      return Text(
+                        'Không tải được đánh giá: ${feedbackSnapshot.error}',
+                        style: AppTextStyles.bodySm(c.mutedForeground),
+                      );
+                    }
+                    final feedback = feedbackSnapshot.data ?? const {};
+                    final items = (feedback['items'] as List? ?? const [])
+                        .whereType<Map>()
+                        .map((item) => Map<String, dynamic>.from(item))
+                        .toList();
+                    final average =
+                        (feedback['averageRating'] as num?)?.toDouble() ?? 0;
+                    final count =
+                        (feedback['ratingCount'] as num?)?.toInt() ?? 0;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          count == 0
+                              ? 'Chưa có lượt đánh giá.'
+                              : '${average.toStringAsFixed(1)} / 5 sao · $count lượt đánh giá',
+                          style: AppTextStyles.bodySm(c.foreground),
+                        ),
+                        ...items.take(5).map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              '${List.filled((item['rating'] as num?)?.round() ?? 0, '★').join()}'
+                              '${List.filled(5 - ((item['rating'] as num?)?.round() ?? 0), '☆').join()}'
+                              '  ${item['comment'] ?? ''}',
+                              style: AppTextStyles.bodySm(c.mutedForeground),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                if (event.registered && event.isEnded) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showEventFeedbackDialog(
+                        context,
+                        controller,
+                        event.id,
+                      ),
+                      icon: const Icon(Icons.rate_review_outlined),
+                      label: const Text('Gửi phản hồi / sửa đánh giá'),
+                    ),
+                  ),
+                ],
                 if (!event.registered && !event.isEnded) ...[
                   const SizedBox(height: 20),
                   SizedBox(
@@ -286,9 +442,11 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
       if (controller.error.value.isNotEmpty && events.isEmpty) {
         return Center(child: Text(controller.error.value));
       }
-      return ListView(
-        padding: EdgeInsets.zero,
-        children: [
+      return RefreshIndicator(
+        onRefresh: controller.load,
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
@@ -357,7 +515,8 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
               ],
             ),
           ),
-        ],
+          ],
+        ),
       );
     });
   }

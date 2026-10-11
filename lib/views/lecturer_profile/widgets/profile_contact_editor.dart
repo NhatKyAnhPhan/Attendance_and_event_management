@@ -20,6 +20,10 @@ class ProfileContactEditor extends StatefulWidget {
     required this.phone,
     required this.address,
     required this.allowEditing,
+    this.allowEditingPersonalDetails = false,
+    this.birthDate = 'Chưa cập nhật',
+    this.gender = 'Chưa cập nhật',
+    this.hometown = 'Chưa cập nhật',
   });
 
   final AppColors colors;
@@ -28,6 +32,10 @@ class ProfileContactEditor extends StatefulWidget {
   final String phone;
   final String address;
   final bool allowEditing;
+  final bool allowEditingPersonalDetails;
+  final String birthDate;
+  final String gender;
+  final String hometown;
 
   @override
   State<ProfileContactEditor> createState() => _ProfileContactEditorState();
@@ -36,35 +44,86 @@ class ProfileContactEditor extends StatefulWidget {
 class _ProfileContactEditorState extends State<ProfileContactEditor> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _addressController = TextEditingController();
+  final _birthDateController = TextEditingController();
+  final _hometownController = TextEditingController();
   final _repository = ProfileRepository();
+  String _gender = '';
   bool _editing = false;
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _resetEmail();
+    _resetFields();
   }
 
   @override
   void didUpdateWidget(covariant ProfileContactEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_editing && oldWidget.email != widget.email) _resetEmail();
+    if (!_editing
+        && (oldWidget.email != widget.email
+            || oldWidget.phone != widget.phone
+            || oldWidget.address != widget.address
+            || oldWidget.birthDate != widget.birthDate
+            || oldWidget.gender != widget.gender
+            || oldWidget.hometown != widget.hometown)) {
+      _resetFields();
+    }
   }
 
   @override
   void dispose() {
     _emailController.dispose();
+    _phoneController.dispose();
+    _addressController.dispose();
+    _birthDateController.dispose();
+    _hometownController.dispose();
     super.dispose();
   }
 
-  void _resetEmail() {
+  void _resetFields() {
     _emailController.text = widget.email == 'Chưa cập nhật' ? '' : widget.email;
+    _phoneController.text = widget.phone == 'Chưa cập nhật' ? '' : widget.phone;
+    _addressController.text =
+        widget.address == 'Chưa cập nhật' ? '' : widget.address;
+    _birthDateController.text = _dateForInput(widget.birthDate);
+    _gender = const {'Nam', 'Nữ', 'Khác'}.contains(widget.gender)
+        ? widget.gender
+        : '';
+    _hometownController.text =
+        widget.hometown == 'Chưa cập nhật' ? '' : widget.hometown;
   }
 
   void _cancel() {
-    _resetEmail();
+    _resetFields();
     setState(() => _editing = false);
+  }
+
+  static String _dateForInput(String value) {
+    if (value == 'Chưa cập nhật' || value.trim().isEmpty) return '';
+    final parts = value.split('/');
+    if (parts.length == 3) {
+      return '${parts[2]}-${parts[1].padLeft(2, '0')}-${parts[0].padLeft(2, '0')}';
+    }
+    return value;
+  }
+
+  Future<void> _pickBirthDate() async {
+    final initial = DateTime.tryParse(_birthDateController.text)
+        ?? DateTime(DateTime.now().year - 18);
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+      helpText: 'Chọn ngày sinh',
+    );
+    if (selected == null || !mounted) return;
+    final month = selected.month.toString().padLeft(2, '0');
+    final day = selected.day.toString().padLeft(2, '0');
+    _birthDateController.text = '${selected.year}-$month-$day';
   }
 
   Future<void> _save() async {
@@ -73,6 +132,19 @@ class _ProfileContactEditorState extends State<ProfileContactEditor> {
     try {
       final updated = await _repository.updateContact(
         email: _emailController.text,
+        phone: widget.allowEditingPersonalDetails
+            ? _phoneController.text
+            : null,
+        address: widget.allowEditingPersonalDetails
+            ? _addressController.text
+            : null,
+        birthDate: widget.allowEditingPersonalDetails
+            ? _birthDateController.text
+            : null,
+        gender: widget.allowEditingPersonalDetails ? _gender : null,
+        hometown: widget.allowEditingPersonalDetails
+            ? _hometownController.text
+            : null,
       );
       final auth = Get.find<AuthController>();
       final merged = <String, dynamic>{...?auth.currentUser.value, ...updated};
@@ -133,6 +205,14 @@ class _ProfileContactEditorState extends State<ProfileContactEditor> {
       contactItems.first,
       contactItems.last,
     ];
+    final personalReadOnlyItems = widget.allowEditingPersonalDetails
+        ? widget.readOnlyItems
+              .where(
+                (item) => !const {'Ngày sinh', 'Giới tính', 'Quê quán'}
+                    .contains(item.label),
+              )
+              .toList()
+        : widget.readOnlyItems;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -141,7 +221,12 @@ class _ProfileContactEditorState extends State<ProfileContactEditor> {
           title: 'Thông tin cá nhân',
           colors: widget.colors,
           items: _editing
-              ? [...widget.readOnlyItems, ...readOnlyContactItems]
+              ? [
+                  ...personalReadOnlyItems,
+                  ...(widget.allowEditingPersonalDetails
+                      ? [contactItems[1]]
+                      : readOnlyContactItems),
+                ]
               : [...widget.readOnlyItems, ...contactItems],
         ),
         if (_editing) ...[
@@ -170,12 +255,73 @@ class _ProfileContactEditorState extends State<ProfileContactEditor> {
               },
             ),
           ),
+          if (widget.allowEditingPersonalDetails) ...[
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Số điện thoại',
+                prefixIcon: Icon(Icons.phone_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _addressController,
+              maxLength: 200,
+              decoration: const InputDecoration(
+                labelText: 'Địa chỉ hiện tại',
+                prefixIcon: Icon(Icons.location_on_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _birthDateController,
+              readOnly: true,
+              onTap: _pickBirthDate,
+              decoration: const InputDecoration(
+                labelText: 'Ngày sinh',
+                prefixIcon: Icon(Icons.cake_outlined),
+                suffixIcon: Icon(Icons.calendar_month_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _gender,
+              decoration: const InputDecoration(
+                labelText: 'Giới tính',
+                prefixIcon: Icon(Icons.wc_outlined),
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: '', child: Text('Chưa cung cấp')),
+                DropdownMenuItem(value: 'Nam', child: Text('Nam')),
+                DropdownMenuItem(value: 'Nữ', child: Text('Nữ')),
+                DropdownMenuItem(value: 'Khác', child: Text('Khác')),
+              ],
+              onChanged: (value) => setState(() => _gender = value ?? ''),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _hometownController,
+              maxLength: 200,
+              decoration: const InputDecoration(
+                labelText: 'Quê quán',
+                prefixIcon: Icon(Icons.home_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
-          Text(
-            'Số điện thoại và địa chỉ hiện tại đang chỉ đọc vì cơ sở dữ liệu chưa có cột tương ứng.',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: widget.colors.mutedForeground),
-          ),
+          if (!widget.allowEditingPersonalDetails)
+            Text(
+              'Số điện thoại và địa chỉ hiện tại đang chỉ đọc.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: widget.colors.mutedForeground),
+            ),
         ],
         if (canEditEmail || canChangePassword) ...[
           const SizedBox(height: 12),

@@ -4,9 +4,98 @@ import 'package:get/get.dart';
 import '../../controllers/classes_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../data/api/api_client.dart';
 import '../../data/models/student_summaries.dart';
 import '../../widgets/app_search_field.dart';
 import '../../widgets/statistics_charts.dart';
+
+Future<void> _showClassFeedbackDialog(
+  BuildContext context,
+  ClassesController controller,
+  String classId,
+) async {
+  final formKey = GlobalKey<FormState>();
+  final commentController = TextEditingController();
+  var rating = 5;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Phản hồi và đánh giá lớp học'),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    5,
+                    (index) => IconButton(
+                      tooltip: '${index + 1} sao',
+                      onPressed: () => setState(() => rating = index + 1),
+                      icon: Icon(
+                        index < rating ? Icons.star : Icons.star_border,
+                        color: const Color(0xFFF59E0B),
+                      ),
+                    ),
+                  ),
+                ),
+                TextFormField(
+                  controller: commentController,
+                  maxLines: 4,
+                  maxLength: 2000,
+                  decoration: const InputDecoration(
+                    labelText: 'Nội dung phản hồi',
+                    border: OutlineInputBorder(),
+                    alignLabelWithHint: true,
+                  ),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'Vui lòng nhập nội dung phản hồi.'
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              if (!formKey.currentState!.validate()) return;
+              try {
+                await controller.submitFeedback(
+                  classId: classId,
+                  rating: rating,
+                  comment: commentController.text.trim(),
+                );
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Đã gửi đánh giá lớp học.')),
+                  );
+                }
+              } on ApiException catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(error.message)),
+                  );
+                }
+              }
+            },
+            child: const Text('Gửi'),
+          ),
+        ],
+      ),
+    ),
+  );
+  commentController.dispose();
+}
 
 class StudentClassesPage extends StatefulWidget {
   const StudentClassesPage({super.key});
@@ -46,9 +135,11 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
       if (controller.error.value.isNotEmpty && classes.isEmpty) {
         return Center(child: Text(controller.error.value));
       }
-      return ListView(
-        padding: EdgeInsets.zero,
-        children: [
+      return RefreshIndicator(
+        onRefresh: controller.load,
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
@@ -124,13 +215,22 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
                         .map(
                           (cls) => Padding(
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: _ClassCard(cls: cls, c: c),
+                            child: _ClassCard(
+                              cls: cls,
+                              c: c,
+                              onFeedback: () => _showClassFeedbackDialog(
+                                context,
+                                controller,
+                                cls.id,
+                              ),
+                            ),
                           ),
                         )
                         .toList(),
             ),
           ),
-        ],
+          ],
+        ),
       );
     });
   }
@@ -139,7 +239,12 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
 class _ClassCard extends StatelessWidget {
   final StudentClassSummary cls;
   final AppColors c;
-  const _ClassCard({required this.cls, required this.c});
+  final VoidCallback onFeedback;
+  const _ClassCard({
+    required this.cls,
+    required this.c,
+    required this.onFeedback,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -209,7 +314,23 @@ class _ClassCard extends StatelessWidget {
                         '${cls.time} · Phòng ${cls.room}',
                         style: AppTextStyles.bodyXs(c.mutedForeground),
                       ),
+                      if (cls.credits > 0 || cls.capacity > 0)
+                        Text(
+                          '${cls.credits} tín chỉ · ${cls.studentCount}/${cls.capacity} sinh viên',
+                          style: AppTextStyles.bodyXs(c.mutedForeground),
+                        ),
                     ],
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 8, bottom: 4),
+                    child: TextButton.icon(
+                      onPressed: onFeedback,
+                      icon: const Icon(Icons.rate_review_outlined),
+                      label: const Text('Phản hồi / đánh giá'),
+                    ),
                   ),
                 ),
               ],

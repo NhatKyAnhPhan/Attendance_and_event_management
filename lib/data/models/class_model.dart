@@ -23,6 +23,8 @@ class ClassModel {
   final String lecturerId;
   final String lecturerName;
   final int studentCount;
+  final int capacity;
+  final int credits;
   final String semester;
   final String startTime;
   final String subjectId;
@@ -50,6 +52,8 @@ class ClassModel {
     required this.lecturerId,
     required this.lecturerName,
     required this.studentCount,
+    this.capacity = 0,
+    this.credits = 0,
     required this.semester,
     this.startTime = '',
     this.subjectId = '',
@@ -75,7 +79,9 @@ class ClassModel {
           : ClassType.courseSection,
       lecturerId: json['lecturerId'] as String? ?? '',
       lecturerName: json['lecturerName'] as String? ?? '',
-      studentCount: json['studentCount'] as int? ?? 0,
+      studentCount: _parseCount(json['studentCount']),
+      capacity: _parseCount(json['capacity']),
+      credits: _parseCount(json['credits']),
       semester: json['semester'] as String? ?? '',
       startTime: json['startTime']?.toString() ?? '',
       subjectId: json['subjectId']?.toString() ?? '',
@@ -91,6 +97,9 @@ class ClassModel {
     );
   }
 
+  static int _parseCount(dynamic value) =>
+      num.tryParse(value?.toString() ?? '')?.round() ?? 0;
+
   // Chuyển model lớp học phần thành dữ liệu JSON.
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -100,6 +109,8 @@ class ClassModel {
     'lecturerId': lecturerId,
     'lecturerName': lecturerName,
     'studentCount': studentCount,
+    'capacity': capacity,
+    'credits': credits,
     'semester': semester,
     'startTime': startTime,
     'subjectId': subjectId,
@@ -139,6 +150,7 @@ class ClassSubjectOption {
   final String majorName;
   final String departmentId;
   final String semester;
+  final int credits;
 
   const ClassSubjectOption({
     required this.id,
@@ -148,6 +160,7 @@ class ClassSubjectOption {
     required this.majorName,
     required this.departmentId,
     required this.semester,
+    this.credits = 0,
   });
 
   factory ClassSubjectOption.fromJson(Map<String, dynamic> json) =>
@@ -159,6 +172,7 @@ class ClassSubjectOption {
         majorName: json['majorName']?.toString() ?? '',
         departmentId: json['departmentId']?.toString() ?? '',
         semester: json['semester']?.toString() ?? '',
+        credits: int.tryParse(json['credits']?.toString() ?? '') ?? 0,
       );
 }
 

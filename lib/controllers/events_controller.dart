@@ -18,8 +18,11 @@ class EventsController extends GetxController {
     super.onInit();
     load();
     _statusRefreshTimer = Timer.periodic(
-      const Duration(minutes: 1),
-      (_) => statusRefreshTick.value++,
+      const Duration(seconds: 30),
+      (_) {
+        statusRefreshTick.value++;
+        load();
+      },
     );
   }
 
@@ -60,5 +63,21 @@ class EventsController extends GetxController {
   // Lấy dữ liệu chi tiết của một sự kiện từ repository.
   Future<Map<String, dynamic>> getDetails(String eventId) {
     return _repository.getEventDetails(eventId);
+  }
+
+  Future<Map<String, dynamic>> getFeedback(String eventId) {
+    return _repository.getEventFeedback(eventId);
+  }
+
+  Future<void> submitFeedback({
+    required String eventId,
+    required int rating,
+    required String comment,
+  }) {
+    return _repository.submitEventFeedback(
+      eventId: eventId,
+      rating: rating,
+      comment: comment,
+    );
   }
 }

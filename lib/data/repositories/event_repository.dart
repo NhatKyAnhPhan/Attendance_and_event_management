@@ -60,6 +60,21 @@ class EventRepository {
     await _client.delete('/api/events/$eventId/register');
   }
 
+  Future<Map<String, dynamic>> getEventFeedback(String eventId) {
+    return _client.get('/api/events/$eventId/feedback');
+  }
+
+  Future<void> submitEventFeedback({
+    required String eventId,
+    required int rating,
+    required String comment,
+  }) async {
+    await _client.post(
+      '/api/events/$eventId/feedback',
+      data: {'rating': rating, 'comment': comment},
+    );
+  }
+
   // Các yêu cầu đọc và ghi sự kiện trong khu vực ban tổ chức.
   Future<List<OrganizerEventSummary>> getOrganizerEvents() async {
     final body = await _client.get('/api/organizer/events');
@@ -93,6 +108,9 @@ class EventRepository {
     required DateTime endTime,
     required String location,
     required int capacity,
+    required String description,
+    required List<Map<String, dynamic>> benefits,
+    required List<String> rules,
   }) async {
     await _client.post(
       '/api/organizer/events',
@@ -103,6 +121,9 @@ class EventRepository {
         'endTime': endTime.toIso8601String(),
         'location': location,
         'capacity': capacity,
+        'description': description,
+        'benefits': benefits,
+        'rules': rules,
       },
     );
   }
@@ -116,6 +137,9 @@ class EventRepository {
     required DateTime endTime,
     required String location,
     required int capacity,
+    required String description,
+    required List<Map<String, dynamic>> benefits,
+    required List<String> rules,
   }) async {
     await _client.put(
       '/api/organizer/events/$id',
@@ -126,6 +150,9 @@ class EventRepository {
         'endTime': endTime.toIso8601String(),
         'location': location,
         'capacity': capacity,
+        'description': description,
+        'benefits': benefits,
+        'rules': rules,
       },
     );
   }

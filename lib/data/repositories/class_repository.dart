@@ -23,6 +23,21 @@ class ClassRepository {
         .toList();
   }
 
+  Future<Map<String, dynamic>> getClassFeedback(String classId) {
+    return _client.get('/api/classes/$classId/feedback');
+  }
+
+  Future<void> submitClassFeedback({
+    required String classId,
+    required int rating,
+    required String comment,
+  }) async {
+    await _client.post(
+      '/api/classes/$classId/feedback',
+      data: {'rating': rating, 'comment': comment},
+    );
+  }
+
   Future<List<ClassModel>> getManagedClasses() async {
     final body = await _client.get(ApiEndpoints.adminClasses);
     final items = body['items'];
@@ -104,6 +119,7 @@ class ClassRepository {
     required String semester,
     required String startTime,
     required String? lecturerId,
+    required int capacity,
   }) async {
     await _client.post(
       ApiEndpoints.adminClasses,
@@ -114,6 +130,7 @@ class ClassRepository {
         'semester': semester,
         'startTime': startTime,
         'lecturerId': lecturerId,
+        'capacity': capacity,
       },
     );
   }
@@ -124,6 +141,7 @@ class ClassRepository {
     required String semester,
     required String startTime,
     required String? lecturerId,
+    required int capacity,
   }) async {
     await _client.put(
       '${ApiEndpoints.adminClasses}/$id',
@@ -132,6 +150,7 @@ class ClassRepository {
         'semester': semester,
         'startTime': startTime,
         'lecturerId': lecturerId,
+        'capacity': capacity,
       },
     );
   }

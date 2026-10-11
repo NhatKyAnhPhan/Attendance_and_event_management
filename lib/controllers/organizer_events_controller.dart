@@ -29,8 +29,11 @@ class OrganizerEventsController extends GetxController {
     load();
     loadUnits();
     _statusRefreshTimer = Timer.periodic(
-      const Duration(minutes: 1),
-      (_) => statusRefreshTick.value++,
+      const Duration(seconds: 30),
+      (_) {
+        statusRefreshTick.value++;
+        load();
+      },
     );
   }
 
@@ -84,6 +87,9 @@ class OrganizerEventsController extends GetxController {
     required DateTime endTime,
     required String location,
     required int capacity,
+    required String description,
+    required List<Map<String, dynamic>> benefits,
+    required List<String> rules,
   }) async {
     await _repository.createOrganizerEvent(
       name: name,
@@ -92,6 +98,9 @@ class OrganizerEventsController extends GetxController {
       endTime: endTime,
       location: location,
       capacity: capacity,
+      description: description,
+      benefits: benefits,
+      rules: rules,
     );
     await load();
   }
@@ -105,6 +114,9 @@ class OrganizerEventsController extends GetxController {
     required DateTime endTime,
     required String location,
     required int capacity,
+    required String description,
+    required List<Map<String, dynamic>> benefits,
+    required List<String> rules,
   }) async {
     await _repository.updateOrganizerEvent(
       id: id,
@@ -114,6 +126,9 @@ class OrganizerEventsController extends GetxController {
       endTime: endTime,
       location: location,
       capacity: capacity,
+      description: description,
+      benefits: benefits,
+      rules: rules,
     );
     await load();
   }

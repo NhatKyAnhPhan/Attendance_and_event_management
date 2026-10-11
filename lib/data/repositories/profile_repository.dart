@@ -5,8 +5,25 @@ class ProfileRepository {
 
   final ApiClient _client;
 
-  Future<Map<String, dynamic>> updateContact({required String email}) async {
-    final body = await _client.put('/api/me', data: {'email': email.trim()});
+  Future<Map<String, dynamic>> updateContact({
+    required String email,
+    String? phone,
+    String? address,
+    String? birthDate,
+    String? gender,
+    String? hometown,
+  }) async {
+    final body = await _client.put(
+      '/api/me',
+      data: {
+        'email': email.trim(),
+        if (phone != null) 'phone': phone.trim(),
+        if (address != null) 'address': address.trim(),
+        if (birthDate != null) 'birthDate': birthDate.trim(),
+        if (gender != null) 'gender': gender.trim(),
+        if (hometown != null) 'hometown': hometown.trim(),
+      },
+    );
     final user = body['user'];
     if (user is! Map) {
       throw const ApiException('Phản hồi cập nhật hồ sơ không hợp lệ.');

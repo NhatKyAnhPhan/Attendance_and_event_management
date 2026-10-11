@@ -127,6 +127,10 @@ class _StudentProfileContentState extends State<StudentProfileContent> {
             phone: profile.phone,
             address: profile.currentAddress,
             allowEditing: true,
+            allowEditingPersonalDetails: true,
+            birthDate: profile.birthDate,
+            gender: profile.gender,
+            hometown: profile.hometown,
             readOnlyItems: [
               ProfileInfoItem(
                 icon: Icons.person_outline,

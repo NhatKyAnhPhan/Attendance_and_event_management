@@ -19,6 +19,30 @@ class OrganizerEventsPage extends StatefulWidget {
   State<OrganizerEventsPage> createState() => _OrganizerEventsPageState();
 }
 
+class _EventBenefitDraft {
+  _EventBenefitDraft({
+    this.type = 'Khác',
+    String points = '0',
+    String content = '',
+  }) : pointsController = TextEditingController(text: points),
+       contentController = TextEditingController(text: content);
+
+  String type;
+  final TextEditingController pointsController;
+  final TextEditingController contentController;
+
+  Map<String, dynamic> toJson() => {
+    'type': type,
+    'points': int.parse(pointsController.text.trim()),
+    'content': contentController.text.trim(),
+  };
+
+  void dispose() {
+    pointsController.dispose();
+    contentController.dispose();
+  }
+}
+
 class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
@@ -411,6 +435,14 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   'Mã QR có hiệu lực đến ${DateFormat('dd/MM/yyyy HH:mm').format(event.endTime)}.',
                   textAlign: TextAlign.center,
                 ),
+                if (DateTime.now().isBefore(event.startTime)) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Mã QR chỉ được xác thực trong thời gian sự kiện diễn ra. '
+                    'Nếu quét trước giờ bắt đầu, hệ thống sẽ từ chối điểm danh.',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ],
             ),
           ),
@@ -551,8 +583,41 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       );
       return;
     }
+    Map<String, dynamic> currentDetails = const {};
+    if (event != null) {
+      try {
+        currentDetails = await controller.getEventDetails(event.id);
+      } catch (exception) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Không tải được chi tiết sự kiện: $exception')),
+          );
+        }
+        return;
+      }
+      if (!context.mounted) return;
+    }
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: event?.name ?? '');
+    final descriptionController = TextEditingController(
+      text: currentDetails['description']?.toString() ?? '',
+    );
+    final rules = (currentDetails['rules'] as List? ?? const [])
+        .whereType<Map>()
+        .map((rule) => rule['text']?.toString() ?? '')
+        .where((rule) => rule.trim().isNotEmpty)
+        .toList();
+    final rulesController = TextEditingController(text: rules.join('\n'));
+    final benefits = (currentDetails['benefits'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (benefit) => _EventBenefitDraft(
+            type: benefit['type']?.toString() ?? 'Khác',
+            points: benefit['points']?.toString() ?? '0',
+            content: benefit['content']?.toString() ?? '',
+          ),
+        )
+        .toList();
     final locationController = TextEditingController(
       text: event?.location ?? '',
     );
@@ -590,6 +655,131 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                     ),
                     _field(locationController, 'Địa điểm'),
                     _field(capacityController, 'Số lượng tối đa', number: true),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: descriptionController,
+                      maxLength: 1000,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Nội dung / mô tả sự kiện',
+                        alignLabelWithHint: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Quyền lợi',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    ...benefits.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final benefit = entry.value;
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 4,
+                              child: DropdownButtonFormField<String>(
+                                initialValue: benefit.type,
+                                decoration: const InputDecoration(
+                                  labelText: 'Loại',
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: const [
+                                  'Điểm rèn luyện',
+                                  'Điểm công tác xã hội',
+                                  'Chứng nhận',
+                                  'Khác',
+                                ]
+                                    .map(
+                                      (type) => DropdownMenuItem(
+                                        value: type,
+                                        child: Text(
+                                          type,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (type) {
+                                  if (type != null) {
+                                    setState(() => benefit.type = type);
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 72,
+                              child: TextFormField(
+                                controller: benefit.pointsController,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Điểm',
+                                  border: OutlineInputBorder(),
+                                ),
+                                validator: (value) {
+                                  final points = int.tryParse(
+                                    value?.trim() ?? '',
+                                  );
+                                  return points == null || points < 0
+                                      ? 'Số điểm không hợp lệ'
+                                      : null;
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 5,
+                              child: TextFormField(
+                                controller: benefit.contentController,
+                                maxLength: 500,
+                                decoration: const InputDecoration(
+                                  labelText: 'Mô tả quyền lợi',
+                                  border: OutlineInputBorder(),
+                                ),
+                                validator: (value) => value == null
+                                    || value.trim().isEmpty
+                                    ? 'Nhập quyền lợi'
+                                    : null,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Xóa quyền lợi',
+                              onPressed: () => setState(() {
+                                benefits.removeAt(index).dispose();
+                              }),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => setState(
+                          () => benefits.add(_EventBenefitDraft()),
+                        ),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Thêm quyền lợi'),
+                      ),
+                    ),
+                    TextFormField(
+                      controller: rulesController,
+                      maxLines: 4,
+                      maxLength: 3000,
+                      decoration: const InputDecoration(
+                        labelText: 'Nội quy (mỗi dòng một nội quy)',
+                        alignLabelWithHint: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Bắt đầu'),
@@ -670,6 +860,14 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   final organizerId = selectedOrganizerId?.trim() ?? '';
                   final location = locationController.text.trim();
                   final capacity = int.parse(capacityController.text.trim());
+                  final eventBenefits = benefits
+                      .map((benefit) => benefit.toJson())
+                      .toList();
+                  final eventRules = rulesController.text
+                      .split('\n')
+                      .map((rule) => rule.trim())
+                      .where((rule) => rule.isNotEmpty)
+                      .toList();
                   if (isEditing) {
                     await controller.updateEvent(
                       id: event.id,
@@ -679,6 +877,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                       endTime: endTime,
                       location: location,
                       capacity: capacity,
+                      description: descriptionController.text.trim(),
+                      benefits: eventBenefits,
+                      rules: eventRules,
                     );
                   } else {
                     await controller.createEvent(
@@ -688,6 +889,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                       endTime: endTime,
                       location: location,
                       capacity: capacity,
+                      description: descriptionController.text.trim(),
+                      benefits: eventBenefits,
+                      rules: eventRules,
                     );
                   }
                 } catch (exception) {
@@ -707,6 +911,11 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       ),
     );
     nameController.dispose();
+    descriptionController.dispose();
+    rulesController.dispose();
+    for (final benefit in benefits) {
+      benefit.dispose();
+    }
     locationController.dispose();
     capacityController.dispose();
     organizerController.dispose();
