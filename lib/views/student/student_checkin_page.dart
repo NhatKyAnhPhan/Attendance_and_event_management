@@ -131,6 +131,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     });
   }
 
+  Future<void> _retryScan() async {
+    await _reset();
+    if (!mounted) return;
+    _startScan();
+  }
+
   // Đổi phương thức điểm danh và giải phóng thiết bị đang sử dụng.
   Future<void> _setMethod(_ScanMethod method) async {
     await _stopCameras();
@@ -817,14 +823,14 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: _reset,
+                  onPressed: _retryScan,
                   child: const Text('Thử lại'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: () => _setMethod(_method),
+                  onPressed: _reset,
                   child: const Text('Làm mới'),
                 ),
               ),

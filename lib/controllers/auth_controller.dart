@@ -17,7 +17,7 @@ class AuthController extends GetxController {
   final Rx<Role> role = Role.admin.obs;
   final Rxn<Map<String, dynamic>> currentUser = Rxn<Map<String, dynamic>>();
 
-  /// Cán bộ chỉ được xem; quyền quản lý dành cho admin và ban tổ chức.
+  /// Quyền quản lý cụ thể của từng đơn vị được backend xác thực.
   bool get canManageEvents =>
       RoleX.canManageEvents(currentUser.value?['role']?.toString() ?? '');
 

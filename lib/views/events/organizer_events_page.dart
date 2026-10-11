@@ -5,7 +5,6 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/organizer_events_controller.dart';
-import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/event_model.dart';
@@ -60,7 +59,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       controller.statusRefreshTick.value;
       final auth = Get.find<AuthController>();
       final canManageEvents = auth.canManageEvents;
-      final canDeleteEvents = auth.role.value == Role.admin;
+      final canDeleteEvents = canManageEvents;
       final query = _query.trim().toLowerCase();
       final filteredItems = controller.items.where((event) {
         if (event.isArchived != _showArchived) return false;

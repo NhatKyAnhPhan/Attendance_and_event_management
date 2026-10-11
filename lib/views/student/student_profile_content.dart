@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../controllers/auth_controller.dart';
+import '../../controllers/theme_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/api/api_client.dart';
 import '../lecturer_profile/profile_view_model.dart';
@@ -100,6 +101,7 @@ class _StudentProfileContentState extends State<StudentProfileContent> {
       Theme.of(context).brightness == Brightness.dark,
     );
     final auth = Get.find<AuthController>();
+    final theme = Get.find<ThemeController>();
 
     return Obx(() {
       final user = auth.currentUser.value ?? const <String, dynamic>{};
@@ -197,6 +199,36 @@ class _StudentProfileContentState extends State<StudentProfileContent> {
                 value: profile.accountStatus,
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            decoration: BoxDecoration(
+              color: colors.card,
+              borderRadius: BorderRadius.circular(AppColors.radiusLg),
+              border: Border.all(color: colors.border),
+            ),
+            child: Obx(
+              () => SwitchListTile(
+                value: theme.isDark.value,
+                onChanged: (_) => theme.toggle(),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppColors.radiusLg),
+                ),
+                secondary: Icon(
+                  theme.isDark.value
+                      ? Icons.dark_mode_outlined
+                      : Icons.light_mode_outlined,
+                  color: colors.primary,
+                ),
+                title: Text(
+                  'Giao diện tối',
+                  style: TextStyle(
+                    color: colors.foreground,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 16),
           Container(

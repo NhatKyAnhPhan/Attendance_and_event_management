@@ -1814,7 +1814,10 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
               sk.Thoigianketthuc AS endTime,
               ${eventStatusSql} AS status,
               COALESCE(sk.Soluongtoida, 0) AS capacity,
-              COUNT(dk.Masv) AS registeredCount
+              COUNT(dk.Masv) AS registeredCount,
+              (SELECT COUNT(*)
+               FROM event_attendance ea
+               WHERE ea.event_id = sk.Masukien) AS checkedInCount
        FROM sukien sk
        LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
        WHERE ? = 1 OR EXISTS (
@@ -2094,6 +2097,7 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
               COALESCE(dk.Trangthaidangky, '') AS status,
               CASE WHEN ea.checked_in_at IS NULL
                    THEN 'Chưa điểm danh' ELSE 'Đã điểm danh QR' END AS attendanceStatus,
+              ea.checked_in_at AS checkedInAt,
               DATE_FORMAT(dk.Ngaydangky, '%d/%m/%Y') AS dateLabel
        FROM dangkysukien dk
        LEFT JOIN nguoidung nd ON nd.Mand = dk.Masv

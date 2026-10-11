@@ -7,12 +7,15 @@ void main() {
       expect(RoleX.fromString('Cán bộ'), Role.organizer);
       expect(RoleX.fromString('cán bộ'), Role.organizer);
       expect(RoleX.fromString('Nhân viên'), Role.organizer);
+      expect(RoleX.fromString('Công nhân viên'), Role.organizer);
+      expect(RoleX.fromString('công nhân viên'), Role.organizer);
       expect(RoleX.fromString('Ban tổ chức'), Role.organizer);
     });
 
-    test('only admin and event organizers can manage events', () {
-      expect(RoleX.canManageEvents('Cán bộ'), isFalse);
-      expect(RoleX.canManageEvents('Nhân viên'), isFalse);
+    test('admin, event organizers, and assigned staff can manage events', () {
+      expect(RoleX.canManageEvents('Cán bộ'), isTrue);
+      expect(RoleX.canManageEvents('Nhân viên'), isTrue);
+      expect(RoleX.canManageEvents('Công nhân viên'), isTrue);
       expect(RoleX.canManageEvents('organizer'), isFalse);
       expect(RoleX.canManageEvents('Ban tổ chức'), isTrue);
       expect(RoleX.canManageEvents('admin'), isTrue);
@@ -20,8 +23,8 @@ void main() {
     });
 
     test('uses the database staff label in the interface', () {
-      expect(Role.organizer.label, 'Cán bộ');
-      expect(Role.organizer.shortCode, 'CB');
+      expect(Role.organizer.label, 'Công nhân viên');
+      expect(Role.organizer.shortCode, 'NV');
     });
   });
 }

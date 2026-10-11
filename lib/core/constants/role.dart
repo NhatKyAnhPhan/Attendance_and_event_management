@@ -2,13 +2,16 @@
 enum Role { admin, lecturer, organizer, student }
 
 extension RoleX on Role {
-  /// Kiểm tra vai trò gốc có được phép tạo hoặc cập nhật sự kiện không.
+  /// Kiểm tra vai trò gốc có được phép quản lý sự kiện không.
   static bool canManageEvents(String value) {
     final normalized = value.trim().toLowerCase();
     return normalized == 'admin' ||
         normalized == 'quản trị viên' ||
         normalized == 'ban tổ chức' ||
-        normalized == 'event_organizer';
+        normalized == 'event_organizer' ||
+        normalized == 'công nhân viên' ||
+        normalized == 'nhân viên' ||
+        normalized == 'cán bộ';
   }
 
   /// Nhãn tiếng Việt — tương ứng `roleLabels` trong Sidebar.tsx / UsersPage.tsx
@@ -19,7 +22,7 @@ extension RoleX on Role {
       case Role.lecturer:
         return 'Giảng viên';
       case Role.organizer:
-        return 'Cán bộ';
+        return 'Công nhân viên';
       case Role.student:
         return 'Sinh viên';
     }
@@ -33,7 +36,7 @@ extension RoleX on Role {
       case Role.lecturer:
         return 'GV';
       case Role.organizer:
-        return 'CB';
+        return 'NV';
       case Role.student:
         return 'SV';
     }
@@ -50,6 +53,7 @@ extension RoleX on Role {
       'ban tổ chức' ||
       'cán bộ' ||
       'nhân viên' ||
+      'công nhân viên' ||
       'staff' ||
       'employee' => Role.organizer,
       'student' || 'sinh viên' => Role.student,

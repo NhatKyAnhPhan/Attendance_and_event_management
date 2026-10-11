@@ -11,6 +11,7 @@ import '../../widgets/app_search_field.dart';
 import '../../widgets/app_badge.dart';
 import '../../widgets/statistics_charts.dart';
 import 'attendance_roster_page.dart';
+import 'event_attendance_section.dart';
 import 'qr_generator_page.dart';
 
 class AttendancePage extends StatefulWidget {
@@ -22,6 +23,9 @@ class AttendancePage extends StatefulWidget {
 
 class _AttendancePageState extends State<AttendancePage> {
   String _query = '';
+  bool _showEventAttendance = false;
+  final GlobalKey<EventAttendanceSectionState> _eventAttendanceKey =
+      GlobalKey<EventAttendanceSectionState>();
 
   /// Hiển thị phiên điểm danh và kết quả truy vấn theo quyền hiện tại.
   @override
@@ -31,6 +35,7 @@ class _AttendancePageState extends State<AttendancePage> {
     final controller = Get.put(AttendanceController());
     final role = Get.find<AuthController>().role.value;
     final canCreateSession = role == Role.admin || role == Role.lecturer;
+    final canViewEventAttendance = role == Role.admin || role == Role.organizer;
 
     return Obx(() {
       final query = _query.trim().toLowerCase();
@@ -57,7 +62,9 @@ class _AttendancePageState extends State<AttendancePage> {
           : (present * 100 / resultCount).round();
 
       return RefreshIndicator(
-        onRefresh: controller.load,
+        onRefresh: () => _showEventAttendance
+            ? _eventAttendanceKey.currentState?.load() ?? Future<void>.value()
+            : controller.load(),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(20),
@@ -88,133 +95,158 @@ class _AttendancePageState extends State<AttendancePage> {
               style: AppTextStyles.bodySm(c.mutedForeground),
             ),
             const SizedBox(height: 16),
-            AppSearchField(
-              colors: c,
-              hintText: 'Tìm mã lớp, sự kiện, trạng thái...',
-              onChanged: (value) => setState(() => _query = value),
-            ),
-            const SizedBox(height: 20),
-            LayoutBuilder(
-              builder: (context, constraints) => GridView.count(
-                crossAxisCount: constraints.maxWidth >= 720 ? 3 : 1,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                mainAxisExtent: 92,
+            if (canViewEventAttendance) ...[
+              Wrap(
+                spacing: 8,
                 children: [
-                  _SummaryCard(
-                    title: 'Phiên điểm danh',
-                    value: '${sessions.length}',
-                    color: c.primary,
-                    bg: c.secondary,
+                  ChoiceChip(
+                    label: const Text('Điểm danh lớp học'),
+                    selected: !_showEventAttendance,
+                    onSelected: (_) =>
+                        setState(() => _showEventAttendance = false),
                   ),
-                  _SummaryCard(
-                    title: 'Tỷ lệ có mặt',
-                    value: '$attendanceRate%',
-                    color: c.success,
-                    bg: const Color(0xFFDCFCE7),
-                  ),
-                  _SummaryCard(
-                    title: 'Chưa điểm danh',
-                    value: '$absent',
-                    color: c.warning,
-                    bg: const Color(0xFFFEF3C7),
+                  ChoiceChip(
+                    label: const Text('Điểm danh sự kiện'),
+                    selected: _showEventAttendance,
+                    onSelected: (_) =>
+                        setState(() => _showEventAttendance = true),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 16),
-            StatisticsDonutChart(
-              title: 'Phân bổ kết quả điểm danh',
-              colors: c,
-              data: [
-                StatisticsChartDatum(
-                  label: 'Có mặt',
-                  value: present,
-                  color: c.success,
-                ),
-                StatisticsChartDatum(
-                  label: 'Muộn',
-                  value: late,
-                  color: c.warning,
-                ),
-                StatisticsChartDatum(
-                  label: 'Vắng',
-                  value: absent,
-                  color: c.danger,
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            if (controller.loading.value && sessions.isEmpty)
-              const Center(child: CircularProgressIndicator())
-            else if (controller.error.value.isNotEmpty)
-              Text(
-                controller.error.value,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              )
-            else if (sessions.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 48),
-                child: Center(
-                  child: Text(
-                    controller.sessions.isEmpty
-                        ? 'Chưa có phiên điểm danh trong dữ liệu.'
-                        : 'Không tìm thấy phiên điểm danh phù hợp.',
-                    style: AppTextStyles.bodySm(c.mutedForeground),
-                  ),
-                ),
-              )
+              const SizedBox(height: 16),
+            ],
+            if (_showEventAttendance)
+              EventAttendanceSection(key: _eventAttendanceKey)
             else ...[
-              StatisticsBarChart(
-                title: 'Kết quả theo mã học phần',
+              AppSearchField(
                 colors: c,
-                categories: classSummaries
-                    .map((item) => item['classId'].toString())
-                    .toList(),
-                series: [
-                  StatisticsChartSeries(
+                hintText: 'Tìm mã lớp, sự kiện, trạng thái...',
+                onChanged: (value) => setState(() => _query = value),
+              ),
+              const SizedBox(height: 20),
+              LayoutBuilder(
+                builder: (context, constraints) => GridView.count(
+                  crossAxisCount: constraints.maxWidth >= 720 ? 3 : 1,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  mainAxisExtent: 92,
+                  children: [
+                    _SummaryCard(
+                      title: 'Phiên điểm danh',
+                      value: '${sessions.length}',
+                      color: c.primary,
+                      bg: c.secondary,
+                    ),
+                    _SummaryCard(
+                      title: 'Tỷ lệ có mặt',
+                      value: '$attendanceRate%',
+                      color: c.success,
+                      bg: const Color(0xFFDCFCE7),
+                    ),
+                    _SummaryCard(
+                      title: 'Chưa điểm danh',
+                      value: '$absent',
+                      color: c.warning,
+                      bg: const Color(0xFFFEF3C7),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              StatisticsDonutChart(
+                title: 'Phân bổ kết quả điểm danh',
+                colors: c,
+                data: [
+                  StatisticsChartDatum(
                     label: 'Có mặt',
+                    value: present,
                     color: c.success,
-                    values: classSummaries
-                        .map((item) => _count(item['present']))
-                        .toList(),
                   ),
-                  StatisticsChartSeries(
+                  StatisticsChartDatum(
                     label: 'Muộn',
+                    value: late,
                     color: c.warning,
-                    values: classSummaries
-                        .map((item) => _count(item['late']))
-                        .toList(),
                   ),
-                  StatisticsChartSeries(
+                  StatisticsChartDatum(
                     label: 'Vắng',
+                    value: absent,
                     color: c.danger,
-                    values: classSummaries
-                        .map((item) => _count(item['absent']))
-                        .toList(),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              ...sessions.map(
-                (session) => _SessionCard(
-                  session: session,
-                  c: c,
-                  onOpenRoster: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => AttendanceRosterPage(
-                        sessionId: session['id']?.toString() ?? '',
-                        title: session['className']?.toString().isNotEmpty ==
-                                true
-                            ? session['className'].toString()
-                            : 'Danh sách điểm danh',
+              const SizedBox(height: 20),
+              if (controller.loading.value && sessions.isEmpty)
+                const Center(child: CircularProgressIndicator())
+              else if (controller.error.value.isNotEmpty)
+                Text(
+                  controller.error.value,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                )
+              else if (sessions.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 48),
+                  child: Center(
+                    child: Text(
+                      controller.sessions.isEmpty
+                          ? 'Chưa có phiên điểm danh trong dữ liệu.'
+                          : 'Không tìm thấy phiên điểm danh phù hợp.',
+                      style: AppTextStyles.bodySm(c.mutedForeground),
+                    ),
+                  ),
+                )
+              else ...[
+                StatisticsBarChart(
+                  title: 'Kết quả theo mã học phần',
+                  colors: c,
+                  categories: classSummaries
+                      .map((item) => item['classId'].toString())
+                      .toList(),
+                  series: [
+                    StatisticsChartSeries(
+                      label: 'Có mặt',
+                      color: c.success,
+                      values: classSummaries
+                          .map((item) => _count(item['present']))
+                          .toList(),
+                    ),
+                    StatisticsChartSeries(
+                      label: 'Muộn',
+                      color: c.warning,
+                      values: classSummaries
+                          .map((item) => _count(item['late']))
+                          .toList(),
+                    ),
+                    StatisticsChartSeries(
+                      label: 'Vắng',
+                      color: c.danger,
+                      values: classSummaries
+                          .map((item) => _count(item['absent']))
+                          .toList(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ...sessions.map(
+                  (session) => _SessionCard(
+                    session: session,
+                    c: c,
+                    onOpenRoster: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => AttendanceRosterPage(
+                          sessionId: session['id']?.toString() ?? '',
+                          title:
+                              session['className']?.toString().isNotEmpty ==
+                                  true
+                              ? session['className'].toString()
+                              : 'Danh sách điểm danh',
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
           ],
         ),
