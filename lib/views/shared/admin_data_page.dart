@@ -59,6 +59,7 @@ class _AdminDataPageState extends State<AdminDataPage> {
             ? rawItems.whereType<Map>().toList()
             : <Map>[];
         final keys = columnKeys;
+        final isUsers = widget.endpoint.endsWith('/users');
         final query = _query.trim().toLowerCase();
         final filteredItems = items.where((item) {
           return query.isEmpty ||
@@ -94,31 +95,110 @@ class _AdminDataPageState extends State<AdminDataPage> {
               )
             else
               Container(
+                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: c.card,
                   border: Border.all(color: c.border),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    columns: widget.columns
-                        .map((column) => DataColumn(label: Text(column)))
-                        .toList(),
-                    rows: filteredItems.map((item) {
-                      return DataRow(
-                        cells: widget.columns.map((column) {
-                          final key = keys[widget.columns.indexOf(column)];
-                          return DataCell(Text(item[key]?.toString() ?? ''));
+                child: LayoutBuilder(
+                  builder: (context, constraints) => SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minWidth: constraints.maxWidth,
+                      ),
+                      child: DataTable(
+                        headingRowHeight: 52,
+                        headingRowColor: WidgetStatePropertyAll(
+                          c.muted.withValues(alpha: 0.82),
+                        ),
+                        headingTextStyle: AppTextStyles.label(c.mutedForeground)
+                            .copyWith(fontWeight: FontWeight.w700),
+                        dataTextStyle: AppTextStyles.bodySm(c.foreground),
+                        dividerThickness: 0.8,
+                        horizontalMargin: 24,
+                        columnSpacing: 44,
+                        dataRowMinHeight: 58,
+                        dataRowMaxHeight: 66,
+                        columns: widget.columns
+                            .map((column) => DataColumn(label: Text(column)))
+                            .toList(),
+                        rows: filteredItems.map((item) {
+                          return DataRow(
+                            color: WidgetStateProperty.resolveWith((states) {
+                              if (states.contains(WidgetState.hovered)) {
+                                return c.primary.withValues(alpha: 0.045);
+                              }
+                              return null;
+                            }),
+                            mouseCursor: const WidgetStatePropertyAll(
+                              SystemMouseCursors.basic,
+                            ),
+                            cells: widget.columns.map((column) {
+                              final key = keys[widget.columns.indexOf(column)];
+                              return DataCell(
+                                _buildCell(
+                                  c,
+                                  column,
+                                  item[key]?.toString() ?? '',
+                                  isUsers,
+                                ),
+                              );
+                            }).toList(),
+                          );
                         }).toList(),
-                      );
-                    }).toList(),
+                      ),
+                    ),
                   ),
                 ),
               ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildCell(
+    AppColors colors,
+    String column,
+    String value,
+    bool isUsers,
+  ) {
+    if (isUsers && (column == 'Vai trò' || column == 'Trạng thái')) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: column == 'Trạng thái'
+              ? colors.primary.withValues(alpha: 0.08)
+              : colors.secondary,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          value,
+          style: AppTextStyles.bodyXs(
+            column == 'Trạng thái'
+                ? colors.primary
+                : colors.secondaryForeground,
+          ).copyWith(fontWeight: FontWeight.w700),
+        ),
+      );
+    }
+    return Text(
+      value,
+      style: column == 'Họ tên' && isUsers
+          ? AppTextStyles.bodySm(colors.foreground)
+                .copyWith(fontWeight: FontWeight.w700)
+          : column == 'Email' && isUsers
+          ? AppTextStyles.bodySm(colors.mutedForeground)
+          : AppTextStyles.bodySm(colors.foreground),
     );
   }
 

@@ -1,4 +1,4 @@
-import 'package:excel/excel.dart';
+import 'package:excel/excel.dart' hide Border;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -80,11 +80,39 @@ class _ClassesPageState extends State<ClassesPage> {
                 ChoiceChip(
                   label: const Text('Lớp đang mở'),
                   selected: !_showArchived,
+                  selectedColor: c.secondary,
+                  side: BorderSide(
+                    color: !_showArchived ? c.primary : c.border,
+                  ),
+                  labelStyle: TextStyle(
+                    color: !_showArchived
+                        ? c.secondaryForeground
+                        : c.mutedForeground,
+                    fontWeight: !_showArchived
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   onSelected: (_) => setState(() => _showArchived = false),
                 ),
                 ChoiceChip(
                   label: const Text('Lớp đã đóng / quá 1 năm'),
                   selected: _showArchived,
+                  selectedColor: c.secondary,
+                  side: BorderSide(color: _showArchived ? c.primary : c.border),
+                  labelStyle: TextStyle(
+                    color: _showArchived
+                        ? c.secondaryForeground
+                        : c.mutedForeground,
+                    fontWeight: _showArchived
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   onSelected: (_) => setState(() => _showArchived = true),
                 ),
               ],
@@ -115,71 +143,165 @@ class _ClassesPageState extends State<ClassesPage> {
               ),
             ...filteredItems.map(
               (item) => Card(
-                margin: const EdgeInsets.only(bottom: 10),
-                child: ListTile(
+                margin: const EdgeInsets.only(bottom: 14),
+                elevation: 2,
+                color: c.card,
+                shadowColor: Colors.black.withValues(alpha: 0.08),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: c.border),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
                   onTap: () => _showClassDetails(context, controller, item),
-                  title: Text(item.name),
-                  subtitle: Text(
-                    '${item.code}  |  ${item.lecturerName}\n'
-                    '${item.semester} · ${_dateTimeLabel(item.startTime)}\n'
-                    '${item.subjectCode} · ${item.majorName} · Khóa ${item.cohortCode}\n'
-                    '${item.credits} tín chỉ · Sĩ số ${item.studentCount}/${item.capacity}'
-                    '${item.isArchived ? '\n${item.isClosed ? 'Đã đóng' : 'Đã mở quá 1 năm'}' : ''}',
-                  ),
-                  isThreeLine: true,
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('${item.studentCount}/${item.capacity} SV'),
-                      if (_importingClassIds.contains(item.id))
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      else if (canManage)
-                        PopupMenuButton<String>(
-                          tooltip: 'Thao tác lớp',
-                          onSelected: (action) {
-                            if (action == 'edit') {
-                              _showClassDialog(context, controller, item: item);
-                            } else if (action == 'delete') {
-                              _confirmDelete(context, controller, item);
-                            } else if (action == 'close') {
-                              _confirmClose(context, controller, item);
-                            } else if (action == 'import') {
-                              _importStudentsFromExcel(
-                                context,
-                                controller,
-                                item,
-                              );
-                            }
-                          },
-                          itemBuilder: (context) => [
-                            if (!item.isArchived) ...[
-                              const PopupMenuItem(
-                                value: 'import',
-                                child: Text('Nhập sinh viên từ Excel'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Chỉnh sửa'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'close',
-                                child: Text('Đóng lớp'),
-                              ),
-                            ],
-                            const PopupMenuItem(
-                              value: 'delete',
-                              child: Text('Xóa'),
+                  hoverColor: c.primary.withValues(alpha: 0.035),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 680;
+                        final content = Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item.name,
+                              style: AppTextStyles.displayMd(c.foreground),
+                            ),
+                            const SizedBox(height: 7),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  item.code,
+                                  style: AppTextStyles.mono(c.primary),
+                                ),
+                                Text('•', style: TextStyle(color: c.border)),
+                                Text(
+                                  item.lecturerName,
+                                  style: AppTextStyles.bodySm(c.foreground),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            _classMetaLine(
+                              c,
+                              Icons.calendar_today_outlined,
+                              '${item.semester} · ${_dateTimeLabel(item.startTime)}',
+                            ),
+                            const SizedBox(height: 7),
+                            _classMetaLine(
+                              c,
+                              Icons.menu_book_outlined,
+                              '${item.subjectCode} · ${item.majorName} · Khóa ${item.cohortCode}',
+                            ),
+                            const SizedBox(height: 7),
+                            _classMetaLine(
+                              c,
+                              Icons.school_outlined,
+                              '${item.credits} tín chỉ'
+                              '${item.isArchived ? ' · ${item.isClosed ? 'Đã đóng' : 'Đã mở quá 1 năm'}' : ''}',
                             ),
                           ],
-                        ),
-                    ],
+                        );
+                        final actions = Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: c.secondary,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '${item.studentCount}/${item.capacity} SV',
+                                style: AppTextStyles.bodyXs(
+                                  c.secondaryForeground,
+                                ).copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            if (_importingClassIds.contains(item.id))
+                              const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            else if (canManage)
+                              PopupMenuButton<String>(
+                                tooltip: 'Thao tác lớp',
+                                onSelected: (action) {
+                                  if (action == 'edit') {
+                                    _showClassDialog(
+                                      context,
+                                      controller,
+                                      item: item,
+                                    );
+                                  } else if (action == 'delete') {
+                                    _confirmDelete(context, controller, item);
+                                  } else if (action == 'close') {
+                                    _confirmClose(context, controller, item);
+                                  } else if (action == 'import') {
+                                    _importStudentsFromExcel(
+                                      context,
+                                      controller,
+                                      item,
+                                    );
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  if (!item.isArchived) ...[
+                                    const PopupMenuItem(
+                                      value: 'import',
+                                      child: Text('Nhập sinh viên từ Excel'),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text('Chỉnh sửa'),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'close',
+                                      child: Text('Đóng lớp'),
+                                    ),
+                                  ],
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('Xóa'),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        );
+                        if (compact) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: actions,
+                              ),
+                              content,
+                            ],
+                          );
+                        }
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: content),
+                            const SizedBox(width: 16),
+                            actions,
+                          ],
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -188,6 +310,22 @@ class _ClassesPageState extends State<ClassesPage> {
         ),
       );
     });
+  }
+
+  Widget _classMetaLine(AppColors colors, IconData icon, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 17, color: colors.mutedForeground),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _importStudentsFromExcel(
@@ -369,48 +507,148 @@ class _ClassesPageState extends State<ClassesPage> {
           Theme.of(dialogContext).brightness == Brightness.dark,
         );
         return AlertDialog(
-          title: Text(item.name),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          surfaceTintColor: Colors.transparent,
+          titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: colors.secondary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.school_outlined,
+                  color: colors.secondaryForeground,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  item.name,
+                  style: AppTextStyles.displayMd(colors.foreground),
+                ),
+              ),
+            ],
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
           content: SizedBox(
-            width: 680,
-            height: MediaQuery.sizeOf(dialogContext).height * 0.72,
+            width: 760,
+            height: MediaQuery.sizeOf(dialogContext).height * 0.74,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(
-                  height: 190,
-                  child: Scrollbar(
-                    child: ListView(
-                      padding: EdgeInsets.zero,
-                      children: [
-                        Text('Mã lớp: ${item.code}'),
-                        Text('Giảng viên: ${item.lecturerName}'),
-                        Text('Học kỳ: ${item.semester}'),
-                        Text(
-                          'Thời gian bắt đầu: ${_dateTimeLabel(item.startTime)}',
-                        ),
-                        Text('Môn học: ${item.subjectCode}'),
-                        Text('Bộ môn: ${item.majorName}'),
-                        Text('Khóa: ${item.cohortCode}'),
-                        Text('Trạng thái: ${item.status}'),
-                        Text('Sĩ số: ${item.studentCount}'),
-                      ],
-                    ),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colors.muted.withValues(alpha: 0.55),
+                    border: Border.all(color: colors.border),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final twoColumns = constraints.maxWidth >= 600;
+                      final tileWidth = twoColumns
+                          ? (constraints.maxWidth - 12) / 2
+                          : constraints.maxWidth;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 14,
+                        children: [
+                          _classInfoTile(
+                            colors,
+                            Icons.tag_outlined,
+                            'Mã lớp',
+                            item.code,
+                            width: tileWidth,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.person_outline_rounded,
+                            'Giảng viên',
+                            item.lecturerName,
+                            width: tileWidth,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.calendar_month_outlined,
+                            'Học kỳ',
+                            item.semester,
+                            width: tileWidth,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.schedule_outlined,
+                            'Thời gian bắt đầu',
+                            _dateTimeLabel(item.startTime),
+                            width: tileWidth,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.menu_book_outlined,
+                            'Môn học',
+                            item.subjectCode,
+                            width: tileWidth,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.account_balance_outlined,
+                            'Bộ môn',
+                            item.majorName,
+                            width: tileWidth,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.groups_outlined,
+                            'Khóa',
+                            item.cohortCode,
+                            width: tileWidth,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.info_outline_rounded,
+                            'Trạng thái',
+                            item.status,
+                            width: tileWidth,
+                            badge: true,
+                          ),
+                          _classInfoTile(
+                            colors,
+                            Icons.people_outline_rounded,
+                            'Sĩ số',
+                            '${item.studentCount}',
+                            width: tileWidth,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Danh sách sinh viên (${item.studentCount})',
-                  style: Theme.of(dialogContext).textTheme.titleMedium,
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.people_alt_outlined,
+                      size: 20,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Danh sách sinh viên (${item.studentCount})',
+                      style: AppTextStyles.displaySm(colors.foreground),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Expanded(
                   child: FutureBuilder(
                     future: students,
                     builder: (context, snapshot) {
                       if (snapshot.connectionState != ConnectionState.done) {
-                        return const Center(
-                          child: CircularProgressIndicator(),
-                        );
+                        return const Center(child: CircularProgressIndicator());
                       }
                       if (snapshot.hasError) {
                         return Center(
@@ -432,14 +670,71 @@ class _ClassesPageState extends State<ClassesPage> {
               ],
             ),
           ),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
           actions: [
-            TextButton(
+            FilledButton.tonal(
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Đóng'),
             ),
           ],
         );
       },
+    );
+  }
+
+  Widget _classInfoTile(
+    AppColors colors,
+    IconData icon,
+    String label,
+    String value, {
+    required double width,
+    bool badge = false,
+  }) {
+    final valueWidget = badge
+        ? Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color: colors.secondary,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                value,
+                style: AppTextStyles.bodyXs(colors.secondaryForeground)
+                    .copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          )
+        : Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.bodySm(colors.foreground)
+                .copyWith(fontWeight: FontWeight.w600),
+          );
+    return SizedBox(
+      width: width,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: colors.primary),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: AppTextStyles.bodyXs(colors.mutedForeground),
+                ),
+                const SizedBox(height: 3),
+                valueWidget,
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -474,176 +769,323 @@ class _ClassesPageState extends State<ClassesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) {
+          final colors = AppColors.of(
+            Theme.of(context).brightness == Brightness.dark,
+          );
           return AlertDialog(
-            title: Text(item == null ? 'Tạo lớp' : 'Chỉnh sửa lớp'),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            surfaceTintColor: Colors.transparent,
+            titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: colors.secondary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.add_business_outlined,
+                    color: colors.secondaryForeground,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    item == null ? 'Tạo lớp' : 'Chỉnh sửa lớp',
+                    style: AppTextStyles.displayMd(colors.foreground),
+                  ),
+                ),
+              ],
+            ),
+            contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
             content: SizedBox(
-              width: 440,
+              width: 650,
               child: Form(
                 key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (item == null)
-                        DropdownButtonFormField<ClassSubjectOption>(
-                          initialValue: selectedSubject,
-                          decoration: const InputDecoration(
-                            labelText: 'Môn học',
-                          ),
-                          items: controller.subjects
-                              .map(
-                                (subject) =>
-                                    DropdownMenuItem<ClassSubjectOption>(
-                                      value: subject,
-                                      child: Text(
-                                        '${subject.code} · ${subject.name} · ${subject.credits} tín chỉ',
-                                        overflow: TextOverflow.ellipsis,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.7,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _classFormSection(
+                          colors,
+                          Icons.menu_book_outlined,
+                          'Thông tin môn/lớp',
+                          [
+                            if (item == null)
+                              DropdownButtonFormField<ClassSubjectOption>(
+                                initialValue: selectedSubject,
+                                isExpanded: true,
+                                itemHeight: 68,
+                                menuMaxHeight: 360,
+                                borderRadius: BorderRadius.circular(12),
+                                decoration: _classInputDecoration(
+                                  colors,
+                                  'Môn học',
+                                ),
+                                items: controller.subjects
+                                    .map(
+                                      (
+                                        subject,
+                                      ) => DropdownMenuItem<ClassSubjectOption>(
+                                        value: subject,
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              subject.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style:
+                                                  AppTextStyles.bodySm(
+                                                    colors.foreground,
+                                                  ).copyWith(
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              '${subject.code} · ${subject.credits} tín chỉ',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: AppTextStyles.bodyXs(
+                                                colors.mutedForeground,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) => setState(() {
+                                  selectedSubject = value;
+                                  if (value != null) {
+                                    nameController.text = value.name;
+                                  }
+                                }),
+                                validator: (value) => value == null
+                                    ? 'Vui lòng chọn môn học'
+                                    : null,
+                              )
+                            else
+                              InputDecorator(
+                                decoration: _classInputDecoration(
+                                  colors,
+                                  'Môn học',
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      selectedSubject?.name ?? item.name,
+                                      style: AppTextStyles.bodySm(
+                                        colors.foreground,
+                                      ).copyWith(fontWeight: FontWeight.w700),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      '${item.subjectCode} · ${item.credits} tín chỉ',
+                                      style: AppTextStyles.bodyXs(
+                                        colors.mutedForeground,
                                       ),
                                     ),
-                              )
-                              .toList(),
-                          onChanged: (value) => setState(() {
-                            selectedSubject = value;
-                            if (value != null) {
-                              nameController.text = value.name;
-                            }
-                          }),
-                          validator: (value) =>
-                              value == null ? 'Vui lòng chọn môn học' : null,
-                        )
-                      else
-                        InputDecorator(
-                          decoration: const InputDecoration(
-                            labelText: 'Môn học',
-                          ),
-                          child: Text(
-                            '${item.subjectCode} · ${selectedSubject?.name ?? item.name}'
-                            '\n${item.credits} tín chỉ',
-                          ),
-                        ),
-                      if (item == null && selectedSubject != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'Môn học có ${selectedSubject!.credits} tín chỉ.',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                        ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: nameController,
-                        decoration: const InputDecoration(
-                          labelText: 'Tên lớp học phần',
-                        ),
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                            ? 'Vui lòng nhập tên lớp'
-                            : null,
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: capacityController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Sĩ số tối đa',
-                          suffixText: 'sinh viên',
-                        ),
-                        validator: (value) {
-                          final capacity = int.tryParse(value?.trim() ?? '');
-                          if (capacity == null || capacity < 1) {
-                            return 'Nhập số lượng sinh viên lớn hơn 0.';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      InputDecorator(
-                        decoration: const InputDecoration(labelText: 'Bộ môn'),
-                        child: Text(
-                          selectedSubject?.majorName ?? item?.majorName ?? '',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (item == null)
-                        DropdownButtonFormField<String>(
-                          initialValue: cohortCode,
-                          decoration: const InputDecoration(
-                            labelText: 'Khóa sinh viên',
-                          ),
-                          items: controller.cohorts
-                              .map(
-                                (cohort) => DropdownMenuItem<String>(
-                                  value: cohort.code,
-                                  child: Text(cohort.code),
+                                  ],
                                 ),
-                              )
-                              .toList(),
-                          onChanged: (value) =>
-                              setState(() => cohortCode = value),
-                          validator: (value) => value == null
-                              ? 'Vui lòng chọn khóa sinh viên'
-                              : null,
-                        )
-                      else
-                        InputDecorator(
-                          decoration: const InputDecoration(
-                            labelText: 'Khóa sinh viên',
-                          ),
-                          child: Text(item.cohortCode),
-                        ),
-                      const SizedBox(height: 12),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Thời gian bắt đầu'),
-                        subtitle: Text(
-                          startTime == null
-                              ? 'Chưa chọn'
-                              : '${_dateTimeLabel(startTime!.toIso8601String())}'
-                                    '\nHọc kỳ tự động: ${semesterForDate(startTime!)}',
-                        ),
-                        trailing: const Icon(Icons.calendar_month_outlined),
-                        onTap: () async {
-                          final selected = await _pickStartTime(
-                            context,
-                            startTime,
-                          );
-                          if (!context.mounted || selected == null) return;
-                          setState(() {
-                            startTime = selected;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        initialValue: lecturerId,
-                        decoration: const InputDecoration(
-                          labelText: 'Giảng viên',
-                        ),
-                        items: [
-                          const DropdownMenuItem<String>(
-                            value: null,
-                            child: Text('Chưa phân công'),
-                          ),
-                          ...controller.lecturers.map(
-                            (lecturer) => DropdownMenuItem<String>(
-                              value: lecturer.id,
-                              child: Text(lecturer.name),
+                              ),
+                            if (item == null && selectedSubject != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Môn học có ${selectedSubject!.credits} tín chỉ.',
+                                    style: AppTextStyles.bodyXs(
+                                      colors.mutedForeground,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: nameController,
+                              decoration: _classInputDecoration(
+                                colors,
+                                'Tên lớp học phần',
+                              ),
+                              validator: (value) =>
+                                  value == null || value.trim().isEmpty
+                                  ? 'Vui lòng nhập tên lớp'
+                                  : null,
                             ),
-                          ),
-                        ],
-                        onChanged: (value) =>
-                            setState(() => lecturerId = value),
-                      ),
-                    ],
+                            const SizedBox(height: 12),
+                            InputDecorator(
+                              decoration: _classInputDecoration(
+                                colors,
+                                'Bộ môn',
+                              ),
+                              child: Text(
+                                selectedSubject?.majorName ??
+                                    item?.majorName ??
+                                    '',
+                                style: AppTextStyles.bodySm(colors.foreground),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _classFormSection(
+                          colors,
+                          Icons.groups_outlined,
+                          'Thông tin tuyển sinh',
+                          [
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final twoColumns = constraints.maxWidth >= 540;
+                                final itemWidth = twoColumns
+                                    ? (constraints.maxWidth - 12) / 2
+                                    : constraints.maxWidth;
+                                return Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: [
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: TextFormField(
+                                        controller: capacityController,
+                                        keyboardType: TextInputType.number,
+                                        decoration: _classInputDecoration(
+                                          colors,
+                                          'Sĩ số tối đa',
+                                        ).copyWith(suffixText: 'sinh viên'),
+                                        validator: (value) {
+                                          final capacity = int.tryParse(
+                                            value?.trim() ?? '',
+                                          );
+                                          if (capacity == null ||
+                                              capacity < 1) {
+                                            return 'Nhập số lượng sinh viên lớn hơn 0.';
+                                          }
+                                          return null;
+                                        },
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: item == null
+                                          ? DropdownButtonFormField<String>(
+                                              initialValue: cohortCode,
+                                              isExpanded: true,
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              decoration: _classInputDecoration(
+                                                colors,
+                                                'Khóa sinh viên',
+                                              ),
+                                              items: controller.cohorts
+                                                  .map(
+                                                    (cohort) =>
+                                                        DropdownMenuItem<
+                                                          String
+                                                        >(
+                                                          value: cohort.code,
+                                                          child: Text(
+                                                            cohort.code,
+                                                          ),
+                                                        ),
+                                                  )
+                                                  .toList(),
+                                              onChanged: (value) => setState(
+                                                () => cohortCode = value,
+                                              ),
+                                              validator: (value) =>
+                                                  value == null
+                                                  ? 'Vui lòng chọn khóa sinh viên'
+                                                  : null,
+                                            )
+                                          : InputDecorator(
+                                              decoration: _classInputDecoration(
+                                                colors,
+                                                'Khóa sinh viên',
+                                              ),
+                                              child: Text(item.cohortCode),
+                                            ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _classFormSection(
+                          colors,
+                          Icons.assignment_ind_outlined,
+                          'Phân công & thời gian',
+                          [
+                            _classDateField(
+                              colors,
+                              startTime == null
+                                  ? 'Chưa chọn'
+                                  : '${_dateTimeLabel(startTime!.toIso8601String())}'
+                                        '\nHọc kỳ tự động: ${semesterForDate(startTime!)}',
+                              () async {
+                                final selected = await _pickStartTime(
+                                  context,
+                                  startTime,
+                                );
+                                if (!context.mounted || selected == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  startTime = selected;
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              initialValue: lecturerId,
+                              isExpanded: true,
+                              borderRadius: BorderRadius.circular(12),
+                              decoration: _classInputDecoration(
+                                colors,
+                                'Giảng viên',
+                              ),
+                              items: [
+                                const DropdownMenuItem<String>(
+                                  value: null,
+                                  child: Text('Chưa phân công'),
+                                ),
+                                ...controller.lecturers.map(
+                                  (lecturer) => DropdownMenuItem<String>(
+                                    value: lecturer.id,
+                                    child: Text(lecturer.name),
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) =>
+                                  setState(() => lecturerId = value),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 10, 24, 20),
+            actionsAlignment: MainAxisAlignment.end,
             actions: [
-              TextButton(
+              OutlinedButton(
                 onPressed: () => Navigator.pop(dialogContext),
                 child: const Text('Hủy'),
               ),
@@ -697,6 +1139,106 @@ class _ClassesPageState extends State<ClassesPage> {
     );
     nameController.dispose();
     capacityController.dispose();
+  }
+
+  static Widget _classFormSection(
+    AppColors colors,
+    IconData icon,
+    String title,
+    List<Widget> children,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.025),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 19, color: colors.primary),
+              const SizedBox(width: 8),
+              Text(title, style: AppTextStyles.displaySm(colors.foreground)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  static InputDecoration _classInputDecoration(AppColors colors, String label) {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(11),
+      borderSide: BorderSide(color: colors.border),
+    );
+    return InputDecoration(
+      labelText: label,
+      border: border,
+      enabledBorder: border,
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: BorderSide(color: colors.primary, width: 1.5),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    );
+  }
+
+  static Widget _classDateField(
+    AppColors colors,
+    String value,
+    VoidCallback onTap,
+  ) {
+    return Material(
+      color: colors.muted.withValues(alpha: 0.45),
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(11),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: colors.border),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Thời gian bắt đầu',
+                      style: AppTextStyles.bodyXs(colors.mutedForeground),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      value,
+                      style: AppTextStyles.bodySm(colors.foreground)
+                          .copyWith(height: 1.4, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(Icons.calendar_month_outlined, color: colors.primary),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<DateTime?> _pickStartTime(
@@ -796,9 +1338,8 @@ class _ClassesPageState extends State<ClassesPage> {
       await controller.closeClass(item.id);
     } catch (exception) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(exception.toString())));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(exception.toString())));
       }
     }
   }

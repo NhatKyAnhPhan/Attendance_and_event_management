@@ -111,11 +111,41 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                 ChoiceChip(
                   label: const Text('Sự kiện đang mở'),
                   selected: !_showArchived,
+                  selectedColor: colors.secondary,
+                  side: BorderSide(
+                    color: !_showArchived ? colors.primary : colors.border,
+                  ),
+                  labelStyle: TextStyle(
+                    color: !_showArchived
+                        ? colors.secondaryForeground
+                        : colors.mutedForeground,
+                    fontWeight: !_showArchived
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   onSelected: (_) => setState(() => _showArchived = false),
                 ),
                 ChoiceChip(
                   label: const Text('Sự kiện đã đóng / quá 1 năm'),
                   selected: _showArchived,
+                  selectedColor: colors.secondary,
+                  side: BorderSide(
+                    color: _showArchived ? colors.primary : colors.border,
+                  ),
+                  labelStyle: TextStyle(
+                    color: _showArchived
+                        ? colors.secondaryForeground
+                        : colors.mutedForeground,
+                    fontWeight: _showArchived
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   onSelected: (_) => setState(() => _showArchived = true),
                 ),
               ],
@@ -143,63 +173,119 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ),
             ...filteredItems.map(
               (event) => Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(16),
+                margin: const EdgeInsets.only(bottom: 14),
+                elevation: 2,
+                color: colors.card,
+                shadowColor: Colors.black.withValues(alpha: 0.08),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: colors.border),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
                   onTap: () => _showEventDetails(context, controller, event),
-                  title: Text(
-                    event.name,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  subtitle: Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      '${event.location}\n'
-                      '${DateFormat('dd/MM/yyyy HH:mm').format(event.startTime)} - '
-                      '${DateFormat('HH:mm').format(event.endTime)}\n'
-                      'Đăng ký: ${event.registeredCount}/${event.capacity}'
-                      '${event.isArchived ? '\n${event.isClosed ? 'Đã đóng' : 'Đã diễn ra quá 1 năm'}' : ''}',
-                    ),
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Chip(label: Text(event.status)),
-                      if (canManageEvents || canDeleteEvents)
-                        PopupMenuButton<String>(
-                          tooltip: 'Thao tác sự kiện',
-                          onSelected: (action) {
-                            if (action == 'edit') {
-                              _showEventDialog(
-                                context,
-                                controller,
-                                event: event,
-                              );
-                            } else if (action == 'delete') {
-                              _confirmDelete(context, controller, event);
-                            } else if (action == 'close') {
-                              _confirmClose(context, controller, event);
-                            }
-                          },
-                          itemBuilder: (context) => [
-                            if (canManageEvents && _canEditEvent(event))
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Chỉnh sửa'),
+                  hoverColor: colors.primary.withValues(alpha: 0.035),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                event.name,
+                                style: AppTextStyles.displayMd(
+                                  colors.foreground,
+                                ),
                               ),
-                            if (canManageEvents && !event.isArchived)
-                              const PopupMenuItem(
-                                value: 'close',
-                                child: Text('Đóng sự kiện'),
+                              const SizedBox(height: 10),
+                              _eventMetaLine(
+                                colors,
+                                Icons.location_on_outlined,
+                                event.location,
                               ),
-                            if (canDeleteEvents)
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Xóa'),
+                              const SizedBox(height: 7),
+                              _eventMetaLine(
+                                colors,
+                                Icons.calendar_month_outlined,
+                                '${DateFormat('dd/MM/yyyy HH:mm').format(event.startTime)} - '
+                                '${DateFormat('HH:mm').format(event.endTime)}',
                               ),
-                          ],
+                              const SizedBox(height: 7),
+                              _eventMetaLine(
+                                colors,
+                                Icons.people_outline_rounded,
+                                'Đăng ký: ${event.registeredCount}/${event.capacity}',
+                              ),
+                              if (event.isArchived) ...[
+                                const SizedBox(height: 7),
+                                Text(
+                                  event.isClosed
+                                      ? 'Đã đóng'
+                                      : 'Đã diễn ra quá 1 năm',
+                                  style: AppTextStyles.bodyXs(
+                                    colors.mutedForeground,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
-                    ],
+                        const SizedBox(width: 16),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colors.secondary,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            event.status,
+                            style: AppTextStyles.bodyXs(
+                              colors.secondaryForeground,
+                            ).copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        if (canManageEvents || canDeleteEvents)
+                          PopupMenuButton<String>(
+                            tooltip: 'Thao tác sự kiện',
+                            onSelected: (action) {
+                              if (action == 'edit') {
+                                _showEventDialog(
+                                  context,
+                                  controller,
+                                  event: event,
+                                );
+                              } else if (action == 'delete') {
+                                _confirmDelete(context, controller, event);
+                              } else if (action == 'close') {
+                                _confirmClose(context, controller, event);
+                              }
+                            },
+                            itemBuilder: (context) => [
+                              if (canManageEvents && _canEditEvent(event))
+                                const PopupMenuItem(
+                                  value: 'edit',
+                                  child: Text('Chỉnh sửa'),
+                                ),
+                              if (canManageEvents && !event.isArchived)
+                                const PopupMenuItem(
+                                  value: 'close',
+                                  child: Text('Đóng sự kiện'),
+                                ),
+                              if (canDeleteEvents)
+                                const PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('Xóa'),
+                                ),
+                            ],
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -208,6 +294,22 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         ),
       );
     });
+  }
+
+  Widget _eventMetaLine(AppColors colors, IconData icon, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 17, color: colors.mutedForeground),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+        ),
+      ],
+    );
   }
 
   // Hiển thị thông tin chi tiết của một sự kiện.
@@ -224,9 +326,34 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(event.name),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        surfaceTintColor: Colors.transparent,
+        titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: colors.secondary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.event_outlined,
+                color: colors.secondaryForeground,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                event.name,
+                style: AppTextStyles.displayMd(colors.foreground),
+              ),
+            ),
+          ],
+        ),
+        contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
         content: SizedBox(
-          width: 700,
+          width: 760,
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
@@ -256,31 +383,82 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _detailSection('Thông tin sự kiện', [
-                        _detailRow('Mã sự kiện', event.id),
-                        _detailRow('Trạng thái', event.status),
-                        _detailRow(
-                          'Đơn vị tổ chức',
-                          details['organizerName']?.toString() ??
-                              event.organizerId,
-                        ),
-                        _detailRow(
-                          'Thời gian bắt đầu',
-                          DateFormat('dd/MM/yyyy HH:mm')
-                              .format(event.startTime),
-                        ),
-                        _detailRow(
-                          'Thời gian kết thúc',
-                          DateFormat('dd/MM/yyyy HH:mm').format(event.endTime),
-                        ),
-                        _detailRow('Địa điểm', event.location),
-                        _detailRow(
-                          'Số lượng đăng ký',
-                          '${details['registeredCount'] ?? event.registeredCount}/${details['capacity'] ?? event.capacity}',
-                        ),
-                      ]),
+                      _detailSection(
+                        colors,
+                        Icons.info_outline_rounded,
+                        'Thông tin sự kiện',
+                        [
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final twoColumns = constraints.maxWidth >= 600;
+                              final itemWidth = twoColumns
+                                  ? (constraints.maxWidth - 12) / 2
+                                  : constraints.maxWidth;
+                              return Wrap(
+                                spacing: 12,
+                                runSpacing: 14,
+                                children: [
+                                  _eventInfoTile(
+                                    colors,
+                                    Icons.tag_outlined,
+                                    'Mã sự kiện',
+                                    event.id,
+                                    itemWidth,
+                                  ),
+                                  _eventInfoTile(
+                                    colors,
+                                    Icons.check_circle_outline_rounded,
+                                    'Trạng thái',
+                                    event.status,
+                                    itemWidth,
+                                    badge: true,
+                                  ),
+                                  _eventInfoTile(
+                                    colors,
+                                    Icons.account_balance_outlined,
+                                    'Đơn vị tổ chức',
+                                    details['organizerName']?.toString() ??
+                                        event.organizerId,
+                                    itemWidth,
+                                  ),
+                                  _eventInfoTile(
+                                    colors,
+                                    Icons.schedule_outlined,
+                                    'Thời gian bắt đầu',
+                                    DateFormat('dd/MM/yyyy HH:mm')
+                                        .format(event.startTime),
+                                    itemWidth,
+                                  ),
+                                  _eventInfoTile(
+                                    colors,
+                                    Icons.event_available_outlined,
+                                    'Thời gian kết thúc',
+                                    DateFormat('dd/MM/yyyy HH:mm')
+                                        .format(event.endTime),
+                                    itemWidth,
+                                  ),
+                                  _eventInfoTile(
+                                    colors,
+                                    Icons.location_on_outlined,
+                                    'Địa điểm',
+                                    event.location,
+                                    itemWidth,
+                                  ),
+                                  _eventInfoTile(
+                                    colors,
+                                    Icons.people_outline_rounded,
+                                    'Số lượng đăng ký',
+                                    '${details['registeredCount'] ?? event.registeredCount}/${details['capacity'] ?? event.capacity}',
+                                    itemWidth,
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 16),
-                      _detailSection('Mô tả', [
+                      _detailSection(colors, Icons.notes_outlined, 'Mô tả', [
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxHeight: 160),
                           child: Scrollbar(
@@ -289,6 +467,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                                 description == null || description.isEmpty
                                     ? 'Chưa có mô tả cho sự kiện này.'
                                     : description,
+                                style: AppTextStyles.bodySm(colors.foreground)
+                                    .copyWith(height: 1.5),
                               ),
                             ),
                           ),
@@ -296,6 +476,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                       ]),
                       const SizedBox(height: 16),
                       _detailSection(
+                        colors,
+                        Icons.workspace_premium_outlined,
                         'Quyền lợi',
                         benefits.isEmpty
                             ? [const Text('Chưa có thông tin quyền lợi.')]
@@ -303,37 +485,95 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                                 final type = benefit['type']?.toString();
                                 final points = benefit['points'];
                                 final content = benefit['content']?.toString();
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Text(
-                                    [
-                                      if (type != null && type.isNotEmpty) type,
-                                      if (points != null) '$points điểm',
-                                      if (content != null && content.isNotEmpty)
-                                        content,
-                                    ].join(' · '),
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colors.muted.withValues(alpha: 0.55),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(
+                                        Icons.check_circle_outline_rounded,
+                                        size: 18,
+                                        color: colors.primary,
+                                      ),
+                                      const SizedBox(width: 9),
+                                      Expanded(
+                                        child: Text(
+                                          [
+                                            if (type != null && type.isNotEmpty)
+                                              type,
+                                            if (points != null) '$points điểm',
+                                            if (content != null &&
+                                                content.isNotEmpty)
+                                              content,
+                                          ].join(' · '),
+                                          style: AppTextStyles.bodySm(
+                                            colors.foreground,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 );
                               }).toList(),
                       ),
                       const SizedBox(height: 16),
                       _detailSection(
+                        colors,
+                        Icons.rule_outlined,
                         'Nội quy',
                         rules.isEmpty
                             ? [const Text('Chưa có nội quy cho sự kiện này.')]
                             : rules.map((rule) {
                                 final order = rule['sortOrder']?.toString();
                                 final text = rule['text']?.toString() ?? '';
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Text(
-                                    order == null ? text : '$order. $text',
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colors.muted.withValues(alpha: 0.55),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(
+                                        Icons.shield_outlined,
+                                        size: 18,
+                                        color: colors.primary,
+                                      ),
+                                      const SizedBox(width: 9),
+                                      Expanded(
+                                        child: Text(
+                                          order == null
+                                              ? text
+                                              : '$order. $text',
+                                          style: AppTextStyles.bodySm(
+                                            colors.foreground,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 );
                               }).toList(),
                       ),
                       const SizedBox(height: 16),
                       _detailSection(
+                        colors,
+                        Icons.groups_outlined,
                         'Danh sách sinh viên đăng ký '
                         '(${event.registeredCount})',
                         [
@@ -376,11 +616,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             ),
           ),
         ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
+        actionsAlignment: MainAxisAlignment.end,
         actions: [
           if (Get.find<AuthController>().canManageEvents &&
               !event.isClosed &&
               event.endTime.isAfter(DateTime.now()))
-            TextButton.icon(
+            OutlinedButton.icon(
               onPressed: () =>
                   _showEventAttendanceQr(dialogContext, controller, event),
               icon: const Icon(Icons.qr_code_2),
@@ -388,7 +630,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             ),
           if (Get.find<AuthController>().canManageEvents &&
               event.endTime.isBefore(DateTime.now()))
-            TextButton.icon(
+            FilledButton.icon(
               onPressed: _sendingCertificates
                   ? null
                   : () => _confirmSendCertificates(
@@ -539,28 +781,97 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     }
   }
 
-  static Widget _detailSection(String title, List<Widget> children) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        ...children,
-      ],
+  static Widget _detailSection(
+    AppColors colors,
+    IconData icon,
+    String title,
+    List<Widget> children,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: colors.primary),
+              const SizedBox(width: 8),
+              Text(title, style: AppTextStyles.displaySm(colors.foreground)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...children,
+        ],
+      ),
     );
   }
 
-  static Widget _detailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+  static Widget _eventInfoTile(
+    AppColors colors,
+    IconData icon,
+    String label,
+    String value,
+    double width, {
+    bool badge = false,
+  }) {
+    final displayValue = value.isEmpty ? 'Chưa cập nhật' : value;
+    return SizedBox(
+      width: width,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 150,
-            child: Text(label, style: const TextStyle(color: Colors.grey)),
+          Icon(icon, size: 18, color: colors.primary),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: AppTextStyles.bodyXs(colors.mutedForeground),
+                ),
+                const SizedBox(height: 3),
+                if (badge)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.secondary,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        displayValue,
+                        style: AppTextStyles.bodyXs(colors.secondaryForeground)
+                            .copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    displayValue,
+                    style: AppTextStyles.bodySm(colors.foreground)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
+              ],
+            ),
           ),
-          Expanded(child: Text(value.isEmpty ? 'Chưa cập nhật' : value)),
         ],
       ),
     );
@@ -589,7 +900,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       } catch (exception) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Không tải được chi tiết sự kiện: $exception')),
+            SnackBar(
+              content: Text('Không tải được chi tiết sự kiện: $exception'),
+            ),
           );
         }
         return;
@@ -635,278 +948,389 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(isEditing ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện'),
-          content: SizedBox(
-            width: 480,
-            child: Form(
-              key: formKey,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _field(nameController, 'Tên sự kiện'),
-                    _unitField(
-                      controller.units,
-                      selectedOrganizerId,
-                      organizerController,
-                      (value) => setState(() => selectedOrganizerId = value),
-                    ),
-                    _field(locationController, 'Địa điểm'),
-                    _field(capacityController, 'Số lượng tối đa', number: true),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: descriptionController,
-                      maxLength: 1000,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Nội dung / mô tả sự kiện',
-                        alignLabelWithHint: true,
-                        border: OutlineInputBorder(),
+        builder: (context, setState) {
+          final colors = AppColors.of(
+            Theme.of(context).brightness == Brightness.dark,
+          );
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            surfaceTintColor: Colors.transparent,
+            titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: colors.secondary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.event_note_outlined,
+                    color: colors.secondaryForeground,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    isEditing ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện',
+                    style: AppTextStyles.displayMd(colors.foreground),
+                  ),
+                ),
+              ],
+            ),
+            contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
+            content: SizedBox(
+              width: 700,
+              height: MediaQuery.sizeOf(dialogContext).height * 0.7,
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _eventFormSection(
+                        colors,
+                        Icons.info_outline_rounded,
+                        'Thông tin cơ bản',
+                        [
+                          _field(nameController, 'Tên sự kiện'),
+                          _unitField(
+                            controller.units,
+                            selectedOrganizerId,
+                            organizerController,
+                            (value) =>
+                                setState(() => selectedOrganizerId = value),
+                          ),
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final twoColumns = constraints.maxWidth >= 560;
+                              final itemWidth = twoColumns
+                                  ? (constraints.maxWidth - 12) / 2
+                                  : constraints.maxWidth;
+                              return Wrap(
+                                spacing: 12,
+                                children: [
+                                  SizedBox(
+                                    width: itemWidth,
+                                    child: _field(
+                                      locationController,
+                                      'Địa điểm',
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: itemWidth,
+                                    child: _field(
+                                      capacityController,
+                                      'Số lượng tối đa',
+                                      number: true,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: itemWidth,
+                                    child: _eventDateTile(
+                                      colors,
+                                      'Bắt đầu',
+                                      DateFormat('dd/MM/yyyy HH:mm')
+                                          .format(startTime),
+                                      () async {
+                                        final selected = await _pickDateTime(
+                                          context,
+                                          startTime,
+                                        );
+                                        if (!context.mounted) return;
+                                        if (selected != null) {
+                                          if (!endTime.isAfter(selected)) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Thời gian bắt đầu phải trước thời gian kết thúc.',
+                                                    ),
+                                                  ),
+                                                );
+                                            return;
+                                          }
+                                          setState(() => startTime = selected);
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: itemWidth,
+                                    child: _eventDateTile(
+                                      colors,
+                                      'Kết thúc',
+                                      DateFormat('dd/MM/yyyy HH:mm')
+                                          .format(endTime),
+                                      () async {
+                                        final selected = await _pickDateTime(
+                                          context,
+                                          endTime,
+                                        );
+                                        if (!context.mounted) return;
+                                        if (selected != null) {
+                                          if (!selected.isAfter(startTime)) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'Thời gian kết thúc phải sau thời gian bắt đầu.',
+                                                    ),
+                                                  ),
+                                                );
+                                            return;
+                                          }
+                                          setState(() => endTime = selected);
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
+                      const SizedBox(height: 16),
+                      _eventFormSection(
+                        colors,
+                        Icons.notes_outlined,
+                        'Nội dung',
+                        [
+                          TextFormField(
+                            controller: descriptionController,
+                            maxLength: 1000,
+                            maxLines: 4,
+                            decoration: _eventInputDecoration(
+                              'Nội dung / mô tả sự kiện',
+                              alignLabelWithHint: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _eventFormSection(
+                        colors,
+                        Icons.workspace_premium_outlined,
                         'Quyền lợi',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                    ),
-                    ...benefits.asMap().entries.map((entry) {
-                      final index = entry.key;
-                      final benefit = entry.value;
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              flex: 4,
-                              child: DropdownButtonFormField<String>(
-                                initialValue: benefit.type,
-                                decoration: const InputDecoration(
-                                  labelText: 'Loại',
-                                  border: OutlineInputBorder(),
-                                ),
-                                items: const [
-                                  'Điểm rèn luyện',
-                                  'Điểm công tác xã hội',
-                                  'Chứng nhận',
-                                  'Khác',
-                                ]
-                                    .map(
-                                      (type) => DropdownMenuItem(
-                                        value: type,
-                                        child: Text(
-                                          type,
-                                          overflow: TextOverflow.ellipsis,
+                        [
+                          ...benefits.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final benefit = entry.value;
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: colors.muted.withValues(alpha: 0.45),
+                                border: Border.all(color: colors.border),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final compact = constraints.maxWidth < 560;
+                                  final typeField =
+                                      DropdownButtonFormField<String>(
+                                        initialValue: benefit.type,
+                                        decoration: _eventInputDecoration(
+                                          'Loại',
                                         ),
-                                      ),
-                                    )
-                                    .toList(),
-                                onChanged: (type) {
-                                  if (type != null) {
-                                    setState(() => benefit.type = type);
-                                  }
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 72,
-                              child: TextFormField(
-                                controller: benefit.pointsController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Điểm',
-                                  border: OutlineInputBorder(),
-                                ),
-                                validator: (value) {
-                                  final points = int.tryParse(
-                                    value?.trim() ?? '',
+                                        items:
+                                            const [
+                                                  'Điểm rèn luyện',
+                                                  'Điểm công tác xã hội',
+                                                  'Chứng nhận',
+                                                  'Khác',
+                                                ]
+                                                .map(
+                                                  (type) => DropdownMenuItem(
+                                                    value: type,
+                                                    child: Text(
+                                                      type,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                )
+                                                .toList(),
+                                        onChanged: (type) {
+                                          if (type != null) {
+                                            setState(() => benefit.type = type);
+                                          }
+                                        },
+                                      );
+                                  final pointsField = TextFormField(
+                                    controller: benefit.pointsController,
+                                    keyboardType: TextInputType.number,
+                                    decoration: _eventInputDecoration('Điểm'),
+                                    validator: (value) {
+                                      final points = int.tryParse(
+                                        value?.trim() ?? '',
+                                      );
+                                      return points == null || points < 0
+                                          ? 'Số điểm không hợp lệ'
+                                          : null;
+                                    },
                                   );
-                                  return points == null || points < 0
-                                      ? 'Số điểm không hợp lệ'
-                                      : null;
+                                  final contentField = TextFormField(
+                                    controller: benefit.contentController,
+                                    maxLength: 500,
+                                    decoration: _eventInputDecoration(
+                                      'Mô tả quyền lợi',
+                                    ),
+                                    validator: (value) =>
+                                        value == null || value.trim().isEmpty
+                                        ? 'Nhập quyền lợi'
+                                        : null,
+                                  );
+                                  final removeButton = IconButton(
+                                    tooltip: 'Xóa quyền lợi',
+                                    onPressed: () => setState(() {
+                                      benefits.removeAt(index).dispose();
+                                    }),
+                                    icon: const Icon(Icons.delete_outline),
+                                  );
+                                  if (compact) {
+                                    return Column(
+                                      children: [
+                                        typeField,
+                                        const SizedBox(height: 10),
+                                        pointsField,
+                                        const SizedBox(height: 10),
+                                        contentField,
+                                        Align(
+                                          alignment: Alignment.centerRight,
+                                          child: removeButton,
+                                        ),
+                                      ],
+                                    );
+                                  }
+                                  return Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(flex: 4, child: typeField),
+                                      const SizedBox(width: 10),
+                                      SizedBox(width: 86, child: pointsField),
+                                      const SizedBox(width: 10),
+                                      Expanded(flex: 5, child: contentField),
+                                      removeButton,
+                                    ],
+                                  );
                                 },
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              flex: 5,
-                              child: TextFormField(
-                                controller: benefit.contentController,
-                                maxLength: 500,
-                                decoration: const InputDecoration(
-                                  labelText: 'Mô tả quyền lợi',
-                                  border: OutlineInputBorder(),
-                                ),
-                                validator: (value) => value == null
-                                    || value.trim().isEmpty
-                                    ? 'Nhập quyền lợi'
-                                    : null,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Xóa quyền lợi',
-                              onPressed: () => setState(() {
-                                benefits.removeAt(index).dispose();
-                              }),
-                              icon: const Icon(Icons.delete_outline),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: () => setState(
-                          () => benefits.add(_EventBenefitDraft()),
-                        ),
-                        icon: const Icon(Icons.add),
-                        label: const Text('Thêm quyền lợi'),
-                      ),
-                    ),
-                    TextFormField(
-                      controller: rulesController,
-                      maxLines: 4,
-                      maxLength: 3000,
-                      decoration: const InputDecoration(
-                        labelText: 'Nội quy (mỗi dòng một nội quy)',
-                        alignLabelWithHint: true,
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Bắt đầu'),
-                      subtitle: Text(
-                        DateFormat('dd/MM/yyyy HH:mm').format(startTime),
-                      ),
-                      onTap: () async {
-                        final selected = await _pickDateTime(
-                          context,
-                          startTime,
-                        );
-                        if (!context.mounted) return;
-                        if (selected != null) {
-                          if (!endTime.isAfter(selected)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Thời gian bắt đầu phải trước thời gian kết thúc.',
-                                ),
-                              ),
                             );
-                            return;
-                          }
-                          setState(() => startTime = selected);
-                        }
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Kết thúc'),
-                      subtitle: Text(
-                        DateFormat('dd/MM/yyyy HH:mm').format(endTime),
-                      ),
-                      onTap: () async {
-                        final selected = await _pickDateTime(context, endTime);
-                        if (!context.mounted) return;
-                        if (selected != null) {
-                          if (!selected.isAfter(startTime)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Thời gian kết thúc phải sau thời gian bắt đầu.',
-                                ),
+                          }),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: () => setState(
+                                () => benefits.add(_EventBenefitDraft()),
                               ),
-                            );
-                            return;
-                          }
-                          setState(() => endTime = selected);
-                        }
-                      },
-                    ),
-                  ],
+                              icon: const Icon(Icons.add),
+                              label: const Text('Thêm quyền lợi'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _eventFormSection(
+                        colors,
+                        Icons.rule_outlined,
+                        'Nội quy',
+                        [
+                          TextFormField(
+                            controller: rulesController,
+                            maxLines: 4,
+                            maxLength: 3000,
+                            decoration: _eventInputDecoration(
+                              'Nội quy (mỗi dòng một nội quy)',
+                              alignLabelWithHint: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Hủy'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final timeError = _eventTimeError(
-                  startTime,
-                  endTime,
-                  isEditing,
-                );
-                if (!formKey.currentState!.validate() || timeError != null) {
-                  if (context.mounted && timeError != null) {
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(SnackBar(content: Text(timeError)));
+            actionsPadding: const EdgeInsets.fromLTRB(24, 10, 24, 20),
+            actionsAlignment: MainAxisAlignment.end,
+            actions: [
+              OutlinedButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Hủy'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final timeError = _eventTimeError(
+                    startTime,
+                    endTime,
+                    isEditing,
+                  );
+                  if (!formKey.currentState!.validate() || timeError != null) {
+                    if (context.mounted && timeError != null) {
+                      ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content: Text(timeError)));
+                    }
+                    return;
                   }
-                  return;
-                }
-                try {
-                  final eventName = nameController.text.trim();
-                  final organizerId = selectedOrganizerId?.trim() ?? '';
-                  final location = locationController.text.trim();
-                  final capacity = int.parse(capacityController.text.trim());
-                  final eventBenefits = benefits
-                      .map((benefit) => benefit.toJson())
-                      .toList();
-                  final eventRules = rulesController.text
-                      .split('\n')
-                      .map((rule) => rule.trim())
-                      .where((rule) => rule.isNotEmpty)
-                      .toList();
-                  if (isEditing) {
-                    await controller.updateEvent(
-                      id: event.id,
-                      name: eventName,
-                      organizerId: organizerId,
-                      startTime: startTime,
-                      endTime: endTime,
-                      location: location,
-                      capacity: capacity,
-                      description: descriptionController.text.trim(),
-                      benefits: eventBenefits,
-                      rules: eventRules,
-                    );
-                  } else {
-                    await controller.createEvent(
-                      name: eventName,
-                      organizerId: organizerId,
-                      startTime: startTime,
-                      endTime: endTime,
-                      location: location,
-                      capacity: capacity,
-                      description: descriptionController.text.trim(),
-                      benefits: eventBenefits,
-                      rules: eventRules,
-                    );
+                  try {
+                    final eventName = nameController.text.trim();
+                    final organizerId = selectedOrganizerId?.trim() ?? '';
+                    final location = locationController.text.trim();
+                    final capacity = int.parse(capacityController.text.trim());
+                    final eventBenefits = benefits
+                        .map((benefit) => benefit.toJson())
+                        .toList();
+                    final eventRules = rulesController.text
+                        .split('\n')
+                        .map((rule) => rule.trim())
+                        .where((rule) => rule.isNotEmpty)
+                        .toList();
+                    if (isEditing) {
+                      await controller.updateEvent(
+                        id: event.id,
+                        name: eventName,
+                        organizerId: organizerId,
+                        startTime: startTime,
+                        endTime: endTime,
+                        location: location,
+                        capacity: capacity,
+                        description: descriptionController.text.trim(),
+                        benefits: eventBenefits,
+                        rules: eventRules,
+                      );
+                    } else {
+                      await controller.createEvent(
+                        name: eventName,
+                        organizerId: organizerId,
+                        startTime: startTime,
+                        endTime: endTime,
+                        location: location,
+                        capacity: capacity,
+                        description: descriptionController.text.trim(),
+                        benefits: eventBenefits,
+                        rules: eventRules,
+                      );
+                    }
+                  } catch (exception) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(exception.toString())),
+                      );
+                    }
+                    return;
                   }
-                } catch (exception) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(exception.toString())),
-                    );
-                  }
-                  return;
-                }
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-              },
-              child: Text(isEditing ? 'Cập nhật' : 'Lưu'),
-            ),
-          ],
-        ),
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                },
+                child: Text(isEditing ? 'Cập nhật' : 'Lưu'),
+              ),
+            ],
+          );
+        },
       ),
     );
     nameController.dispose();
@@ -951,6 +1375,111 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         event.endTime.difference(event.startTime) <= const Duration(days: 1);
   }
 
+  static Widget _eventFormSection(
+    AppColors colors,
+    IconData icon,
+    String title,
+    List<Widget> children,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.025),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 19, color: colors.primary),
+              const SizedBox(width: 8),
+              Text(title, style: AppTextStyles.displaySm(colors.foreground)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  static Widget _eventDateTile(
+    AppColors colors,
+    String label,
+    String value,
+    VoidCallback onTap,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: colors.muted.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            decoration: BoxDecoration(
+              border: Border.all(color: colors.border),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.calendar_today_outlined,
+                  size: 18,
+                  color: colors.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: AppTextStyles.bodyXs(colors.mutedForeground),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        value,
+                        style: AppTextStyles.bodySm(colors.foreground)
+                            .copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static InputDecoration _eventInputDecoration(
+    String label, {
+    bool alignLabelWithHint = false,
+  }) {
+    final border = OutlineInputBorder(borderRadius: BorderRadius.circular(11));
+    return InputDecoration(
+      labelText: label,
+      alignLabelWithHint: alignLabelWithHint,
+      border: border,
+      enabledBorder: border,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    );
+  }
+
   // Tạo ô nhập liệu và xác thực dữ liệu cơ bản của sự kiện.
   static Widget _field(
     TextEditingController controller,
@@ -964,10 +1493,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         controller: controller,
         readOnly: readOnly,
         keyboardType: number ? TextInputType.number : TextInputType.text,
-        decoration: InputDecoration(
-          labelText: label,
-          border: const OutlineInputBorder(),
-        ),
+        decoration: _eventInputDecoration(label),
         validator: (value) {
           if (value == null || value.trim().isEmpty) {
             return 'Vui lòng nhập $label';
@@ -1046,10 +1572,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                 onChanged(text.trim().isEmpty ? null : text.trim());
               },
               onFieldSubmitted: (_) => onSubmitted(),
-              decoration: InputDecoration(
-                labelText: 'Mã đơn vị tổ chức',
+              decoration: _eventInputDecoration('Mã đơn vị tổ chức').copyWith(
                 hintText: 'Nhập mã, ví dụ: DVK',
-                border: const OutlineInputBorder(),
                 errorText: field.errorText,
                 suffixIcon: IconButton(
                   tooltip: 'Xem danh sách đơn vị',

@@ -344,18 +344,161 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   /// Hiển thị một chứng chỉ cùng người nhận, sự kiện và trạng thái DB.
   Widget _buildCertificate(AppColors colors, Map<String, dynamic> item) {
     final status = item['status']?.toString() ?? 'Chưa rõ';
-    return _recordContainer(
-      colors,
-      leading: Icons.workspace_premium_outlined,
-      title: item['eventName']?.toString() ?? 'Sự kiện không xác định',
-      subtitle:
-          '${item['studentName'] ?? item['studentId'] ?? 'Sinh viên'} · ${item['studentId'] ?? ''}',
-      trailing: _statusLabel(colors, status),
-      details: [
-        _detail(colors, 'Mã chứng chỉ', item['id']?.toString() ?? ''),
-        _detail(colors, 'Ngày cấp', _formatDate(item['issuedAt'])),
-        if ((item['content']?.toString() ?? '').isNotEmpty)
-          _detail(colors, 'Nội dung', item['content'].toString()),
+    final studentName =
+        item['studentName']?.toString() ??
+        item['studentId']?.toString() ??
+        'Sinh viên';
+    final studentId = item['studentId']?.toString() ?? '';
+    final eventName = item['eventName']?.toString() ?? 'Sự kiện không xác định';
+    final content = item['content']?.toString() ?? '';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: colors.secondary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.workspace_premium_outlined,
+                  size: 22,
+                  color: colors.secondaryForeground,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          studentName,
+                          style: AppTextStyles.displaySm(colors.foreground),
+                        ),
+                        Text(
+                          studentId,
+                          style: AppTextStyles.mono(
+                            colors.mutedForeground,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      eventName,
+                      style: AppTextStyles.bodySm(colors.mutedForeground),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _statusLabel(colors, status),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: colors.muted.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final itemWidth = constraints.maxWidth >= 520
+                    ? (constraints.maxWidth - 16) / 2
+                    : constraints.maxWidth;
+                return Wrap(
+                  spacing: 16,
+                  runSpacing: 10,
+                  children: [
+                    SizedBox(
+                      width: itemWidth,
+                      child: _certificateMeta(
+                        colors,
+                        'Mã chứng chỉ',
+                        item['id']?.toString() ?? '',
+                      ),
+                    ),
+                    SizedBox(
+                      width: itemWidth,
+                      child: _certificateMeta(
+                        colors,
+                        'Ngày cấp',
+                        _formatDate(item['issuedAt']),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          if (content.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: colors.card,
+                border: Border.all(color: colors.border),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Nội dung',
+                    style: AppTextStyles.bodyXs(colors.mutedForeground),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    content,
+                    style: AppTextStyles.bodySm(colors.foreground)
+                        .copyWith(height: 1.45),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _certificateMeta(AppColors colors, String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: AppTextStyles.bodyXs(colors.mutedForeground)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: AppTextStyles.bodySm(colors.foreground)
+              .copyWith(fontWeight: FontWeight.w600),
+        ),
       ],
     );
   }
@@ -399,7 +542,14 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
       decoration: BoxDecoration(
         color: colors.card,
         border: Border.all(color: colors.border),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -465,7 +615,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
         color: colors.secondary,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         text,

@@ -115,103 +115,363 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
     final colors = AppColors.of(isDark);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Tạo mã QR điểm danh')),
+      appBar: AppBar(
+        title: Text(
+          'Tạo mã QR điểm danh',
+          style: AppTextStyles.displayMd(colors.foreground),
+        ),
+      ),
       backgroundColor: colors.background,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(24),
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final desktop = constraints.maxWidth >= 1000;
+                final content = desktop
+                    ? SizedBox(
+                        height: constraints.maxHeight - 40,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              flex: 44,
+                              child: _buildSessionPanel(colors, scroll: true),
+                            ),
+                            const SizedBox(width: 18),
+                            Expanded(
+                              flex: 56,
+                              child: _buildQrPanel(colors, scroll: true),
+                            ),
+                          ],
+                        ),
+                      )
+                    : SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _buildSessionPanel(colors, scroll: false),
+                            const SizedBox(height: 16),
+                            _buildQrPanel(colors, scroll: false),
+                          ],
+                        ),
+                      );
+                return Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1440),
+                      child: content,
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
+  Widget _buildSessionPanel(AppColors colors, {required bool scroll}) {
+    final items = _sessions
+        .map((session) => _buildSessionItem(colors, session))
+        .toList();
+    final list = scroll
+        ? Expanded(
+            child: Scrollbar(
+              child: ListView(padding: EdgeInsets.zero, children: items),
+            ),
+          )
+        : Column(children: items);
+    return _panel(
+      colors,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.calendar_month_outlined,
+                size: 20,
+                color: colors.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Phiên học',
+                style: AppTextStyles.displaySm(colors.foreground),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Chọn buổi học để mở điểm danh',
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+          const SizedBox(height: 14),
+          list,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSessionItem(AppColors colors, Map<String, dynamic> session) {
+    final id = session['classSessionId']?.toString() ?? '';
+    final classId = session['classId']?.toString() ?? '';
+    final className = session['className']?.toString().trim();
+    final subjectName = session['subjectName']?.toString().trim();
+    final classLabel = className?.isNotEmpty == true
+        ? className!
+        : 'Không có tên lớp ($classId)';
+    final selected = _selectedClassSession == id;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: selected ? colors.secondary : colors.card,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          hoverColor: colors.primary.withValues(alpha: 0.045),
+          onTap: () => setState(() => _selectedClassSession = id),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: selected ? colors.primary : colors.border,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
               children: [
-                Text(
-                  'Phiên học',
-                  style: AppTextStyles.displaySm(colors.foreground),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: _selectedClassSession,
-                  decoration: const InputDecoration(
-                    labelText: 'Chọn buổi học để mở điểm danh',
-                    border: OutlineInputBorder(),
+                Container(
+                  padding: const EdgeInsets.all(9),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? colors.primary.withValues(alpha: 0.1)
+                        : colors.muted,
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  items: _sessions.map((session) {
-                    final id = session['classSessionId']?.toString() ?? '';
-                    final classId = session['classId']?.toString() ?? '';
-                    final className = session['className']?.toString().trim();
-                    final subjectName = session['subjectName']
-                        ?.toString()
-                        .trim();
-                    final classLabel = className?.isNotEmpty == true
-                        ? className
-                        : 'Không có tên lớp ($classId)';
-                    final subjectLabel = subjectName?.isNotEmpty == true
-                        ? ' · $subjectName'
-                        : '';
-                    final label = '$classLabel$subjectLabel · Buổi $id';
-                    return DropdownMenuItem(value: id, child: Text(label));
-                  }).toList(),
-                  onChanged: (value) =>
-                      setState(() => _selectedClassSession = value),
-                ),
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: _creating || _selectedClassSession == null
-                      ? null
-                      : _createQr,
-                  icon: _creating
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.qr_code_2),
-                  label: const Text('Mở phiên và tạo QR'),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 16),
-                  Text(_error!, style: TextStyle(color: colors.danger)),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _loading ? null : _loadSessions,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Thử kết nối lại'),
-                    ),
+                  child: Icon(
+                    Icons.qr_code_2_rounded,
+                    color: colors.primary,
+                    size: 22,
                   ),
-                ],
-                if (_qrToken != null) ...[
-                  if (_lecturerPosition != null) ...[
-                    const SizedBox(height: 16),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.location_on, color: colors.success),
-                      title: const Text('Vị trí điểm danh đã được khóa'),
-                      subtitle: Text(
-                        '${_lecturerPosition!.latitude.toStringAsFixed(6)}, '
-                        '${_lecturerPosition!.longitude.toStringAsFixed(6)} · Phạm vi 150 m',
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        classLabel,
+                        style: AppTextStyles.displaySm(colors.foreground),
                       ),
-                    ),
-                  ],
-                  const SizedBox(height: 32),
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.all(20),
-                      color: Colors.white,
-                      child: QrImageView(data: _qrToken!, size: 260),
-                    ),
+                      if (subjectName?.isNotEmpty == true) ...[
+                        const SizedBox(height: 5),
+                        _metadataLine(
+                          colors,
+                          Icons.book_outlined,
+                          subjectName!,
+                        ),
+                      ],
+                      const SizedBox(height: 5),
+                      _metadataLine(
+                        colors,
+                        Icons.calendar_today_outlined,
+                        'Buổi $id',
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  Center(
-                    child: Text(
-                      _expiresAt == null
-                          ? 'QR đang hoạt động'
-                          : 'Có hiệu lực đến ${_expiresAt!.hour.toString().padLeft(2, '0')}:${_expiresAt!.minute.toString().padLeft(2, '0')}',
-                      style: AppTextStyles.bodySm(colors.mutedForeground),
-                    ),
-                  ),
-                ],
+                ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQrPanel(AppColors colors, {required bool scroll}) {
+    Map<String, dynamic>? selectedSession;
+    for (final session in _sessions) {
+      if (session['classSessionId']?.toString() == _selectedClassSession) {
+        selectedSession = session;
+        break;
+      }
+    }
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (selectedSession != null)
+          _buildSelectedSession(colors, selectedSession),
+        if (_error != null) ...[
+          const SizedBox(height: 14),
+          Text(_error!, style: TextStyle(color: colors.danger)),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _loading ? null : _loadSessions,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Thử kết nối lại'),
+            ),
+          ),
+        ],
+        if (_qrToken != null) ...[
+          if (_lecturerPosition != null) ...[
+            const SizedBox(height: 14),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.location_on, color: colors.success),
+              title: const Text('Vị trí điểm danh đã được khóa'),
+              subtitle: Text(
+                '${_lecturerPosition!.latitude.toStringAsFixed(6)}, '
+                '${_lecturerPosition!.longitude.toStringAsFixed(6)} · Phạm vi 150 m',
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: colors.border),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: QrImageView(data: _qrToken!, size: 230),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Center(
+            child: Text(
+              _expiresAt == null
+                  ? 'QR đang hoạt động'
+                  : 'Có hiệu lực đến ${_expiresAt!.hour.toString().padLeft(2, '0')}:${_expiresAt!.minute.toString().padLeft(2, '0')}',
+              style: AppTextStyles.bodySm(colors.mutedForeground),
+            ),
+          ),
+        ] else
+          SizedBox(
+            height: 230,
+            child: Center(
+              child: Icon(
+                Icons.qr_code_2_rounded,
+                size: 88,
+                color: colors.border,
+              ),
+            ),
+          ),
+      ],
+    );
+    return _panel(
+      colors,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (scroll)
+            Expanded(child: SingleChildScrollView(child: details))
+          else
+            details,
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _creating || _selectedClassSession == null
+                ? null
+                : _createQr,
+            icon: _creating
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.qr_code_2),
+            label: const Text('Mở phiên và tạo QR'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectedSession(AppColors colors, Map<String, dynamic> session) {
+    final id = session['classSessionId']?.toString() ?? '';
+    final classId = session['classId']?.toString() ?? '';
+    final className = session['className']?.toString().trim();
+    final subjectName = session['subjectName']?.toString().trim();
+    final classLabel = className?.isNotEmpty == true
+        ? className!
+        : 'Không có tên lớp ($classId)';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.secondary,
+        border: Border.all(color: colors.primary.withValues(alpha: 0.28)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.book_outlined, color: colors.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  classLabel,
+                  style: AppTextStyles.displaySm(colors.foreground),
+                ),
+                if (subjectName?.isNotEmpty == true) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    subjectName!,
+                    style: AppTextStyles.bodyXs(colors.mutedForeground),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Text(
+                  'Buổi $id',
+                  style: AppTextStyles.bodyXs(colors.mutedForeground),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metadataLine(AppColors colors, IconData icon, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 15, color: colors.mutedForeground),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            value,
+            style: AppTextStyles.bodyXs(colors.mutedForeground),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _panel(AppColors colors, {required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }

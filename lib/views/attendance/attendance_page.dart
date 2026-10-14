@@ -125,128 +125,43 @@ class _AttendancePageState extends State<AttendancePage> {
               ),
               const SizedBox(height: 20),
               LayoutBuilder(
-                builder: (context, constraints) => GridView.count(
-                  crossAxisCount: constraints.maxWidth >= 720 ? 3 : 1,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  mainAxisExtent: 92,
-                  children: [
-                    _SummaryCard(
-                      title: 'Phiên điểm danh',
-                      value: '${sessions.length}',
-                      color: c.primary,
-                      bg: c.secondary,
-                    ),
-                    _SummaryCard(
-                      title: 'Tỷ lệ có mặt',
-                      value: '$attendanceRate%',
-                      color: c.success,
-                      bg: const Color(0xFFDCFCE7),
-                    ),
-                    _SummaryCard(
-                      title: 'Chưa điểm danh',
-                      value: '$absent',
-                      color: c.warning,
-                      bg: const Color(0xFFFEF3C7),
-                    ),
-                  ],
-                ),
+                builder: (context, constraints) {
+                  final desktop = constraints.maxWidth >= 1000;
+                  final sessionsPanel = _buildSessionsPanel(
+                    context,
+                    c,
+                    controller,
+                    sessions,
+                    scroll: desktop,
+                  );
+                  final overview = _buildAttendanceOverview(
+                    c,
+                    sessions,
+                    classSummaries,
+                    present,
+                    late,
+                    absent,
+                    attendanceRate,
+                  );
+                  if (!desktop) {
+                    return Column(
+                      children: [
+                        overview,
+                        const SizedBox(height: 20),
+                        sessionsPanel,
+                      ],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 44, child: sessionsPanel),
+                      const SizedBox(width: 18),
+                      Expanded(flex: 56, child: overview),
+                    ],
+                  );
+                },
               ),
-              const SizedBox(height: 16),
-              StatisticsDonutChart(
-                title: 'Phân bổ kết quả điểm danh',
-                colors: c,
-                data: [
-                  StatisticsChartDatum(
-                    label: 'Có mặt',
-                    value: present,
-                    color: c.success,
-                  ),
-                  StatisticsChartDatum(
-                    label: 'Muộn',
-                    value: late,
-                    color: c.warning,
-                  ),
-                  StatisticsChartDatum(
-                    label: 'Vắng',
-                    value: absent,
-                    color: c.danger,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              if (controller.loading.value && sessions.isEmpty)
-                const Center(child: CircularProgressIndicator())
-              else if (controller.error.value.isNotEmpty)
-                Text(
-                  controller.error.value,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                )
-              else if (sessions.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 48),
-                  child: Center(
-                    child: Text(
-                      controller.sessions.isEmpty
-                          ? 'Chưa có phiên điểm danh trong dữ liệu.'
-                          : 'Không tìm thấy phiên điểm danh phù hợp.',
-                      style: AppTextStyles.bodySm(c.mutedForeground),
-                    ),
-                  ),
-                )
-              else ...[
-                StatisticsBarChart(
-                  title: 'Kết quả theo mã học phần',
-                  colors: c,
-                  categories: classSummaries
-                      .map((item) => item['classId'].toString())
-                      .toList(),
-                  series: [
-                    StatisticsChartSeries(
-                      label: 'Có mặt',
-                      color: c.success,
-                      values: classSummaries
-                          .map((item) => _count(item['present']))
-                          .toList(),
-                    ),
-                    StatisticsChartSeries(
-                      label: 'Muộn',
-                      color: c.warning,
-                      values: classSummaries
-                          .map((item) => _count(item['late']))
-                          .toList(),
-                    ),
-                    StatisticsChartSeries(
-                      label: 'Vắng',
-                      color: c.danger,
-                      values: classSummaries
-                          .map((item) => _count(item['absent']))
-                          .toList(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                ...sessions.map(
-                  (session) => _SessionCard(
-                    session: session,
-                    c: c,
-                    onOpenRoster: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => AttendanceRosterPage(
-                          sessionId: session['id']?.toString() ?? '',
-                          title:
-                              session['className']?.toString().isNotEmpty ==
-                                  true
-                              ? session['className'].toString()
-                              : 'Danh sách điểm danh',
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
             ],
           ],
         ),
@@ -257,6 +172,179 @@ class _AttendancePageState extends State<AttendancePage> {
   /// Chuyển số từ JSON API sang giá trị số nguyên an toàn.
   static int _count(dynamic value) =>
       int.tryParse(value?.toString() ?? '') ?? 0;
+
+  Widget _buildSessionsPanel(
+    BuildContext context,
+    AppColors colors,
+    AttendanceController controller,
+    List<Map<String, dynamic>> sessions, {
+    required bool scroll,
+  }) {
+    final panelHeight = (MediaQuery.sizeOf(context).height - 210).clamp(
+      480.0,
+      720.0,
+    );
+    Widget content;
+    if (controller.loading.value && sessions.isEmpty) {
+      content = const Center(child: CircularProgressIndicator());
+    } else if (controller.error.value.isNotEmpty) {
+      content = Text(
+        controller.error.value,
+        style: TextStyle(color: Theme.of(context).colorScheme.error),
+      );
+    } else if (sessions.isEmpty) {
+      content = Center(
+        child: Text(
+          controller.sessions.isEmpty
+              ? 'Chưa có phiên điểm danh trong dữ liệu.'
+              : 'Không tìm thấy phiên điểm danh phù hợp.',
+          textAlign: TextAlign.center,
+          style: AppTextStyles.bodySm(colors.mutedForeground),
+        ),
+      );
+    } else {
+      final cards = sessions
+          .map(
+            (session) => _SessionCard(
+              session: session,
+              c: colors,
+              onOpenRoster: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AttendanceRosterPage(
+                    sessionId: session['id']?.toString() ?? '',
+                    title: session['className']?.toString().isNotEmpty == true
+                        ? session['className'].toString()
+                        : 'Danh sách điểm danh',
+                  ),
+                ),
+              ),
+            ),
+          )
+          .toList();
+      content = scroll
+          ? Scrollbar(
+              child: ListView(padding: EdgeInsets.zero, children: cards),
+            )
+          : Column(children: cards);
+    }
+    return Container(
+      height: scroll ? panelHeight : null,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: content,
+    );
+  }
+
+  Widget _buildAttendanceOverview(
+    AppColors colors,
+    List<Map<String, dynamic>> sessions,
+    List<Map<String, dynamic>> classSummaries,
+    int present,
+    int late,
+    int absent,
+    int attendanceRate,
+  ) {
+    return Column(
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) => GridView.count(
+            crossAxisCount: constraints.maxWidth >= 560 ? 3 : 1,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            mainAxisExtent: 92,
+            children: [
+              _SummaryCard(
+                title: 'Phiên điểm danh',
+                value: '${sessions.length}',
+                color: colors.primary,
+                bg: colors.secondary,
+              ),
+              _SummaryCard(
+                title: 'Tỷ lệ có mặt',
+                value: '$attendanceRate%',
+                color: colors.success,
+                bg: const Color(0xFFDCFCE7),
+              ),
+              _SummaryCard(
+                title: 'Chưa điểm danh',
+                value: '$absent',
+                color: colors.warning,
+                bg: const Color(0xFFFEF3C7),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        StatisticsDonutChart(
+          title: 'Phân bổ kết quả điểm danh',
+          colors: colors,
+          data: [
+            StatisticsChartDatum(
+              label: 'Có mặt',
+              value: present,
+              color: colors.success,
+            ),
+            StatisticsChartDatum(
+              label: 'Muộn',
+              value: late,
+              color: colors.warning,
+            ),
+            StatisticsChartDatum(
+              label: 'Vắng',
+              value: absent,
+              color: colors.danger,
+            ),
+          ],
+        ),
+        if (sessions.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          StatisticsBarChart(
+            title: 'Kết quả theo mã học phần',
+            colors: colors,
+            categories: classSummaries
+                .map((item) => item['classId'].toString())
+                .toList(),
+            series: [
+              StatisticsChartSeries(
+                label: 'Có mặt',
+                color: colors.success,
+                values: classSummaries
+                    .map((item) => _count(item['present']))
+                    .toList(),
+              ),
+              StatisticsChartSeries(
+                label: 'Muộn',
+                color: colors.warning,
+                values: classSummaries
+                    .map((item) => _count(item['late']))
+                    .toList(),
+              ),
+              StatisticsChartSeries(
+                label: 'Vắng',
+                color: colors.danger,
+                values: classSummaries
+                    .map((item) => _count(item['absent']))
+                    .toList(),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
 
   /// Cộng số liệu API của các phiên theo mã học phần duy nhất.
   static List<Map<String, dynamic>> _aggregateByClass(
@@ -311,7 +399,14 @@ class _SessionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: c.card,
         border: Border.all(color: c.border),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -319,6 +414,19 @@ class _SessionCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: c.secondary,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.qr_code_2_outlined,
+                  size: 20,
+                  color: c.primary,
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
