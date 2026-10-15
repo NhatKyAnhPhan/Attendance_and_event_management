@@ -2,99 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../controllers/classes_controller.dart';
+import '../../controllers/events_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
-import '../../data/api/api_client.dart';
 import '../../data/models/student_summaries.dart';
 import '../../widgets/app_search_field.dart';
 import '../../widgets/statistics_charts.dart';
+import '../../widgets/student_form_dialogs.dart';
 
 Future<void> _showClassFeedbackDialog(
   BuildContext context,
-  ClassesController controller,
+  ClassesController classesController,
+  EventsController eventsController,
   String classId,
 ) async {
-  final formKey = GlobalKey<FormState>();
-  final commentController = TextEditingController();
-  var rating = 5;
-  await showDialog<void>(
+  await showStudentFeedbackDialog(
     context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: const Text('Phản hồi và đánh giá lớp học'),
-        content: SizedBox(
-          width: 420,
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(
-                    5,
-                    (index) => IconButton(
-                      tooltip: '${index + 1} sao',
-                      onPressed: () => setState(() => rating = index + 1),
-                      icon: Icon(
-                        index < rating ? Icons.star : Icons.star_border,
-                        color: const Color(0xFFF59E0B),
-                      ),
-                    ),
-                  ),
-                ),
-                TextFormField(
-                  controller: commentController,
-                  maxLines: 4,
-                  maxLength: 2000,
-                  decoration: const InputDecoration(
-                    labelText: 'Nội dung phản hồi',
-                    border: OutlineInputBorder(),
-                    alignLabelWithHint: true,
-                  ),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'Vui lòng nhập nội dung phản hồi.'
-                      : null,
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              if (!formKey.currentState!.validate()) return;
-              try {
-                await controller.submitFeedback(
-                  classId: classId,
-                  rating: rating,
-                  comment: commentController.text.trim(),
-                );
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Đã gửi đánh giá lớp học.')),
-                  );
-                }
-              } on ApiException catch (error) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(error.message)),
-                  );
-                }
-              }
-            },
-            child: const Text('Gửi'),
-          ),
-        ],
-      ),
-    ),
+    eventsController: eventsController,
+    classesController: classesController,
+    initialTarget: StudentFeedbackTarget.classSection,
+    initialItemId: classId,
   );
-  commentController.dispose();
 }
 
 class StudentClassesPage extends StatefulWidget {
@@ -113,6 +41,9 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final c = AppColors.of(isDark);
     final controller = Get.put(ClassesController());
+    final eventsController = Get.isRegistered<EventsController>()
+        ? Get.find<EventsController>()
+        : Get.put(EventsController());
 
     return Obx(() {
       final classes = controller.items;
@@ -140,95 +71,106 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
-            decoration: BoxDecoration(
-              color: c.card,
-              border: Border(bottom: BorderSide(color: c.border)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Lớp học của tôi',
-                  style: AppTextStyles.displayLg(c.foreground)
-                      .copyWith(fontSize: 22),
-                ),
-                Text(
-                  '${filteredClasses.length} lớp trong dữ liệu của bạn',
-                  style: AppTextStyles.bodySm(c.mutedForeground),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: AppSearchField(
-              colors: c,
-              hintText: 'Tìm tên lớp, mã lớp, giảng viên...',
-              onChanged: (value) => setState(() => _query = value),
-            ),
-          ),
-          if (hasAttendanceData)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: StatisticsBarChart(
-                title: 'Kết quả điểm danh theo lớp',
-                colors: c,
-                categories: filteredClasses.map((cls) => cls.id).toList(),
-                series: [
-                  StatisticsChartSeries(
-                    label: 'Có mặt',
-                    color: c.success,
-                    values: filteredClasses.map((cls) => cls.present).toList(),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
+              decoration: BoxDecoration(
+                color: c.card,
+                border: Border(bottom: BorderSide(color: c.border)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Lớp học của tôi',
+                    style: AppTextStyles.displayLg(c.foreground)
+                        .copyWith(fontSize: 22),
                   ),
-                  StatisticsChartSeries(
-                    label: 'Muộn',
-                    color: c.warning,
-                    values: filteredClasses.map((cls) => cls.late).toList(),
-                  ),
-                  StatisticsChartSeries(
-                    label: 'Vắng',
-                    color: c.danger,
-                    values: filteredClasses.map((cls) => cls.absent).toList(),
+                  Text(
+                    '${filteredClasses.length} lớp trong dữ liệu của bạn',
+                    style: AppTextStyles.bodySm(c.mutedForeground),
                   ),
                 ],
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: filteredClasses.isEmpty
-                  ? [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 32),
-                        child: Text(
-                          classes.isEmpty
-                              ? 'Bạn chưa có lớp học.'
-                              : 'Không tìm thấy lớp học phù hợp.',
-                          style: AppTextStyles.bodySm(c.mutedForeground),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: AppSearchField(
+                colors: c,
+                hintText: 'Tìm tên lớp, mã lớp, giảng viên...',
+                onChanged: (value) => setState(() => _query = value),
+              ),
+            ),
+            if (hasAttendanceData)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                child: StatisticsBarChart(
+                  title: 'Kết quả điểm danh theo lớp',
+                  colors: c,
+                  categories: filteredClasses.map((cls) => cls.id).toList(),
+                  series: [
+                    StatisticsChartSeries(
+                      label: 'Có mặt',
+                      color: c.success,
+                      values: filteredClasses
+                          .map((cls) => cls.present)
+                          .toList(),
+                    ),
+                    StatisticsChartSeries(
+                      label: 'Muộn',
+                      color: c.warning,
+                      values: filteredClasses.map((cls) => cls.late).toList(),
+                    ),
+                    StatisticsChartSeries(
+                      label: 'Vắng',
+                      color: c.danger,
+                      values: filteredClasses.map((cls) => cls.absent).toList(),
+                    ),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: filteredClasses.isEmpty
+                    ? [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 32),
+                          child: Text(
+                            classes.isEmpty
+                                ? 'Bạn chưa có lớp học.'
+                                : 'Không tìm thấy lớp học phù hợp.',
+                            style: AppTextStyles.bodySm(c.mutedForeground),
+                          ),
                         ),
-                      ),
-                    ]
-                  : filteredClasses
-                        .map(
-                          (cls) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: _ClassCard(
-                              cls: cls,
-                              c: c,
-                              onFeedback: () => _showClassFeedbackDialog(
-                                context,
-                                controller,
-                                cls.id,
+                      ]
+                    : filteredClasses
+                          .map(
+                            (cls) => Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _ClassCard(
+                                cls: cls,
+                                c: c,
+                                onFeedback: () => _showClassFeedbackDialog(
+                                  context,
+                                  controller,
+                                  eventsController,
+                                  cls.id,
+                                ),
+                                onRating: () => showStudentRatingDialog(
+                                  context: context,
+                                  eventsController: eventsController,
+                                  classesController: controller,
+                                  initialTarget:
+                                      StudentFeedbackTarget.classSection,
+                                  initialItemId: cls.id,
+                                ),
                               ),
                             ),
-                          ),
-                        )
-                        .toList(),
+                          )
+                          .toList(),
+              ),
             ),
-          ),
           ],
         ),
       );
@@ -240,10 +182,12 @@ class _ClassCard extends StatelessWidget {
   final StudentClassSummary cls;
   final AppColors c;
   final VoidCallback onFeedback;
+  final VoidCallback onRating;
   const _ClassCard({
     required this.cls,
     required this.c,
     required this.onFeedback,
+    required this.onRating,
   });
 
   @override
@@ -266,74 +210,118 @@ class _ClassCard extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.all(14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFDBEAFE),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.menu_book,
-                    color: Color(0xFF1E56A0),
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final narrow = constraints.maxWidth <= 400;
+                final info = Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: c.secondary,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          cls.id,
-                          style: AppTextStyles.mono(c.primary, fontSize: 11),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: c.secondary,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            cls.id,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTextStyles.mono(c.primary, fontSize: 11),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 3),
                       Text(
                         cls.name,
+                        maxLines: narrow ? 3 : 2,
+                        overflow: TextOverflow.ellipsis,
                         style: AppTextStyles.displaySm(c.foreground),
                       ),
                       Text(
                         cls.lecturer,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: AppTextStyles.bodyXs(c.mutedForeground),
                       ),
                       Text(
                         '${cls.time} · Phòng ${cls.room}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: AppTextStyles.bodyXs(c.mutedForeground),
                       ),
                       if (cls.credits > 0 || cls.capacity > 0)
                         Text(
                           '${cls.credits} tín chỉ · ${cls.studentCount}/${cls.capacity} sinh viên',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: AppTextStyles.bodyXs(c.mutedForeground),
                         ),
                     ],
                   ),
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 8, bottom: 4),
-                    child: TextButton.icon(
+                );
+                final actions = Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    TextButton.icon(
                       onPressed: onFeedback,
-                      icon: const Icon(Icons.rate_review_outlined),
-                      label: const Text('Phản hồi / đánh giá'),
+                      icon: const Icon(
+                        Icons.chat_bubble_outline_rounded,
+                        size: 18,
+                      ),
+                      label: const Text('Phản hồi'),
                     ),
-                  ),
-                ),
-              ],
+                    TextButton.icon(
+                      onPressed: onRating,
+                      icon: const Icon(Icons.star_outline_rounded, size: 18),
+                      label: const Text('Đánh giá'),
+                    ),
+                  ],
+                );
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDBEAFE),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.menu_book,
+                            color: Color(0xFF1E56A0),
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        info,
+                        if (!narrow) ...[
+                          const SizedBox(width: 8),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 220),
+                            child: actions,
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (narrow) ...[
+                      const SizedBox(height: 10),
+                      Align(alignment: Alignment.centerRight, child: actions),
+                    ],
+                  ],
+                );
+              },
             ),
           ),
           Container(

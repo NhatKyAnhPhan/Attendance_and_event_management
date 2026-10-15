@@ -743,8 +743,9 @@ class _ClassesPageState extends State<ClassesPage> {
     AdminClassesController controller, {
     ClassModel? item,
   }) async {
+    final hostContext = context;
     await controller.loadClassOptions();
-    if (!context.mounted) return;
+    if (!hostContext.mounted) return;
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: item?.name ?? '');
     final capacityController = TextEditingController(
@@ -766,13 +767,77 @@ class _ClassesPageState extends State<ClassesPage> {
         : item?.lecturerId;
 
     await showDialog<void>(
-      context: context,
+      context: hostContext,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) {
+        builder: (modalContext, setModalState) {
           final colors = AppColors.of(
-            Theme.of(context).brightness == Brightness.dark,
+            Theme.of(modalContext).brightness == Brightness.dark,
           );
+          Widget enrollmentFields() {
+            final capacityField = TextFormField(
+              controller: capacityController,
+              keyboardType: TextInputType.number,
+              decoration: _classInputDecoration(
+                colors,
+                'Sĩ số tối đa',
+              ).copyWith(suffixText: 'sinh viên'),
+              validator: (value) {
+                final capacity = int.tryParse(value?.trim() ?? '');
+                if (capacity == null || capacity < 1) {
+                  return 'Nhập số lượng sinh viên lớn hơn 0.';
+                }
+                return null;
+              },
+            );
+            final cohortField = item == null
+                ? DropdownButtonFormField<String>(
+                    initialValue: cohortCode,
+                    isExpanded: true,
+                    borderRadius: BorderRadius.circular(12),
+                    decoration: _classInputDecoration(colors, 'Khóa sinh viên'),
+                    items: controller.cohorts
+                        .map(
+                          (cohort) => DropdownMenuItem<String>(
+                            value: cohort.code,
+                            child: Text(cohort.code),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) =>
+                        setModalState(() => cohortCode = value),
+                    validator: (value) =>
+                        value == null ? 'Vui lòng chọn khóa sinh viên' : null,
+                  )
+                : InputDecorator(
+                    decoration: _classInputDecoration(colors, 'Khóa sinh viên'),
+                    child: Text(item.cohortCode),
+                  );
+            final isWide = MediaQuery.sizeOf(modalContext).width >= 720;
+            if (!isWide) {
+              return Column(
+                children: [
+                  capacityField,
+                  const SizedBox(height: 12),
+                  cohortField,
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: capacityField),
+                const SizedBox(width: 12),
+                Expanded(child: cohortField),
+              ],
+            );
+          }
+
           return AlertDialog(
+            scrollable: true,
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 16,
+            ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
             ),
@@ -805,280 +870,180 @@ class _ClassesPageState extends State<ClassesPage> {
               width: 650,
               child: Form(
                 key: formKey,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.7,
-                  ),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _classFormSection(
-                          colors,
-                          Icons.menu_book_outlined,
-                          'Thông tin môn/lớp',
-                          [
-                            if (item == null)
-                              DropdownButtonFormField<ClassSubjectOption>(
-                                initialValue: selectedSubject,
-                                isExpanded: true,
-                                itemHeight: 68,
-                                menuMaxHeight: 360,
-                                borderRadius: BorderRadius.circular(12),
-                                decoration: _classInputDecoration(
-                                  colors,
-                                  'Môn học',
-                                ),
-                                items: controller.subjects
-                                    .map(
-                                      (
-                                        subject,
-                                      ) => DropdownMenuItem<ClassSubjectOption>(
-                                        value: subject,
-                                        child: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              subject.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style:
-                                                  AppTextStyles.bodySm(
-                                                    colors.foreground,
-                                                  ).copyWith(
-                                                    fontWeight: FontWeight.w700,
-                                                  ),
-                                            ),
-                                            const SizedBox(height: 3),
-                                            Text(
-                                              '${subject.code} · ${subject.credits} tín chỉ',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: AppTextStyles.bodyXs(
-                                                colors.mutedForeground,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                                onChanged: (value) => setState(() {
-                                  selectedSubject = value;
-                                  if (value != null) {
-                                    nameController.text = value.name;
-                                  }
-                                }),
-                                validator: (value) => value == null
-                                    ? 'Vui lòng chọn môn học'
-                                    : null,
-                              )
-                            else
-                              InputDecorator(
-                                decoration: _classInputDecoration(
-                                  colors,
-                                  'Môn học',
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      selectedSubject?.name ?? item.name,
-                                      style: AppTextStyles.bodySm(
-                                        colors.foreground,
-                                      ).copyWith(fontWeight: FontWeight.w700),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      '${item.subjectCode} · ${item.credits} tín chỉ',
-                                      style: AppTextStyles.bodyXs(
-                                        colors.mutedForeground,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (item == null && selectedSubject != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'Môn học có ${selectedSubject!.credits} tín chỉ.',
-                                    style: AppTextStyles.bodyXs(
-                                      colors.mutedForeground,
-                                    ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _classFormSection(
+                      colors,
+                      Icons.menu_book_outlined,
+                      'Thông tin môn/lớp',
+                      [
+                        if (item == null)
+                          DropdownButtonFormField<ClassSubjectOption>(
+                            initialValue: selectedSubject,
+                            isExpanded: true,
+                            isDense: false,
+                            itemHeight: 72,
+                            menuMaxHeight: 360,
+                            borderRadius: BorderRadius.circular(12),
+                            decoration: _classInputDecoration(colors, 'Môn học')
+                                .copyWith(
+                                  constraints: const BoxConstraints(
+                                    minHeight: 76,
+                                  ),
+                                  contentPadding: const EdgeInsets.fromLTRB(
+                                    14,
+                                    18,
+                                    14,
+                                    12,
                                   ),
                                 ),
-                              ),
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              controller: nameController,
-                              decoration: _classInputDecoration(
-                                colors,
-                                'Tên lớp học phần',
-                              ),
-                              validator: (value) =>
-                                  value == null || value.trim().isEmpty
-                                  ? 'Vui lòng nhập tên lớp'
-                                  : null,
-                            ),
-                            const SizedBox(height: 12),
-                            InputDecorator(
-                              decoration: _classInputDecoration(
-                                colors,
-                                'Bộ môn',
-                              ),
-                              child: Text(
-                                selectedSubject?.majorName ??
-                                    item?.majorName ??
-                                    '',
-                                style: AppTextStyles.bodySm(colors.foreground),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        _classFormSection(
-                          colors,
-                          Icons.groups_outlined,
-                          'Thông tin tuyển sinh',
-                          [
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                final twoColumns = constraints.maxWidth >= 540;
-                                final itemWidth = twoColumns
-                                    ? (constraints.maxWidth - 12) / 2
-                                    : constraints.maxWidth;
-                                return Wrap(
-                                  spacing: 12,
-                                  runSpacing: 12,
-                                  children: [
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: TextFormField(
-                                        controller: capacityController,
-                                        keyboardType: TextInputType.number,
-                                        decoration: _classInputDecoration(
+                            items: controller.subjects
+                                .map(
+                                  (subject) =>
+                                      DropdownMenuItem<ClassSubjectOption>(
+                                        value: subject,
+                                        child: _classSubjectOption(
                                           colors,
-                                          'Sĩ số tối đa',
-                                        ).copyWith(suffixText: 'sinh viên'),
-                                        validator: (value) {
-                                          final capacity = int.tryParse(
-                                            value?.trim() ?? '',
-                                          );
-                                          if (capacity == null ||
-                                              capacity < 1) {
-                                            return 'Nhập số lượng sinh viên lớn hơn 0.';
-                                          }
-                                          return null;
-                                        },
+                                          subject,
+                                        ),
                                       ),
-                                    ),
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: item == null
-                                          ? DropdownButtonFormField<String>(
-                                              initialValue: cohortCode,
-                                              isExpanded: true,
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              decoration: _classInputDecoration(
-                                                colors,
-                                                'Khóa sinh viên',
-                                              ),
-                                              items: controller.cohorts
-                                                  .map(
-                                                    (cohort) =>
-                                                        DropdownMenuItem<
-                                                          String
-                                                        >(
-                                                          value: cohort.code,
-                                                          child: Text(
-                                                            cohort.code,
-                                                          ),
-                                                        ),
-                                                  )
-                                                  .toList(),
-                                              onChanged: (value) => setState(
-                                                () => cohortCode = value,
-                                              ),
-                                              validator: (value) =>
-                                                  value == null
-                                                  ? 'Vui lòng chọn khóa sinh viên'
-                                                  : null,
-                                            )
-                                          : InputDecorator(
-                                              decoration: _classInputDecoration(
-                                                colors,
-                                                'Khóa sinh viên',
-                                              ),
-                                              child: Text(item.cohortCode),
-                                            ),
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        _classFormSection(
-                          colors,
-                          Icons.assignment_ind_outlined,
-                          'Phân công & thời gian',
-                          [
-                            _classDateField(
+                                )
+                                .toList(),
+                            selectedItemBuilder: (context) => controller
+                                .subjects
+                                .map(
+                                  (subject) =>
+                                      _classSubjectOption(colors, subject),
+                                )
+                                .toList(),
+                            onChanged: (value) => setModalState(() {
+                              selectedSubject = value;
+                              if (value != null) {
+                                nameController.text = value.name;
+                              }
+                            }),
+                            validator: (value) =>
+                                value == null ? 'Vui lòng chọn môn học' : null,
+                          )
+                        else
+                          InputDecorator(
+                            decoration: _classInputDecoration(
                               colors,
-                              startTime == null
-                                  ? 'Chưa chọn'
-                                  : '${_dateTimeLabel(startTime!.toIso8601String())}'
-                                        '\nHọc kỳ tự động: ${semesterForDate(startTime!)}',
-                              () async {
-                                final selected = await _pickStartTime(
-                                  context,
-                                  startTime,
-                                );
-                                if (!context.mounted || selected == null) {
-                                  return;
-                                }
-                                setState(() {
-                                  startTime = selected;
-                                });
-                              },
+                              'Môn học',
                             ),
-                            const SizedBox(height: 12),
-                            DropdownButtonFormField<String>(
-                              initialValue: lecturerId,
-                              isExpanded: true,
-                              borderRadius: BorderRadius.circular(12),
-                              decoration: _classInputDecoration(
-                                colors,
-                                'Giảng viên',
-                              ),
-                              items: [
-                                const DropdownMenuItem<String>(
-                                  value: null,
-                                  child: Text('Chưa phân công'),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  selectedSubject?.name ?? item.name,
+                                  style: AppTextStyles.bodySm(colors.foreground)
+                                      .copyWith(fontWeight: FontWeight.w700),
                                 ),
-                                ...controller.lecturers.map(
-                                  (lecturer) => DropdownMenuItem<String>(
-                                    value: lecturer.id,
-                                    child: Text(lecturer.name),
+                                const SizedBox(height: 3),
+                                Text(
+                                  '${item.subjectCode} · ${item.credits} tín chỉ',
+                                  style: AppTextStyles.bodyXs(
+                                    colors.mutedForeground,
                                   ),
                                 ),
                               ],
-                              onChanged: (value) =>
-                                  setState(() => lecturerId = value),
                             ),
-                          ],
+                          ),
+                        if (item == null && selectedSubject != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Môn học có ${selectedSubject!.credits} tín chỉ.',
+                                style: AppTextStyles.bodyXs(
+                                  colors.mutedForeground,
+                                ),
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: nameController,
+                          decoration: _classInputDecoration(
+                            colors,
+                            'Tên lớp học phần',
+                          ),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? 'Vui lòng nhập tên lớp'
+                              : null,
+                        ),
+                        const SizedBox(height: 12),
+                        InputDecorator(
+                          decoration: _classInputDecoration(colors, 'Bộ môn'),
+                          child: Text(
+                            selectedSubject?.majorName ?? item?.majorName ?? '',
+                            style: AppTextStyles.bodySm(colors.foreground),
+                          ),
                         ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 16),
+                    _classFormSection(
+                      colors,
+                      Icons.groups_outlined,
+                      'Thông tin tuyển sinh',
+                      [enrollmentFields()],
+                    ),
+                    const SizedBox(height: 16),
+                    _classFormSection(
+                      colors,
+                      Icons.assignment_ind_outlined,
+                      'Phân công & thời gian',
+                      [
+                        _classDateField(
+                          colors,
+                          startTime == null
+                              ? 'Chưa chọn'
+                              : '${_dateTimeLabel(startTime!.toIso8601String())}'
+                                    '\nHọc kỳ tự động: ${semesterForDate(startTime!)}',
+                          () async {
+                            final selected = await _pickStartTime(
+                              modalContext,
+                              startTime,
+                            );
+                            if (!dialogContext.mounted || selected == null) {
+                              return;
+                            }
+                            setModalState(() {
+                              startTime = selected;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: lecturerId,
+                          isExpanded: true,
+                          borderRadius: BorderRadius.circular(12),
+                          decoration: _classInputDecoration(
+                            colors,
+                            'Giảng viên',
+                          ),
+                          items: [
+                            const DropdownMenuItem<String>(
+                              value: null,
+                              child: Text('Chưa phân công'),
+                            ),
+                            ...controller.lecturers.map(
+                              (lecturer) => DropdownMenuItem<String>(
+                                value: lecturer.id,
+                                child: Text(lecturer.name),
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) =>
+                              setModalState(() => lecturerId = value),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1093,7 +1058,7 @@ class _ClassesPageState extends State<ClassesPage> {
                 onPressed: () async {
                   if (!formKey.currentState!.validate()) return;
                   if (startTime == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    ScaffoldMessenger.of(hostContext).showSnackBar(
                       const SnackBar(
                         content: Text('Vui lòng chọn thời gian bắt đầu.'),
                       ),
@@ -1123,8 +1088,8 @@ class _ClassesPageState extends State<ClassesPage> {
                     }
                     if (dialogContext.mounted) Navigator.pop(dialogContext);
                   } catch (exception) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                    if (hostContext.mounted) {
+                      ScaffoldMessenger.of(hostContext).showSnackBar(
                         SnackBar(content: Text(exception.toString())),
                       );
                     }
@@ -1176,6 +1141,33 @@ class _ClassesPageState extends State<ClassesPage> {
           ...children,
         ],
       ),
+    );
+  }
+
+  static Widget _classSubjectOption(
+    AppColors colors,
+    ClassSubjectOption subject,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          subject.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTextStyles.bodySm(colors.foreground)
+              .copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          '${subject.code} · ${subject.credits} tín chỉ',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTextStyles.bodyXs(colors.mutedForeground),
+        ),
+      ],
     );
   }
 

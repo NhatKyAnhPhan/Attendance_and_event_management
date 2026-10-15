@@ -42,12 +42,19 @@ class ClassesController extends GetxController {
     return _repository.getClassFeedback(classId);
   }
 
-  Future<void> submitFeedback({
+  Future<void> submitComment({
+    required String classId,
+    required String comment,
+  }) {
+    return _repository.submitClassComment(classId: classId, comment: comment);
+  }
+
+  Future<void> submitRating({
     required String classId,
     required int rating,
     required String comment,
   }) {
-    return _repository.submitClassFeedback(
+    return _repository.submitClassRating(
       classId: classId,
       rating: rating,
       comment: comment,

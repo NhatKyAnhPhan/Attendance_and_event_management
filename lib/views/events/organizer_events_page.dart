@@ -17,7 +17,6 @@ class OrganizerEventsPage extends StatefulWidget {
   @override
   State<OrganizerEventsPage> createState() => _OrganizerEventsPageState();
 }
-
 class _EventBenefitDraft {
   _EventBenefitDraft({
     this.type = 'Khác',
@@ -323,16 +322,36 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     final colors = AppColors.of(
       Theme.of(context).brightness == Brightness.dark,
     );
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final compact = viewportWidth <= 430;
+    final dialogContentWidth = viewportWidth <= 700
+        ? (viewportWidth - (compact ? 56 : 88)).clamp(240.0, 760.0)
+        : 760.0;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: compact
+              ? 12
+              : viewportWidth <= 700
+              ? 20
+              : 40,
+          vertical: compact ? 12 : 24,
+        ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         surfaceTintColor: Colors.transparent,
-        titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+        titlePadding: EdgeInsets.fromLTRB(
+          compact ? 16 : 24,
+          compact ? 16 : 22,
+          compact ? 16 : 24,
+          0,
+        ),
         title: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: EdgeInsets.all(compact ? 8 : 10),
               decoration: BoxDecoration(
                 color: colors.secondary,
                 borderRadius: BorderRadius.circular(12),
@@ -346,17 +365,25 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             Expanded(
               child: Text(
                 event.name,
-                style: AppTextStyles.displayMd(colors.foreground),
+                maxLines: compact ? 3 : 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyles.displayMd(colors.foreground)
+                    .copyWith(fontSize: compact ? 18 : null),
               ),
             ),
           ],
         ),
-        contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
+        contentPadding: EdgeInsets.fromLTRB(
+          compact ? 16 : 24,
+          18,
+          compact ? 16 : 24,
+          8,
+        ),
         content: SizedBox(
-          width: 760,
+          width: dialogContentWidth,
           child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.72,
+            constraints: BoxConstraints.tightFor(
+              height: viewportHeight * (compact ? 0.68 : 0.72),
             ),
             child: FutureBuilder<Map<String, dynamic>>(
               future: detailsFuture,
@@ -578,7 +605,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         '(${event.registeredCount})',
                         [
                           SizedBox(
-                            height: 260,
+                            height: compact ? 320 : 260,
                             child: FutureBuilder(
                               future: studentsFuture,
                               builder: (context, studentSnapshot) {
@@ -616,7 +643,12 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             ),
           ),
         ),
-        actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
+        actionsPadding: EdgeInsets.fromLTRB(
+          compact ? 16 : 24,
+          8,
+          compact ? 16 : 24,
+          compact ? 14 : 18,
+        ),
         actionsAlignment: MainAxisAlignment.end,
         actions: [
           if (Get.find<AuthController>().canManageEvents &&
@@ -806,10 +838,18 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(icon, size: 20, color: colors.primary),
               const SizedBox(width: 8),
-              Text(title, style: AppTextStyles.displaySm(colors.foreground)),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.displaySm(colors.foreground),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 12),

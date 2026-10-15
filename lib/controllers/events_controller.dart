@@ -17,13 +17,10 @@ class EventsController extends GetxController {
   void onInit() {
     super.onInit();
     load();
-    _statusRefreshTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) {
-        statusRefreshTick.value++;
-        load();
-      },
-    );
+    _statusRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      statusRefreshTick.value++;
+      load();
+    });
   }
 
   @override
@@ -69,12 +66,23 @@ class EventsController extends GetxController {
     return _repository.getEventFeedback(eventId);
   }
 
-  Future<void> submitFeedback({
+  Future<Map<String, dynamic>> getMyFeedback() {
+    return _repository.getMyFeedback();
+  }
+
+  Future<void> submitComment({
+    required String eventId,
+    required String comment,
+  }) {
+    return _repository.submitEventComment(eventId: eventId, comment: comment);
+  }
+
+  Future<void> submitRating({
     required String eventId,
     required int rating,
     required String comment,
   }) {
-    return _repository.submitEventFeedback(
+    return _repository.submitEventRating(
       eventId: eventId,
       rating: rating,
       comment: comment,

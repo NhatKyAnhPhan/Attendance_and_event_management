@@ -568,6 +568,53 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
   }
 });
 
+// Trả lịch sử phản hồi và đánh giá của chính sinh viên đang đăng nhập.
+app.get('/api/student/my-feedback', requireAuth, requireRole('Sinh viên', 'student'), async (request, response) => {
+  try {
+    const [feedbackItems] = await pool.execute(
+      `SELECT ph.Maphanhoi AS id,
+              CASE
+                WHEN ph.Masukien IS NOT NULL THEN 'event'
+                WHEN ph.Malop IS NOT NULL THEN 'class'
+                ELSE NULL
+              END AS targetType,
+              COALESCE(sk.Tensukien, lhp.Tenlop, '') AS targetName,
+              ph.Masukien AS eventId, ph.Malop AS classId,
+              ph.Noidung AS content, ph.Thoigiangui AS createdAt
+       FROM phanhoi ph
+       LEFT JOIN sukien sk ON sk.Masukien = ph.Masukien
+       LEFT JOIN lophocphan lhp ON lhp.Malop = ph.Malop
+       WHERE ph.Masv = ?
+       ORDER BY ph.Thoigiangui DESC, ph.Maphanhoi DESC`,
+      [request.auth.sub],
+    );
+    const [ratingItems] = await pool.execute(
+      `SELECT dg.Madanhgia AS id,
+              CASE
+                WHEN dg.Masukien IS NOT NULL THEN 'event'
+                WHEN dg.Malop IS NOT NULL THEN 'class'
+                ELSE NULL
+              END AS targetType,
+              COALESCE(sk.Tensukien, lhp.Tenlop, '') AS targetName,
+              dg.Masukien AS eventId, dg.Malop AS classId,
+              dg.Sosao AS rating, COALESCE(dg.Noidung, '') AS content,
+              dg.Thoigiandanhgia AS createdAt
+       FROM danhgia dg
+       LEFT JOIN sukien sk ON sk.Masukien = dg.Masukien
+       LEFT JOIN lophocphan lhp ON lhp.Malop = dg.Malop
+       WHERE dg.Masv = ?
+       ORDER BY dg.Thoigiandanhgia DESC, dg.Madanhgia DESC`,
+      [request.auth.sub],
+    );
+    return response.json({ feedbackItems, ratingItems });
+  } catch (error) {
+    console.error('Student feedback history error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải lịch sử phản hồi và đánh giá.',
+    });
+  }
+});
+
 app.get('/api/events/:eventId/feedback', requireAuth, async (request, response) => {
   try {
     const [[summary]] = await pool.execute(
@@ -580,12 +627,21 @@ app.get('/api/events/:eventId/feedback', requireAuth, async (request, response) 
       `SELECT dg.SoSao AS rating,
               COALESCE(NULLIF(dg.Noidung, ''), ph.Noidung, '') AS comment,
               COALESCE(dg.Thoigiandanhgia, ph.Thoigiangui) AS createdAt
+       FROM phanhoi ph
+       LEFT JOIN danhgia dg
+         ON dg.Masv = ph.Masv AND dg.Masukien = ph.Masukien
+       WHERE ph.Masukien = ?
+       UNION ALL
+       SELECT dg.SoSao AS rating, COALESCE(dg.Noidung, '') AS comment,
+              dg.Thoigiandanhgia AS createdAt
        FROM danhgia dg
-       LEFT JOIN phanhoi ph
-         ON ph.Masv = dg.Masv AND ph.Masukien = dg.Masukien
        WHERE dg.Masukien = ?
-       ORDER BY dg.Thoigiandanhgia DESC`,
-      [request.params.eventId],
+         AND NOT EXISTS (
+           SELECT 1 FROM phanhoi ph
+           WHERE ph.Masv = dg.Masv AND ph.Masukien = dg.Masukien
+         )
+       ORDER BY createdAt DESC`,
+      [request.params.eventId, request.params.eventId],
     );
     return response.json({
       averageRating: Number(summary.averageRating),
@@ -600,17 +656,18 @@ app.get('/api/events/:eventId/feedback', requireAuth, async (request, response) 
 
 app.post('/api/events/:eventId/feedback', requireAuth, async (request, response) => {
   const { rating, comment } = request.body || {};
+  const hasRating = rating !== undefined && rating !== null;
+  const hasComment = comment !== undefined && comment !== null;
   if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
     return response.status(403).json({ message: 'Chỉ sinh viên mới được gửi đánh giá.' });
   }
-  if (!Number.isInteger(Number(rating))
-    || Number(rating) < 1
-    || Number(rating) > 5
-    || typeof comment !== 'string'
-    || !comment.trim()
-    || comment.trim().length > 2000) {
+  if ((!hasRating && !hasComment)
+    || (hasRating && (!Number.isInteger(Number(rating))
+      || Number(rating) < 1 || Number(rating) > 5))
+    || (hasComment && (typeof comment !== 'string' || comment.trim().length > 2000))
+    || (!hasRating && (!hasComment || !comment.trim()))) {
     return response.status(400).json({
-      message: 'Vui lòng chọn từ 1 đến 5 sao và nhập phản hồi tối đa 2.000 ký tự.',
+      message: 'Vui lòng chọn từ 1 đến 5 sao hoặc nhập phản hồi tối đa 2.000 ký tự.',
     });
   }
 
@@ -644,33 +701,26 @@ app.post('/api/events/:eventId/feedback', requireAuth, async (request, response)
       });
     }
 
-    const normalizedComment = comment.trim();
-    await connection.execute(
-      `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Masukien)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
-         Thoigiandanhgia = CURRENT_TIMESTAMP`,
-      [
-        generateRecordId('DG'),
-        Number(rating),
-        normalizedComment,
-        request.auth.sub,
-        event.id,
-      ],
-    );
-    await connection.execute(
-      `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Masukien)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
-      [
-        generateRecordId('PH'),
-        normalizedComment,
-        request.auth.sub,
-        event.id,
-      ],
-    );
+    const normalizedComment = hasComment ? comment.trim() : '';
+    if (hasRating) {
+      await connection.execute(
+        `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Masukien)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
+           Thoigiandanhgia = CURRENT_TIMESTAMP`,
+        [generateRecordId('DG'), Number(rating), normalizedComment, request.auth.sub, event.id],
+      );
+    }
+    if (normalizedComment) {
+      await connection.execute(
+        `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Masukien)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
+        [generateRecordId('PH'), normalizedComment, request.auth.sub, event.id],
+      );
+    }
     await connection.commit();
     return response.json({ message: 'Gửi đánh giá thành công.' });
   } catch (error) {
@@ -701,12 +751,21 @@ app.get('/api/classes/:classId/feedback', requireAuth, async (request, response)
       `SELECT dg.SoSao AS rating,
               COALESCE(NULLIF(dg.Noidung, ''), ph.Noidung, '') AS comment,
               COALESCE(dg.Thoigiandanhgia, ph.Thoigiangui) AS createdAt
+       FROM phanhoi ph
+       LEFT JOIN danhgia dg
+         ON dg.Masv = ph.Masv AND dg.Malop = ph.Malop
+       WHERE ph.Malop = ?
+       UNION ALL
+       SELECT dg.SoSao AS rating, COALESCE(dg.Noidung, '') AS comment,
+              dg.Thoigiandanhgia AS createdAt
        FROM danhgia dg
-       LEFT JOIN phanhoi ph
-         ON ph.Masv = dg.Masv AND ph.Malop = dg.Malop
        WHERE dg.Malop = ?
-       ORDER BY dg.Thoigiandanhgia DESC`,
-      [request.params.classId],
+         AND NOT EXISTS (
+           SELECT 1 FROM phanhoi ph
+           WHERE ph.Masv = dg.Masv AND ph.Malop = dg.Malop
+         )
+       ORDER BY createdAt DESC`,
+      [request.params.classId, request.params.classId],
     );
     return response.json({
       averageRating: Number(summary.averageRating),
@@ -721,17 +780,18 @@ app.get('/api/classes/:classId/feedback', requireAuth, async (request, response)
 
 app.post('/api/classes/:classId/feedback', requireAuth, async (request, response) => {
   const { rating, comment } = request.body || {};
+  const hasRating = rating !== undefined && rating !== null;
+  const hasComment = comment !== undefined && comment !== null;
   if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
     return response.status(403).json({ message: 'Chỉ sinh viên mới được gửi đánh giá.' });
   }
-  if (!Number.isInteger(Number(rating))
-    || Number(rating) < 1
-    || Number(rating) > 5
-    || typeof comment !== 'string'
-    || !comment.trim()
-    || comment.trim().length > 2000) {
+  if ((!hasRating && !hasComment)
+    || (hasRating && (!Number.isInteger(Number(rating))
+      || Number(rating) < 1 || Number(rating) > 5))
+    || (hasComment && (typeof comment !== 'string' || comment.trim().length > 2000))
+    || (!hasRating && (!hasComment || !comment.trim()))) {
     return response.status(400).json({
-      message: 'Vui lòng chọn từ 1 đến 5 sao và nhập phản hồi tối đa 2.000 ký tự.',
+      message: 'Vui lòng chọn từ 1 đến 5 sao hoặc nhập phản hồi tối đa 2.000 ký tự.',
     });
   }
 
@@ -760,33 +820,26 @@ app.post('/api/classes/:classId/feedback', requireAuth, async (request, response
       });
     }
 
-    const normalizedComment = comment.trim();
-    await connection.execute(
-      `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Malop)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
-         Thoigiandanhgia = CURRENT_TIMESTAMP`,
-      [
-        generateRecordId('DG'),
-        Number(rating),
-        normalizedComment,
-        request.auth.sub,
-        classInfo.id,
-      ],
-    );
-    await connection.execute(
-      `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Malop)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
-      [
-        generateRecordId('PH'),
-        normalizedComment,
-        request.auth.sub,
-        classInfo.id,
-      ],
-    );
+    const normalizedComment = hasComment ? comment.trim() : '';
+    if (hasRating) {
+      await connection.execute(
+        `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Malop)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
+           Thoigiandanhgia = CURRENT_TIMESTAMP`,
+        [generateRecordId('DG'), Number(rating), normalizedComment, request.auth.sub, classInfo.id],
+      );
+    }
+    if (normalizedComment) {
+      await connection.execute(
+        `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Malop)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
+        [generateRecordId('PH'), normalizedComment, request.auth.sub, classInfo.id],
+      );
+    }
     await connection.commit();
     return response.json({ message: 'Gửi đánh giá lớp học thành công.' });
   } catch (error) {
