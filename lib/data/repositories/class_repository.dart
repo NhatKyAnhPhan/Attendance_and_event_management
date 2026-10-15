@@ -1,6 +1,7 @@
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/class_model.dart';
+import '../models/student_class_detail.dart';
 import '../models/student_roster_entry.dart';
 import '../models/student_summaries.dart';
 
@@ -21,6 +22,11 @@ class ClassRepository {
               StudentClassSummary.fromJson(Map<String, dynamic>.from(item)),
         )
         .toList();
+  }
+
+  Future<StudentClassDetail> getStudentClassDetail(String classId) async {
+    final body = await _client.get('/api/classes/$classId/detail');
+    return StudentClassDetail.fromJson(body);
   }
 
   Future<Map<String, dynamic>> getClassFeedback(String classId) {

@@ -147,6 +147,14 @@ function normalizeDateTime(value) {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
+function academicYearFromDateTime(value) {
+  const match = /^(\d{4})-(\d{2})-/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const firstYear = Number(match[2]) >= 8 ? year : year - 1;
+  return `${firstYear}-${firstYear + 1}`;
+}
+
 // Bổ sung cột tọa độ nếu cơ sở dữ liệu cũ chưa có thông tin vị trí.
 async function ensureAttendanceLocationColumns() {
   for (const column of ['latitude', 'longitude']) {
@@ -432,6 +440,25 @@ app.get('/api/classes', requireAuth, async (request, response) => {
               lhp.Tenlop AS name, lhp.Hocky AS semester,
               lhp.Thoigianbatdau AS startTime, lhp.Magv AS lecturerId,
               lhp.Tinchi AS credits, lhp.Soluongtoida AS capacity,
+              COALESCE((
+                SELECT GROUP_CONCAT(
+                  CONCAT(
+                    CASE lh.ThuTrongTuan
+                      WHEN 7 THEN 'Chủ nhật'
+                      ELSE CONCAT('Thứ ', lh.ThuTrongTuan + 1)
+                    END,
+                    ', ', TIME_FORMAT(lh.GioBatDau, '%H:%i'),
+                    '–', TIME_FORMAT(lh.GioKetThuc, '%H:%i')
+                  )
+                  ORDER BY lh.ThuTrongTuan, lh.GioBatDau SEPARATOR ' · '
+                )
+                FROM lichhocphan lh WHERE lh.Malop = lhp.Malop
+              ), '') AS schedule,
+              COALESCE((
+                SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
+                  ORDER BY lh.PhongHoc SEPARATOR ', ')
+                FROM lichhocphan lh WHERE lh.Malop = lhp.Malop
+              ), '') AS room,
               COALESCE(nd.Hoten, '') AS lecturerName,
               COUNT(DISTINCT tvl.Masv) AS studentCount,
               COALESCE(attendance.present, 0) AS present,
@@ -476,6 +503,71 @@ app.get('/api/classes', requireAuth, async (request, response) => {
   } catch (error) {
     console.error('Classes error:', error.message);
     return response.status(500).json({ message: 'Không thể tải danh sách lớp.' });
+  }
+});
+
+// Sinh viên chỉ được xem chi tiết và danh sách thành viên của lớp mình tham gia.
+app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', 'student'), async (request, response) => {
+  try {
+    const [[classInfo]] = await pool.execute(
+      `SELECT lhp.Malop AS id, lhp.Tenlop AS name,
+              lhp.Makhoa AS cohortCode, lhp.Hocky AS semester,
+              lhp.Namhoc AS academicYear, lhp.Thoigianbatdau AS startTime,
+              lhp.Magv AS lecturerId, lhp.Tinchi AS credits,
+              lhp.Soluongtoida AS capacity, lhp.Trangthailop AS status,
+              lhp.Mamon AS subjectId, mh.Tenmon AS subjectName,
+              lhp.Madv AS departmentId, COALESCE(dv.Tendv, '') AS departmentName,
+              COALESCE(nd.Hoten, '') AS lecturerName,
+              (SELECT COUNT(*) FROM thanhvienlop tvl
+               WHERE tvl.Malop = lhp.Malop) AS studentCount
+       FROM lophocphan lhp
+       INNER JOIN monhoc mh ON mh.Mamon = lhp.Mamon
+       LEFT JOIN donvi dv ON dv.Madv = lhp.Madv
+       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
+       WHERE lhp.Malop = ?
+         AND EXISTS (
+           SELECT 1 FROM thanhvienlop mine
+           WHERE mine.Malop = lhp.Malop AND mine.Masv = ?
+         )
+       LIMIT 1`,
+      [request.params.classId, request.auth.sub],
+    );
+    if (!classInfo) {
+      return response.status(404).json({
+        message: 'Không tìm thấy lớp hoặc bạn không tham gia lớp này.',
+      });
+    }
+
+    const [schedules] = await pool.execute(
+      `SELECT Malich AS id, ThuTrongTuan AS weekday,
+              TIME_FORMAT(GioBatDau, '%H:%i') AS startTime,
+              TIME_FORMAT(GioKetThuc, '%H:%i') AS endTime,
+              PhongHoc AS room,
+              DATE_FORMAT(NgayBatDau, '%d/%m/%Y') AS startsOn,
+              DATE_FORMAT(NgayKetThuc, '%d/%m/%Y') AS endsOn
+       FROM lichhocphan
+       WHERE Malop = ?
+       ORDER BY ThuTrongTuan, GioBatDau`,
+      [request.params.classId],
+    );
+    const [students] = await pool.execute(
+      `SELECT tvl.Masv AS studentId,
+              COALESCE(nd.Hoten, tvl.Masv) AS studentName,
+              COALESCE(tvl.TrangThaiThanhVien, '') AS status,
+              DATE_FORMAT(tvl.NgayThamGia, '%d/%m/%Y') AS dateLabel
+       FROM thanhvienlop tvl
+       LEFT JOIN nguoidung nd ON nd.Mand = tvl.Masv
+       WHERE tvl.Malop = ?
+       ORDER BY nd.Hoten, tvl.Masv`,
+      [request.params.classId],
+    );
+    return response.json({ class: classInfo, schedules, students });
+  } catch (error) {
+    console.error('Student class detail error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải chi tiết lớp học.',
+    });
   }
 });
 
@@ -2827,11 +2919,12 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
 
     await pool.execute(
       `INSERT INTO lophocphan
-       (Malop, Magv, Madv, Mamon, Makhoa, Tenlop, Hocky,
+       (Malop, Magv, Madv, Mamon, Makhoa, Tenlop, Hocky, Namhoc,
         Soluongtoida, Trangthailop, Thoigianbatdau)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, 'Đang học', ?)`,
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, 'Đang học', ?)`,
       [normalizedLecturerId, subject.departmentId, normalizedSubjectId,
         normalizedCohortCode, normalizedName, normalizedSemester,
+        academicYearFromDateTime(normalizedStartTime),
         parsedCapacity, normalizedStartTime],
     );
     return response.status(201).json({ message: 'Tạo lớp thành công.' });
@@ -2908,13 +3001,14 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
     }
     await connection.execute(
       `UPDATE lophocphan
-         SET Magv = ?, Tenlop = ?, Hocky = ?, Thoigianbatdau = ?,
+         SET Magv = ?, Tenlop = ?, Hocky = ?, Namhoc = ?, Thoigianbatdau = ?,
              Soluongtoida = ?
        WHERE Malop = ?`,
       [
         normalizedLecturerId,
         name.trim(),
         semester,
+        academicYearFromDateTime(normalizedStartTime),
         normalizedStartTime,
         parsedCapacity,
         request.params.classId,
