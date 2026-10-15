@@ -29,17 +29,14 @@ class EventRepository {
   }
 
   Future<List<StudentRosterEntry>> getEventStudents(String eventId) async {
-    final body = await _client.get(
-      '/api/organizer/events/$eventId/students',
-    );
+    final body = await _client.get('/api/organizer/events/$eventId/students');
     final items = body['items'];
     if (items is! List) return const [];
     return items
         .whereType<Map>()
         .map(
-          (item) => StudentRosterEntry.fromJson(
-            Map<String, dynamic>.from(item),
-          ),
+          (item) =>
+              StudentRosterEntry.fromJson(Map<String, dynamic>.from(item)),
         )
         .toList();
   }
@@ -64,14 +61,28 @@ class EventRepository {
     return _client.get('/api/events/$eventId/feedback');
   }
 
-  Future<void> submitEventFeedback({
+  Future<Map<String, dynamic>> getMyFeedback() {
+    return _client.get('/api/student/my-feedback');
+  }
+
+  Future<void> submitEventComment({
+    required String eventId,
+    required String comment,
+  }) async {
+    await _client.post(
+      '/api/events/$eventId/feedback',
+      data: {'comment': comment},
+    );
+  }
+
+  Future<void> submitEventRating({
     required String eventId,
     required int rating,
     required String comment,
   }) async {
     await _client.post(
       '/api/events/$eventId/feedback',
-      data: {'rating': rating, 'comment': comment},
+      data: {'rating': rating, if (comment.isNotEmpty) 'comment': comment},
     );
   }
 
@@ -167,9 +178,7 @@ class EventRepository {
   }
 
   Future<String> createEventAttendanceQr(String eventId) async {
-    final body = await _client.post(
-      ApiEndpoints.eventAttendanceQr(eventId),
-    );
+    final body = await _client.post(ApiEndpoints.eventAttendanceQr(eventId));
     final qr = body['qr']?.toString();
     if (qr == null || qr.isEmpty) {
       throw const FormatException('Máy chủ không trả về mã QR sự kiện.');

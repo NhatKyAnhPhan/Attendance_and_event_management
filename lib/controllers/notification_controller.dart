@@ -112,9 +112,12 @@ class NotificationController extends GetxController {
   }) {
     final list = notificationsFor(role);
     return list.where((item) {
-      if (unreadOnly && item.read) return false;
-      if (importantOnly && item.priority == NotificationPriority.low)
+      if (unreadOnly && item.read) {
         return false;
+      }
+      if (importantOnly && item.priority == NotificationPriority.low) {
+        return false;
+      }
       return true;
     }).toList();
   }

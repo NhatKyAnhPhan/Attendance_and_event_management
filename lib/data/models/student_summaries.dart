@@ -58,6 +58,7 @@ class StudentEventSummary {
   final String name;
   final String date;
   final String org;
+  final String location;
   final bool registered;
   final DateTime? registeredAt;
   final DateTime? startTime;
@@ -69,6 +70,7 @@ class StudentEventSummary {
     required this.name,
     required this.date,
     required this.org,
+    this.location = '',
     required this.registered,
     this.registeredAt,
     this.startTime,
@@ -99,6 +101,7 @@ class StudentEventSummary {
       name: json['name']?.toString() ?? '',
       date: json['startTime']?.toString() ?? '',
       org: json['organizerName']?.toString() ?? '',
+      location: json['location']?.toString() ?? '',
       registered: json['registrationStatus']?.toString() != 'notRegistered',
       registeredAt: DateTime.tryParse(json['registeredAt']?.toString() ?? '')
           ?.toLocal(),

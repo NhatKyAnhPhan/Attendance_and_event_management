@@ -27,14 +27,24 @@ class ClassRepository {
     return _client.get('/api/classes/$classId/feedback');
   }
 
-  Future<void> submitClassFeedback({
+  Future<void> submitClassComment({
+    required String classId,
+    required String comment,
+  }) async {
+    await _client.post(
+      '/api/classes/$classId/feedback',
+      data: {'comment': comment},
+    );
+  }
+
+  Future<void> submitClassRating({
     required String classId,
     required int rating,
     required String comment,
   }) async {
     await _client.post(
       '/api/classes/$classId/feedback',
-      data: {'rating': rating, 'comment': comment},
+      data: {'rating': rating, if (comment.isNotEmpty) 'comment': comment},
     );
   }
 
@@ -57,9 +67,8 @@ class ClassRepository {
     return items
         .whereType<Map>()
         .map(
-          (item) => StudentRosterEntry.fromJson(
-            Map<String, dynamic>.from(item),
-          ),
+          (item) =>
+              StudentRosterEntry.fromJson(Map<String, dynamic>.from(item)),
         )
         .toList();
   }
