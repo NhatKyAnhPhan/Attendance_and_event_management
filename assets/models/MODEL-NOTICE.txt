@@ -1,0 +1,9 @@
+MobileFaceNet model
+
+Source:
+https://github.com/hugocornellier/face_detection_tflite/blob/main/assets/models/mobilefacenet.tflite
+
+The upstream project's README identifies this model as Apache-2.0 licensed.
+The accompanying LICENSE-2.0.txt contains the upstream license text.
+The model is based on MobileFaceNets: Efficient CNNs for Accurate Real-time
+Face Verification on Mobile Devices (https://arxiv.org/abs/1804.07573).

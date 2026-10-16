@@ -177,13 +177,23 @@ class EventRepository {
     await _client.post('/api/organizer/events/$id/close');
   }
 
-  Future<String> createEventAttendanceQr(String eventId) async {
-    final body = await _client.post(ApiEndpoints.eventAttendanceQr(eventId));
+  Future<Map<String, dynamic>> createEventAttendanceQr(
+    String eventId, {
+    required double latitude,
+    required double longitude,
+  }) async {
+    final body = await _client.post(
+      ApiEndpoints.eventAttendanceQr(eventId),
+      data: {'latitude': latitude, 'longitude': longitude},
+    );
     final qr = body['qr']?.toString();
     if (qr == null || qr.isEmpty) {
       throw const FormatException('Máy chủ không trả về mã QR sự kiện.');
     }
-    return qr;
+    if (body['radiusMeters'] is! num) {
+      throw const FormatException('Máy chủ không trả về phạm vi điểm danh.');
+    }
+    return body;
   }
 
   Future<Map<String, dynamic>> sendEventCertificates(String eventId) {

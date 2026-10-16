@@ -144,8 +144,16 @@ class OrganizerEventsController extends GetxController {
     await load();
   }
 
-  Future<String> createAttendanceQr(String eventId) {
-    return _repository.createEventAttendanceQr(eventId);
+  Future<Map<String, dynamic>> createAttendanceQr(
+    String eventId, {
+    required double latitude,
+    required double longitude,
+  }) {
+    return _repository.createEventAttendanceQr(
+      eventId,
+      latitude: latitude,
+      longitude: longitude,
+    );
   }
 
   Future<Map<String, dynamic>> sendCertificates(String eventId) {

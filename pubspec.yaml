@@ -50,6 +50,7 @@ dependencies:
   file_picker: ^11.0.3
   excel: ^4.0.6
   archive: ^3.6.1
+  tflite_flutter: ^0.12.1
 
 dev_dependencies:
   flutter_test:
@@ -70,6 +71,10 @@ flutter:
 
   assets:
     - assets/LogoHUIT.jpg
+    - assets/models/mobilefacenet.tflite
+    - facedataset/Dieu/
+    - facedataset/Tam/
+    - facedataset/KyAnh/
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

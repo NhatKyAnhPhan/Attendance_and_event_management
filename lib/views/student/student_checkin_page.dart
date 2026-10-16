@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -12,6 +13,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/api/api_client.dart';
 import '../../data/api/endpoints.dart';
+import '../../data/face/face_recognition_service.dart';
 
 /// Mục 14 bản thiết kế — "Student Mobile: QR Scanner, Processing state,
 /// Success, Expired QR, Invalid QR, Already checked in".
@@ -41,6 +43,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   bool _faceBusy = false;
   bool _faceDetected = false;
   bool _checkInBusy = false;
+  bool _cameraErrorDialogVisible = false;
   Map<String, dynamic>? _checkInDetails;
   final Stopwatch _faceFrameClock = Stopwatch()..start();
   int _lastFaceFrameMs = 0;
@@ -154,13 +157,17 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
 
   // Khởi tạo camera trước và bắt đầu gửi từng khung hình cho bộ nhận diện.
   Future<void> _startFaceCamera() async {
+    CameraController? controller;
     try {
       final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        throw StateError('Thiết bị không có camera.');
+      }
       final camera = cameras.firstWhere(
         (item) => item.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-      final controller = CameraController(
+      controller = CameraController(
         camera,
         ResolutionPreset.low,
         enableAudio: false,
@@ -181,12 +188,49 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       setState(() {});
       await controller.startImageStream(_processFaceImage);
     } catch (error) {
+      _cameraController = null;
+      await controller?.dispose();
+      await _faceDetector?.close();
+      _faceDetector = null;
+      if (!mounted) return;
+      _showCameraUnavailableDialog();
+    }
+  }
+
+  void _showCameraUnavailableDialog() {
+    if (_cameraErrorDialogVisible) return;
+    _cameraErrorDialogVisible = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        _cameraErrorDialogVisible = false;
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Không mở được camera'),
+          content: const Text(
+            'Không lấy được camera trên thiết bị. '
+            'Vui lòng kiểm tra quyền camera rồi thử lại.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Xác nhận'),
+            ),
+          ],
+        ),
+      );
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Không thể mở camera: $error';
-        _state = _ScanState.failed;
+        _state = _ScanState.idle;
+        _errorMessage = null;
+        _checkInBusy = false;
+        _faceDetected = false;
       });
-    }
+      _cameraErrorDialogVisible = false;
+    });
   }
 
   // Chuyển dữ liệu camera sang ảnh ML Kit và gửi điểm danh khi phát hiện mặt.
@@ -245,27 +289,39 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     _checkInBusy = true;
     try {
       await _qrController.stop();
-      final deviceId = await _getDeviceId();
       final isEventQr = _isEventAttendanceToken(token);
-      final Map<String, dynamic> result;
-      if (isEventQr) {
-        result = await _apiClient.post(
-          ApiEndpoints.eventAttendanceCheckIn,
-          data: {'qrToken': token, 'deviceId': deviceId},
-        );
-      } else {
-        final position = await _getCurrentPosition();
-        result = await _apiClient.post(
-          ApiEndpoints.attendanceCheckIn,
-          data: {
-            'qrToken': token,
-            'method': 'QR',
-            'deviceId': deviceId,
-            'latitude': position.latitude,
-            'longitude': position.longitude,
-          },
-        );
+      final endpoint = isEventQr
+          ? ApiEndpoints.eventAttendanceCheckIn
+          : ApiEndpoints.attendanceCheckIn;
+      final preview = await _apiClient.post(
+        endpoint,
+        data: {
+          'qrToken': token,
+          'preview': true,
+          if (!isEventQr) 'method': 'QR',
+        },
+      );
+      if (!mounted) return;
+      setState(() => _checkInDetails = preview);
+      final confirmed = await _showCheckInConfirmation();
+      if (!confirmed) {
+        await _reset();
+        return;
       }
+      if (!mounted) return;
+
+      final position = await _getCurrentPosition();
+      final deviceId = await _getDeviceId();
+      final result = await _apiClient.post(
+        endpoint,
+        data: {
+          'qrToken': token,
+          'deviceId': deviceId,
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          if (!isEventQr) 'method': 'QR',
+        },
+      );
       if (mounted) {
         setState(() {
           _checkInDetails = result;
@@ -300,17 +356,49 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     }
   }
 
-  // Gửi yêu cầu điểm danh sau khi camera xác nhận có khuôn mặt.
+  // Lấy thông tin xem trước rồi chỉ ghi nhận sau khi sinh viên xác nhận.
   Future<void> _submitFaceCheckIn() async {
     if (_checkInBusy) return;
     _checkInBusy = true;
+    XFile? capturedImage;
     try {
+      final camera = _cameraController;
+      if (camera == null || !camera.value.isInitialized) {
+        throw const ApiException('Camera chưa sẵn sàng để xác minh khuôn mặt.');
+      }
+      if (camera.value.isStreamingImages) await camera.stopImageStream();
+      capturedImage = await camera.takePicture();
+      final recognizedStudentId = await FaceRecognitionService.recognize(
+        capturedImage.path,
+      );
+      if (recognizedStudentId == null) {
+        throw const ApiException(
+          'Khuôn mặt không khớp với hồ sơ đã đăng ký.',
+        );
+      }
+      await _stopCameras();
+      final preview = await _apiClient.post(
+        ApiEndpoints.attendanceFaceCheckIn,
+        data: {
+          'preview': true,
+          'recognizedStudentId': recognizedStudentId,
+        },
+      );
+      if (!mounted) return;
+      setState(() => _checkInDetails = preview);
+      final confirmed = await _showCheckInConfirmation();
+      if (!confirmed) {
+        await _reset();
+        return;
+      }
+      if (!mounted) return;
+
       final position = await _getCurrentPosition();
       final deviceId = await _getDeviceId();
       final result = await _apiClient.post(
         ApiEndpoints.attendanceFaceCheckIn,
         data: {
-          'faceDetected': true,
+          'recognizedStudentId': recognizedStudentId,
           'deviceId': deviceId,
           'latitude': position.latitude,
           'longitude': position.longitude,
@@ -328,6 +416,21 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
         _errorMessage = error.message;
         _state = _ScanState.failed;
       });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Không thể xác minh khuôn mặt: $error';
+        _state = _ScanState.failed;
+      });
+    } finally {
+      _checkInBusy = false;
+      if (capturedImage != null) {
+        try {
+          await File(capturedImage.path).delete();
+        } on FileSystemException catch (error) {
+          debugPrint('Could not remove temporary face image: $error');
+        }
+      }
     }
   }
 
@@ -500,7 +603,14 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     return Stack(
       alignment: Alignment.center,
       children: [
-        MobileScanner(controller: _qrController, onDetect: _onQrDetected),
+        MobileScanner(
+          controller: _qrController,
+          onDetect: _onQrDetected,
+          errorBuilder: (context, error, child) {
+            _showCameraUnavailableDialog();
+            return const ColoredBox(color: Colors.black);
+          },
+        ),
         IgnorePointer(
           child: Container(
             width: 240,
@@ -638,6 +748,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       if (text.isNotEmpty && text != 'null') rows.add(MapEntry(label, text));
     }
 
+    final studentName = details['studentName']?.toString() ?? '';
+    final studentId = details['studentId']?.toString() ?? '';
+    add(
+      'Sinh viên',
+      [studentName, studentId].where((value) => value.isNotEmpty).join(' · '),
+    );
     final classId =
         details['classId']?.toString() ?? details['eventId']?.toString() ?? '';
     final className =
@@ -651,12 +767,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     );
     add('Buổi học', details['sessionName'] ?? details['classSessionId']);
     add('Giảng viên', details['lecturerName'] ?? details['organizerName']);
-    final studentName = details['studentName']?.toString() ?? '';
-    final studentId = details['studentId']?.toString() ?? '';
-    add(
-      'Sinh viên',
-      [studentName, studentId].where((value) => value.isNotEmpty).join(' · '),
-    );
+    add('Phòng / địa điểm', details['room'] ?? details['location']);
     final checkedInAt = DateTime.tryParse(
       details['checkedInAt']?.toString() ?? '',
     )?.toLocal();
@@ -681,6 +792,82 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     return rows;
   }
 
+  Future<bool> _showCheckInConfirmation() async {
+    if (!mounted) return false;
+    final details = _successDetails;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            icon: const Icon(Icons.fact_check_outlined),
+            title: const Text('Xác nhận thông tin điểm danh'),
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.55,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Vui lòng kiểm tra thông tin sinh viên và buổi điểm danh '
+                      'dưới đây có chính xác không.',
+                    ),
+                    if (details.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      ...details.map(_buildConfirmationDetail),
+                    ] else ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Không nhận được thông tin chi tiết từ máy chủ.',
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Text(
+                      'Nếu thông tin chưa đúng, vui lòng báo giảng viên hoặc ban '
+                      'tổ chức để được hỗ trợ.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Hủy'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                icon: const Icon(Icons.check),
+                label: const Text('Xác nhận điểm danh'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Widget _buildConfirmationDetail(MapEntry<String, String> detail) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 104,
+            child: Text(
+              detail.key,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Expanded(child: Text(detail.value)),
+        ],
+      ),
+    );
+  }
+
   String _formatDateTime(DateTime value) {
     final hour = value.hour.toString().padLeft(2, '0');
     final minute = value.minute.toString().padLeft(2, '0');
@@ -691,7 +878,11 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
 
   String get _failureTitle {
     final message = _errorMessage ?? '';
-    for (final category in ['Điểm danh thất bại', 'Điểm danh thất bại', 'Điểm danh thất bại']) {
+    for (final category in [
+      'Điểm danh thất bại',
+      'Điểm danh thất bại',
+      'Điểm danh thất bại',
+    ]) {
       if (message.startsWith('$category:')) return category;
     }
     return 'Không thể xác thực';

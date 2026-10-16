@@ -13,7 +13,7 @@ import '../../widgets/app_badge.dart';
 import '../../widgets/student_form_dialogs.dart';
 
 // Đăng ký và hỏi xác nhận nếu sự kiện trùng lịch học.
-Future<bool> _registerWithConflictHandling(
+Future<bool> registerStudentEventWithConflictHandling(
   BuildContext context,
   EventsController controller,
   StudentEventSummary event,
@@ -86,7 +86,7 @@ Future<void> _showEventFeedbackDialog(
 }
 
 // Tải chi tiết sự kiện và hiển thị modal để người dùng xem hoặc đăng ký.
-Future<void> _showEventDetails(
+Future<void> showStudentEventDetails(
   BuildContext context,
   EventsController controller,
   ClassesController classesController,
@@ -497,20 +497,21 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
                           context: context,
                           events: controller.items,
                           initialEventId: e.id,
-                          onSubmit: (event) => _registerWithConflictHandling(
-                            context,
-                            controller,
-                            event,
-                          ),
+                          onSubmit: (event) =>
+                              registerStudentEventWithConflictHandling(
+                                context,
+                                controller,
+                                event,
+                              ),
                         ),
                         onCancel: () =>
                             _cancelRegistration(context, controller, e),
-                        onDetails: () => _showEventDetails(
+                        onDetails: () => showStudentEventDetails(
                           context,
                           controller,
                           classesController,
                           e,
-                          () => _registerWithConflictHandling(
+                          () => registerStudentEventWithConflictHandling(
                             context,
                             controller,
                             e,

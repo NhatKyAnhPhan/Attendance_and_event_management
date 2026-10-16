@@ -157,9 +157,13 @@ function academicYearFromDateTime(value) {
 
 // Bổ sung cột tọa độ nếu cơ sở dữ liệu cũ chưa có thông tin vị trí.
 async function ensureAttendanceLocationColumns() {
-  for (const column of ['latitude', 'longitude']) {
+  for (const [column, definition] of [
+    ['latitude', 'DECIMAL(10, 7) NULL'],
+    ['longitude', 'DECIMAL(10, 7) NULL'],
+    ['radius_meters', 'INT NOT NULL DEFAULT 150'],
+  ]) {
     try {
-      await pool.query(`ALTER TABLE \`buoidiemdanh\` ADD COLUMN \`${column}\` DECIMAL(10, 7) NULL`);
+      await pool.query(`ALTER TABLE \`buoidiemdanh\` ADD COLUMN \`${column}\` ${definition}`);
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') throw error;
     }
@@ -459,6 +463,22 @@ app.get('/api/classes', requireAuth, async (request, response) => {
                   ORDER BY lh.PhongHoc SEPARATOR ', ')
                 FROM lichhocphan lh WHERE lh.Malop = lhp.Malop
               ), '') AS room,
+              COALESCE((
+                SELECT GROUP_CONCAT(
+                  CONCAT(
+                    TIME_FORMAT(lh.GioBatDau, '%H:%i'),
+                    '–', TIME_FORMAT(lh.GioKetThuc, '%H:%i'),
+                    ' · Phòng ', lh.PhongHoc
+                  )
+                  ORDER BY lh.GioBatDau SEPARATOR ' | '
+                )
+                FROM lichhocphan lh
+                WHERE lh.Malop = lhp.Malop
+                  AND lh.ThuTrongTuan = WEEKDAY(CURDATE()) + 1
+                  AND (lh.NgayBatDau IS NULL OR lh.NgayBatDau <= CURDATE())
+                  AND (lh.NgayKetThuc IS NULL OR lh.NgayKetThuc >= CURDATE())
+                  AND lh.GioKetThuc >= CURTIME()
+              ), '') AS todaySchedule,
               COALESCE(nd.Hoten, '') AS lecturerName,
               COUNT(DISTINCT tvl.Masv) AS studentCount,
               COALESCE(attendance.present, 0) AS present,
@@ -1232,10 +1252,24 @@ function makeId(prefix) {
   return `${prefix}_${crypto.randomBytes(10).toString('hex')}`.slice(0, 30);
 }
 
-const attendanceRadiusMeters = 150;
+const classAttendanceRadiusMeters = 100;
+const eventAttendanceRadiusMeters = 300;
+
+function classRadiusForStudentCount(studentCount) {
+  const count = Math.max(0, Number(studentCount) || 0);
+  if (count <= 50) return 20;
+  return Math.min(
+    classAttendanceRadiusMeters,
+    Math.ceil(20 + ((count - 50) / 50) * 80),
+  );
+}
 
 // Đọc và kiểm tra vĩ độ, kinh độ từ request hoặc payload QR.
 function readCoordinates(body) {
+  if (body?.latitude === undefined || body.latitude === null
+      || body?.longitude === undefined || body.longitude === null) {
+    return null;
+  }
   const latitude = Number(body?.latitude);
   const longitude = Number(body?.longitude);
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
@@ -1245,9 +1279,21 @@ function readCoordinates(body) {
   return { latitude, longitude };
 }
 
-async function checkInEventAttendance(request, response, payload, deviceId) {
+async function checkInEventAttendance(request, response, payload, deviceId, coordinates) {
   if (typeof payload.eventId !== 'string' || !payload.eventId) {
     return response.status(410).json({ message: 'Mã QR sự kiện không hợp lệ.' });
+  }
+  const eventCoordinates = readCoordinates(payload);
+  const radiusMeters = Number(payload.radiusMeters);
+  if (!eventCoordinates || radiusMeters !== eventAttendanceRadiusMeters) {
+    return response.status(410).json({
+      message: 'Mã QR sự kiện thiếu thông tin vị trí hợp lệ hoặc đã hết hạn.',
+    });
+  }
+  if (distanceInMeters(eventCoordinates, coordinates) > radiusMeters) {
+    return response.status(403).json({
+      message: `Bạn đang cách vị trí sự kiện quá xa (phạm vi ${radiusMeters} m).`,
+    });
   }
 
   const connection = await pool.getConnection();
@@ -1336,11 +1382,16 @@ async function checkInEventAttendance(request, response, payload, deviceId) {
 
 app.post('/api/events/attendance/check-in', requireAuth, async (request, response) => {
   const { qrToken, deviceId } = request.body || {};
+  const coordinates = readCoordinates(request.body);
+  const previewOnly = request.body?.preview === true;
   if (typeof qrToken !== 'string' || qrToken.length === 0) {
     return response.status(400).json({ message: 'Thiếu mã QR sự kiện.' });
   }
-  if (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId)) {
+  if (!previewOnly && (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId))) {
     return response.status(400).json({ message: 'Không xác định được thiết bị điểm danh.' });
+  }
+  if (!previewOnly && !coordinates) {
+    return response.status(400).json({ message: 'Không lấy được vị trí hiện tại của bạn.' });
   }
   if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
     return response.status(403).json({
@@ -1363,7 +1414,80 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
     if (payload.type !== 'event-attendance') {
       return response.status(410).json({ message: 'Mã QR không phải mã điểm danh sự kiện.' });
     }
-    return await checkInEventAttendance(request, response, payload, deviceId);
+    if (previewOnly) {
+      const [[preview]] = await pool.execute(
+        `SELECT sk.Masukien AS eventId, sk.Tensukien AS eventName,
+                COALESCE(sk.Diadiem, '') AS location,
+                sk.Thoigianbatdau AS startTime,
+                sk.Thoigianketthuc AS endTime,
+                COALESCE(dv.Tendv, '') AS organizerName,
+                nd.Mand AS studentId,
+                COALESCE(nd.Hoten, nd.Mand) AS studentName,
+                CASE
+                  WHEN NOW() >= sk.Thoigianbatdau
+                    AND NOW() < sk.Thoigianketthuc
+                    AND sk.Trangthaisukien <> 'Đã đóng' THEN 1
+                  ELSE 0
+                END AS isOpen
+         FROM sukien sk
+         LEFT JOIN donvi dv ON dv.Madv = sk.Madv
+         JOIN nguoidung nd ON nd.Mand = ?
+         WHERE sk.Masukien = ?
+         LIMIT 1`,
+        [request.auth.sub, payload.eventId],
+      );
+      if (!preview || Number(preview.isOpen) !== 1) {
+        return response.status(410).json({
+          message: 'Sự kiện chưa đến giờ điểm danh, đã kết thúc hoặc đã bị đóng.',
+        });
+      }
+      const [[registration]] = await pool.execute(
+        `SELECT Trangthaidangky AS status
+         FROM dangkysukien
+         WHERE Masukien = ? AND Masv = ?
+         LIMIT 1`,
+        [preview.eventId, request.auth.sub],
+      );
+      if (!registration
+          || ['từ chối', 'đã hủy', 'hủy'].includes(
+            String(registration.status || '').trim().toLowerCase(),
+          )) {
+        return response.status(403).json({
+          message: 'Bạn cần có đăng ký hợp lệ cho sự kiện mới được điểm danh.',
+        });
+      }
+      const [[existing]] = await pool.execute(
+        `SELECT 1 AS checkedIn
+         FROM event_attendance
+         WHERE event_id = ? AND student_id = ?
+         LIMIT 1`,
+        [preview.eventId, request.auth.sub],
+      );
+      if (existing) {
+        return response.status(409).json({
+          message: 'Bạn đã điểm danh sự kiện này.',
+        });
+      }
+      return response.json({
+        eventId: preview.eventId,
+        eventName: preview.eventName,
+        location: preview.location,
+        startTime: preview.startTime,
+        endTime: preview.endTime,
+        organizerName: preview.organizerName,
+        studentId: preview.studentId,
+        studentName: preview.studentName,
+        status: 'Chờ xác nhận',
+        method: 'QR',
+      });
+    }
+    return await checkInEventAttendance(
+      request,
+      response,
+      payload,
+      deviceId,
+      coordinates,
+    );
   } catch (error) {
     if (error.name === 'TokenExpiredError' || error.name === 'JsonWebTokenError') {
       return response.status(410).json({
@@ -1391,14 +1515,14 @@ function distanceInMeters(first, second) {
 }
 
 // Tạo JWT dùng làm mã QR cho phiên điểm danh có thời hạn.
-function createAttendanceQr(sessionId, expiresAt, coordinates) {
+function createAttendanceQr(sessionId, expiresAt, coordinates, radiusMeters) {
   return jwt.sign(
     {
       type: 'attendance',
       sessionId,
       latitude: coordinates.latitude,
       longitude: coordinates.longitude,
-      radiusMeters: attendanceRadiusMeters,
+      radiusMeters,
       exp: Math.floor(expiresAt.getTime() / 1000),
     },
     jwtSecret,
@@ -1710,12 +1834,21 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
 
   try {
     const [[classSession]] = await pool.execute(
-      `SELECT b.Mabuoi AS id, lhp.Trangthailop AS classStatus,
-              (lhp.Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
+      `SELECT b.Mabuoi AS id, b.Malop AS classId,
+              lhp.Trangthailop AS classStatus,
+              (lhp.Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived,
+              COUNT(
+                CASE
+                  WHEN tvl.Trangthaithanhvien = 'Đang tham gia' THEN tvl.Masv
+                END
+              ) AS studentCount
        FROM buoi b
        LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
        WHERE b.Mabuoi = ?
          AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
+       GROUP BY b.Mabuoi, b.Malop, lhp.Trangthailop,
+                lhp.Thoigianbatdau
        LIMIT 1`,
       [classSessionId, request.auth.role, request.auth.sub],
     );
@@ -1725,15 +1858,26 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
         message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể mở điểm danh.',
       });
     }
+    const radiusMeters = classRadiusForStudentCount(classSession.studentCount);
 
     const openedAt = new Date();
     const closedAt = new Date(openedAt.getTime() + duration * 60 * 1000);
     const id = makeId('AT');
     await pool.execute(
       `INSERT INTO buoidiemdanh
-        (Mabuoidiemdanh, Thoigianmo, Thoigiandong, Phuongthuc, Trangthaidiemdanh, Mabuoi, latitude, longitude)
-         VALUES (?, ?, ?, ?, 'Đang mở', ?, ?, ?)`,
-        [id, openedAt, closedAt, method, classSessionId, coordinates.latitude, coordinates.longitude],
+        (Mabuoidiemdanh, Thoigianmo, Thoigiandong, Phuongthuc, Trangthaidiemdanh,
+         Mabuoi, latitude, longitude, radius_meters)
+         VALUES (?, ?, ?, ?, 'Đang mở', ?, ?, ?, ?)`,
+      [
+        id,
+        openedAt,
+        closedAt,
+        method,
+        classSessionId,
+        coordinates.latitude,
+        coordinates.longitude,
+        radiusMeters,
+      ],
     );
     return response.status(201).json({
       id,
@@ -1742,8 +1886,10 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
       closedAt,
       latitude: coordinates.latitude,
       longitude: coordinates.longitude,
-      radiusMeters: attendanceRadiusMeters,
-      qr: method === 'Face' ? null : createAttendanceQr(id, closedAt, coordinates),
+      radiusMeters,
+      qr: method === 'Face'
+        ? null
+        : createAttendanceQr(id, closedAt, coordinates, radiusMeters),
     });
   } catch (error) {
     console.error('Create attendance session error:', error.message);
@@ -1755,13 +1901,14 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
 app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
   const { qrToken, method = 'QR', deviceId } = request.body || {};
   const coordinates = readCoordinates(request.body);
+  const previewOnly = request.body?.preview === true;
   if (!qrToken || !['QR', 'Face'].includes(method)) {
     return response.status(400).json({ message: 'Thiếu dữ liệu điểm danh.' });
   }
-  if (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId)) {
+  if (!previewOnly && (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId))) {
     return response.status(400).json({ message: 'Không xác định được thiết bị điểm danh.' });
   }
-  if (!coordinates) {
+  if (!previewOnly && !coordinates) {
     return response.status(400).json({ message: 'Không lấy được vị trí hiện tại của bạn.' });
   }
 
@@ -1794,8 +1941,11 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
       return response.status(410).json({ message: 'Phiên điểm danh đã đóng hoặc hết hạn.' });
     }
     const sessionCoordinates = readCoordinates(payload);
-    const radiusMeters = Number(payload.radiusMeters) || attendanceRadiusMeters;
-    if (!sessionCoordinates || distanceInMeters(sessionCoordinates, coordinates) > radiusMeters) {
+    const radiusMeters = Number(payload.radiusMeters) || classAttendanceRadiusMeters;
+    if (!sessionCoordinates) {
+      return response.status(410).json({ message: 'Mã QR không hợp lệ hoặc đã hết hạn.' });
+    }
+    if (!previewOnly && distanceInMeters(sessionCoordinates, coordinates) > radiusMeters) {
       return response.status(403).json({ message: `Bạn đang cách vị trí điểm danh quá xa (phạm vi ${radiusMeters} m).` });
     }
     if (session.method === 'Face' || (method === 'Face' && session.method === 'QR')) {
@@ -1823,6 +1973,47 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
       [session.id, request.auth.sub],
     );
     if (existing) return response.status(409).json({ message: 'Bạn đã điểm danh phiên này.' });
+
+    if (previewOnly) {
+      const [[preview]] = await pool.execute(
+        `SELECT bpd.Mabuoidiemdanh AS attendanceSessionId,
+                b.Mabuoi AS classSessionId, b.Malop AS classId,
+                COALESCE(lhp.Tenlop, '') AS className,
+                COALESCE(b.Noidung, '') AS sessionName,
+                b.Thoigianbatdau AS startTime, b.Thoigianketthuc AS endTime,
+                COALESCE(lecturer.Hoten, '') AS lecturerName,
+                COALESCE((
+                  SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
+                    ORDER BY lh.PhongHoc SEPARATOR ', ')
+                  FROM lichhocphan lh
+                  WHERE lh.Malop = b.Malop
+                    AND lh.ThuTrongTuan = WEEKDAY(b.Thoigianbatdau) + 1
+                    AND (lh.NgayBatDau IS NULL
+                      OR lh.NgayBatDau <= DATE(b.Thoigianbatdau))
+                    AND (lh.NgayKetThuc IS NULL
+                      OR lh.NgayKetThuc >= DATE(b.Thoigianbatdau))
+                    AND lh.GioBatDau <= TIME(b.Thoigianbatdau)
+                    AND lh.GioKetThuc >= TIME(b.Thoigianbatdau)
+                ), '') AS room,
+                ? AS studentId, COALESCE(attendee.Hoten, '') AS studentName,
+                'Chờ xác nhận' AS status, 'QR' AS method
+         FROM buoidiemdanh bpd
+         JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+         LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+         LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
+         LEFT JOIN nguoidung lecturer ON lecturer.Mand = gv.Magv
+         LEFT JOIN nguoidung attendee ON attendee.Mand = ?
+         WHERE bpd.Mabuoidiemdanh = ?
+         LIMIT 1`,
+        [request.auth.sub, request.auth.sub, session.id],
+      );
+      if (!preview) {
+        return response.status(404).json({
+          message: 'Không tìm thấy thông tin buổi điểm danh.',
+        });
+      }
+      return response.json(preview);
+    }
 
     const connection = await pool.getConnection();
     try {
@@ -1858,6 +2049,19 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
               COALESCE(b.Noidung, '') AS sessionName,
               b.Thoigianbatdau AS startTime, b.Thoigianketthuc AS endTime,
               COALESCE(lecturer.Hoten, '') AS lecturerName,
+              COALESCE((
+                SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
+                  ORDER BY lh.PhongHoc SEPARATOR ', ')
+                FROM lichhocphan lh
+                WHERE lh.Malop = b.Malop
+                  AND lh.ThuTrongTuan = WEEKDAY(b.Thoigianbatdau) + 1
+                  AND (lh.NgayBatDau IS NULL
+                    OR lh.NgayBatDau <= DATE(b.Thoigianbatdau))
+                  AND (lh.NgayKetThuc IS NULL
+                    OR lh.NgayKetThuc >= DATE(b.Thoigianbatdau))
+                  AND lh.GioBatDau <= TIME(b.Thoigianbatdau)
+                  AND lh.GioKetThuc >= TIME(b.Thoigianbatdau)
+              ), '') AS room,
               kd.Thoigiandiemdanh AS checkedInAt,
               kd.Trangthaiketqua AS status,
               kd.Masv AS studentId, COALESCE(attendee.Hoten, '') AS studentName,
@@ -1890,21 +2094,53 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
 app.post('/api/attendance/face-check-in', requireAuth, async (request, response) => {
   const coordinates = readCoordinates(request.body);
   const deviceId = request.body?.deviceId;
-  if (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId)) {
+  const recognizedStudentId = request.body?.recognizedStudentId;
+  const previewOnly = request.body?.preview === true;
+  if (typeof recognizedStudentId !== 'string'
+      || recognizedStudentId !== request.auth.sub) {
+    return response.status(403).json({
+      message: 'Khuôn mặt không khớp với tài khoản đang đăng nhập.',
+    });
+  }
+  if (!previewOnly && (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId))) {
     return response.status(400).json({ message: 'Không xác định được thiết bị điểm danh.' });
   }
-  if (!coordinates || request.body?.faceDetected !== true) {
-    return response.status(400).json({ message: 'Cần xác nhận khuôn mặt và vị trí hiện tại.' });
+  if (!previewOnly && !coordinates) {
+    return response.status(400).json({ message: 'Cần xác nhận vị trí hiện tại.' });
   }
 
   try {
     const [[session]] = await pool.execute(
       `SELECT bpd.Mabuoidiemdanh AS id, bpd.Phuongthuc AS method,
               bpd.Thoigiandong AS closedAt,
-              bpd.latitude AS latitude, bpd.longitude AS longitude
+              bpd.latitude AS latitude, bpd.longitude AS longitude,
+              bpd.radius_meters AS radiusMeters,
+              b.Mabuoi AS classSessionId, b.Malop AS classId,
+              COALESCE(lhp.Tenlop, '') AS className,
+              COALESCE(b.Noidung, '') AS sessionName,
+              b.Thoigianbatdau AS startTime, b.Thoigianketthuc AS endTime,
+              COALESCE(lecturer.Hoten, '') AS lecturerName,
+              COALESCE((
+                SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
+                  ORDER BY lh.PhongHoc SEPARATOR ', ')
+                FROM lichhocphan lh
+                WHERE lh.Malop = b.Malop
+                  AND lh.ThuTrongTuan = WEEKDAY(b.Thoigianbatdau) + 1
+                  AND (lh.NgayBatDau IS NULL
+                    OR lh.NgayBatDau <= DATE(b.Thoigianbatdau))
+                  AND (lh.NgayKetThuc IS NULL
+                    OR lh.NgayKetThuc >= DATE(b.Thoigianbatdau))
+                  AND lh.GioBatDau <= TIME(b.Thoigianbatdau)
+                  AND lh.GioKetThuc >= TIME(b.Thoigianbatdau)
+              ), '') AS room,
+              COALESCE(attendee.Hoten, '') AS studentName
        FROM buoidiemdanh bpd
        JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
        JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
+       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN nguoidung lecturer ON lecturer.Mand = gv.Magv
+       LEFT JOIN nguoidung attendee ON attendee.Mand = tvl.Masv
        WHERE tvl.Masv = ? AND bpd.Trangthaidiemdanh = 'Đang mở'
          AND bpd.Thoigiandong > NOW()
        ORDER BY bpd.Thoigianmo DESC LIMIT 1`,
@@ -1912,6 +2148,33 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     );
     if (!session || !['Face', 'Both'].includes(session.method)) {
       return response.status(404).json({ message: 'Không có phiên khuôn mặt đang mở cho bạn.' });
+    }
+    if (previewOnly) {
+      const [[existing]] = await pool.execute(
+        `SELECT 1 AS id FROM ketquadiemdanh
+         WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1`,
+        [session.id, request.auth.sub],
+      );
+      if (existing) {
+        return response.status(409).json({
+          message: 'Bạn đã điểm danh phiên này.',
+        });
+      }
+      return response.json({
+        attendanceSessionId: session.id,
+        classSessionId: session.classSessionId,
+        classId: session.classId,
+        className: session.className,
+        sessionName: session.sessionName,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        lecturerName: session.lecturerName,
+        room: session.room,
+        studentId: request.auth.sub,
+        studentName: session.studentName,
+        status: 'Chờ xác nhận',
+        method: 'Face',
+      });
     }
     const [[deviceClaim]] = await pool.execute(
       `SELECT 1 AS used FROM attendance_device_claims
@@ -1928,8 +2191,9 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
       { latitude: Number(session.latitude), longitude: Number(session.longitude) },
       coordinates,
     );
-    if (!Number.isFinite(distance) || distance > attendanceRadiusMeters) {
-      return response.status(403).json({ message: `Bạn đang cách vị trí điểm danh quá xa (phạm vi ${attendanceRadiusMeters} m).` });
+    const radiusMeters = Number(session.radiusMeters) || classAttendanceRadiusMeters;
+    if (!Number.isFinite(distance) || distance > radiusMeters) {
+      return response.status(403).json({ message: `Bạn đang cách vị trí điểm danh quá xa (phạm vi ${radiusMeters} m).` });
     }
 
     const [[existing]] = await pool.execute(
@@ -1939,8 +2203,63 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     );
     if (existing) return response.status(409).json({ message: 'Bạn đã điểm danh phiên này.' });
 
-    return response.status(501).json({
-      message: 'Đã nhận diện khuôn mặt nhưng hệ thống chưa có mẫu khuôn mặt để xác thực danh tính.',
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute(
+        `INSERT INTO attendance_device_claims
+         (device_id, attendance_date, student_id, attendance_session_id)
+         VALUES (?, CURDATE(), ?, ?)`,
+        [deviceId, request.auth.sub, session.id],
+      );
+      await connection.execute(
+        `INSERT INTO ketquadiemdanh
+         (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Vitri, Mabuoidiemdanh, Masv)
+         VALUES (?, NOW(), 'Có mặt', ?, ?, ?)`,
+        [
+          makeId('RS'),
+          JSON.stringify(coordinates),
+          session.id,
+          request.auth.sub,
+        ],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      if (error.code === 'ER_DUP_ENTRY') {
+        return response.status(409).json({
+          message: 'Bạn đã điểm danh phiên này hoặc thiết bị đã được dùng.',
+        });
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    const [[result]] = await pool.execute(
+      `SELECT Thoigiandiemdanh AS checkedInAt,
+              Trangthaiketqua AS status
+       FROM ketquadiemdanh
+       WHERE Mabuoidiemdanh = ? AND Masv = ?
+       LIMIT 1`,
+      [session.id, request.auth.sub],
+    );
+    return response.status(201).json({
+      message: 'Điểm danh khuôn mặt thành công.',
+      attendanceSessionId: session.id,
+      classSessionId: session.classSessionId,
+      classId: session.classId,
+      className: session.className,
+      sessionName: session.sessionName,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      lecturerName: session.lecturerName,
+      room: session.room,
+      checkedInAt: result.checkedInAt,
+      status: result.status,
+      studentId: request.auth.sub,
+      studentName: session.studentName,
+      method: 'Face',
     });
   } catch (error) {
     console.error('Face check-in error:', error.message);
@@ -1985,6 +2304,12 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
   const isAdmin = ['quản trị viên', 'admin'].includes(
     String(request.auth.role || '').trim().toLowerCase(),
   );
+  const coordinates = readCoordinates(request.body);
+  if (!coordinates) {
+    return response.status(400).json({
+      message: 'Cần lấy vị trí thiết bị để tạo QR điểm danh sự kiện.',
+    });
+  }
   try {
     const [[event]] = await pool.execute(
       `SELECT sk.Masukien AS id, sk.Tensukien AS name,
@@ -2020,7 +2345,13 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
       });
     }
     const qr = jwt.sign(
-      { type: 'event-attendance', eventId: event.id },
+      {
+        type: 'event-attendance',
+        eventId: event.id,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        radiusMeters: eventAttendanceRadiusMeters,
+      },
       jwtSecret,
       { expiresIn },
     );
@@ -2028,6 +2359,7 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
       eventId: event.id,
       eventName: event.name,
       expiresAt,
+      radiusMeters: eventAttendanceRadiusMeters,
       qr,
     });
   } catch (error) {

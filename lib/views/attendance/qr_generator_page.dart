@@ -24,6 +24,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
   bool _creating = false;
   String? _error;
   Position? _lecturerPosition;
+  int? _radiusMeters;
 
   @override
   void initState() {
@@ -74,10 +75,15 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         },
       );
       if (!mounted) return;
+      final radiusMeters = body['radiusMeters'];
+      if (radiusMeters is! num) {
+        throw const ApiException('Máy chủ không trả về phạm vi điểm danh.');
+      }
       setState(() {
         _qrToken = body['qr']?.toString();
         _expiresAt = DateTime.tryParse(body['closedAt']?.toString() ?? '');
         _lecturerPosition = position;
+        _radiusMeters = radiusMeters.toInt();
         _creating = false;
       });
     } on ApiException catch (error) {
@@ -321,7 +327,8 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
               title: const Text('Vị trí điểm danh đã được khóa'),
               subtitle: Text(
                 '${_lecturerPosition!.latitude.toStringAsFixed(6)}, '
-                '${_lecturerPosition!.longitude.toStringAsFixed(6)} · Phạm vi 150 m',
+                '${_lecturerPosition!.longitude.toStringAsFixed(6)} · '
+                'Phạm vi ${_radiusMeters ?? '--'} m',
               ),
             ),
           ],

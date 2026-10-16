@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -17,6 +18,7 @@ class OrganizerEventsPage extends StatefulWidget {
   @override
   State<OrganizerEventsPage> createState() => _OrganizerEventsPageState();
 }
+
 class _EventBenefitDraft {
   _EventBenefitDraft({
     this.type = 'Khác',
@@ -690,7 +692,14 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     OrganizerEventSummary event,
   ) async {
     try {
-      final qr = await controller.createAttendanceQr(event.id);
+      final position = await _getCurrentPosition();
+      final result = await controller.createAttendanceQr(
+        event.id,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      final qr = result['qr'].toString();
+      final radiusMeters = (result['radiusMeters'] as num).toInt();
       if (!context.mounted) return;
       await showDialog<void>(
         context: context,
@@ -708,6 +717,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   'Mã QR có hiệu lực đến ${DateFormat('dd/MM/yyyy HH:mm').format(event.endTime)}.',
                   textAlign: TextAlign.center,
                 ),
+                const SizedBox(height: 8),
+                Text('Phạm vi điểm danh: $radiusMeters m.'),
                 if (DateTime.now().isBefore(event.startTime)) ...[
                   const SizedBox(height: 8),
                   const Text(
@@ -732,6 +743,23 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Không tạo được QR: $error')));
     }
+  }
+
+  Future<Position> _getCurrentPosition() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw Exception('Hãy bật dịch vụ vị trí trên thiết bị ban tổ chức.');
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      throw Exception('Cần cấp quyền vị trí để tạo QR điểm danh sự kiện.');
+    }
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    );
   }
 
   Future<void> _confirmSendCertificates(

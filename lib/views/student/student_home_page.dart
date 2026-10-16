@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/classes_controller.dart';
@@ -16,6 +17,7 @@ import '../../widgets/statistics_charts.dart';
 import '../notifications/notifications_page.dart';
 import 'student_checkin_page.dart';
 import 'student_classes_page.dart';
+import 'student_class_details_page.dart';
 import 'student_events_page.dart';
 import 'student_profile_page.dart';
 
@@ -43,11 +45,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final c = AppColors.of(isDark);
 
     final pages = [
-      _HomeTabContent(
-        onScan: () => _goTo(3),
-        onGoToClasses: () => _goTo(1),
-        onGoToEvents: () => _goTo(2),
-      ),
+      _HomeTabContent(onScan: () => _goTo(3), onGoToClasses: () => _goTo(1)),
       const StudentClassesPage(),
       const StudentEventsPage(),
       StudentCheckinPage(isActive: _index == 3),
@@ -109,13 +107,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
 class _HomeTabContent extends StatelessWidget {
   final VoidCallback onScan;
   final VoidCallback onGoToClasses;
-  final VoidCallback onGoToEvents;
 
-  const _HomeTabContent({
-    required this.onScan,
-    required this.onGoToClasses,
-    required this.onGoToEvents,
-  });
+  const _HomeTabContent({required this.onScan, required this.onGoToClasses});
 
   /// Dựng tab chính cùng thống kê và dữ liệu hiện có của sinh viên.
   @override
@@ -130,7 +123,21 @@ class _HomeTabContent extends StatelessWidget {
 
     return Obx(() {
       final classes = classesController.items;
-      final events = eventsController.items.where((event) => !event.isEnded);
+      final now = DateTime.now();
+      final todayClasses = classes
+          .where((classItem) => classItem.todaySchedule.isNotEmpty)
+          .toList();
+      final todayEvents = eventsController.items.where((event) {
+        final start = event.startTime;
+        final end = event.endTime;
+        return start != null &&
+            end != null &&
+            start.year == now.year &&
+            start.month == now.month &&
+            start.day == now.day &&
+            end.isAfter(now) &&
+            !event.isEnded;
+      }).toList()..sort((a, b) => a.startTime!.compareTo(b.startTime!));
       final user = auth.currentUser.value ?? const <String, dynamic>{};
       final dashboard = dashboardController.summary;
       final present = _countValue(dashboard['present']);
@@ -185,30 +192,55 @@ class _HomeTabContent extends StatelessWidget {
                 _buildQuickActions(c),
                 const SizedBox(height: 20),
 
-                _sectionTitle('Lớp học của tôi', c),
+                _sectionTitle('Lớp học sắp tới', c),
                 const SizedBox(height: 12),
-                ...classes
-                    .take(2)
-                    .map(
-                      (cls) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _TodayClassCard(cls: cls, c: c),
+                if (classesController.loading.value && classes.isEmpty)
+                  const Center(child: CircularProgressIndicator())
+                else if (todayClasses.isEmpty)
+                  _todayEmptyMessage('Hôm nay không có lớp.', c)
+                else
+                  ...todayClasses.map(
+                    (cls) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _TodayClassCard(
+                        cls: cls,
+                        c: c,
+                        onTap: () => Get.to(
+                          () => StudentClassDetailsPage(classId: cls.id),
+                        ),
                       ),
                     ),
+                  ),
                 const SizedBox(height: 8),
 
                 _sectionTitle('Sự kiện sắp tới', c),
                 const SizedBox(height: 12),
-                ...events.map(
-                  (e) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _EventRow(
-                      event: e,
-                      c: c,
-                      onOpenEvents: onGoToEvents,
+                if (eventsController.loading.value &&
+                    eventsController.items.isEmpty)
+                  const Center(child: CircularProgressIndicator())
+                else if (todayEvents.isEmpty)
+                  _todayEmptyMessage('Hôm nay không có sự kiện nào.', c)
+                else
+                  ...todayEvents.map(
+                    (event) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _EventRow(
+                        event: event,
+                        c: c,
+                        onDetails: () => showStudentEventDetails(
+                          context,
+                          eventsController,
+                          classesController,
+                          event,
+                          () => registerStudentEventWithConflictHandling(
+                            context,
+                            eventsController,
+                            event,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
                 const SizedBox(height: 8),
 
                 Row(
@@ -476,57 +508,75 @@ class _HomeTabContent extends StatelessWidget {
   }
 }
 
+Widget _todayEmptyMessage(String message, AppColors colors) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 12),
+  child: Text(message, style: AppTextStyles.bodySm(colors.mutedForeground)),
+);
+
 class _TodayClassCard extends StatelessWidget {
   final StudentClassSummary cls;
   final AppColors c;
-  const _TodayClassCard({required this.cls, required this.c});
+  final VoidCallback onTap;
+  const _TodayClassCard({
+    required this.cls,
+    required this.c,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: c.card,
-        border: Border.all(color: c.border),
+    return Material(
+      color: c.card,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: const Color(0xFFDBEAFE),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(
-              Icons.menu_book,
-              color: Color(0xFF1E56A0),
-              size: 20,
-            ),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            border: Border.all(color: c.border),
+            borderRadius: BorderRadius.circular(10),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  cls.name,
-                  style: AppTextStyles.displayXs(c.foreground)
-                      .copyWith(fontSize: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDBEAFE),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                Text(
-                  'Mã lớp ${cls.id}',
-                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                child: const Icon(
+                  Icons.menu_book,
+                  color: Color(0xFF1E56A0),
+                  size: 20,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      cls.name,
+                      style: AppTextStyles.displayXs(c.foreground)
+                          .copyWith(fontSize: 14),
+                    ),
+                    Text(
+                      'Mã lớp ${cls.id}',
+                      style: AppTextStyles.bodyXs(c.mutedForeground),
+                    ),
+                    Text(
+                      cls.todaySchedule,
+                      style: AppTextStyles.bodyXs(c.mutedForeground),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: c.mutedForeground),
+            ],
           ),
-          Text(
-            '${cls.sessions} buổi',
-            style: AppTextStyles.bodyXs(c.mutedForeground),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -535,17 +585,17 @@ class _TodayClassCard extends StatelessWidget {
 class _EventRow extends StatelessWidget {
   final StudentEventSummary event;
   final AppColors c;
-  final VoidCallback onOpenEvents;
+  final VoidCallback onDetails;
 
   const _EventRow({
     required this.event,
     required this.c,
-    required this.onOpenEvents,
+    required this.onDetails,
   });
 
-  /// Mở tab sự kiện thật thay vì hiển thị nút đăng ký không có xử lý.
   @override
   Widget build(BuildContext context) {
+    final start = event.startTime;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -576,38 +626,24 @@ class _EventRow extends StatelessWidget {
                       .copyWith(fontSize: 13),
                 ),
                 Text(
-                  '${event.date} · ${event.org}',
+                  '${start == null ? '' : DateFormat('HH:mm').format(start)}'
+                  '${event.org.isEmpty ? '' : ' · ${event.org}'}',
                   style: AppTextStyles.bodyXs(c.mutedForeground),
                 ),
               ],
             ),
           ),
           const SizedBox(width: 8),
-          Flexible(
-            child: event.registered
-                ? const Align(
-                    alignment: Alignment.topRight,
-                    child: AppBadge(
-                      label: 'Đã đăng ký',
-                      status: BadgeStatus.present,
-                    ),
-                  )
-                : Align(
-                    alignment: Alignment.topRight,
-                    child: SizedBox(
-                      height: 28,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                        ),
-                        onPressed: onOpenEvents,
-                        child: const Text(
-                          'Xem sự kiện',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                      ),
-                    ),
-                  ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (event.registered)
+                const AppBadge(
+                  label: 'Đã đăng ký',
+                  status: BadgeStatus.present,
+                ),
+              TextButton(onPressed: onDetails, child: const Text('Chi tiết')),
+            ],
           ),
         ],
       ),
