@@ -63,7 +63,13 @@ class FaceRecognitionService {
       );
     }
 
-    final probe = await service._embed(bytes, faces.single.boundingBox);
+    final face = faces.single;
+    final probe = await service._embed(
+      bytes,
+      face.boundingBox,
+      face.landmarks[FaceLandmarkType.leftEye]?.position,
+      face.landmarks[FaceLandmarkType.rightEye]?.position,
+    );
     var bestSimilarity = -1.0;
     String? bestStudentId;
     for (final entry in service._templatesByStudent.entries) {
@@ -99,7 +105,10 @@ class FaceRecognitionService {
     }
 
     final detector = FaceDetector(
-      options: FaceDetectorOptions(performanceMode: FaceDetectorMode.accurate),
+      options: FaceDetectorOptions(
+        performanceMode: FaceDetectorMode.accurate,
+        enableLandmarks: true,
+      ),
     );
     try {
       final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
@@ -156,6 +165,7 @@ class FaceRecognitionService {
                 rejectedSamples++;
                 continue;
               }
+              final face = faces.single;
               templates.add(
                 await _embedImage(
                   interpreter,
@@ -163,7 +173,9 @@ class FaceRecognitionService {
                     data.offsetInBytes,
                     data.lengthInBytes,
                   ),
-                  faces.single.boundingBox,
+                  face.boundingBox,
+                  face.landmarks[FaceLandmarkType.leftEye]?.position,
+                  face.landmarks[FaceLandmarkType.rightEye]?.position,
                 ),
               );
             } on Exception {
@@ -206,13 +218,19 @@ class FaceRecognitionService {
     );
   }
 
-  Future<List<double>> _embed(Uint8List bytes, ui.Rect faceBounds) =>
-      _embedImage(_interpreter, bytes, faceBounds);
+  Future<List<double>> _embed(
+    Uint8List bytes,
+    ui.Rect faceBounds,
+    math.Point<int>? leftEye,
+    math.Point<int>? rightEye,
+  ) => _embedImage(_interpreter, bytes, faceBounds, leftEye, rightEye);
 
   static Future<List<double>> _embedImage(
     Interpreter interpreter,
     Uint8List bytes,
     ui.Rect faceBounds,
+    math.Point<int>? leftEye,
+    math.Point<int>? rightEye,
   ) async {
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
@@ -231,12 +249,35 @@ class FaceRecognitionService {
 
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
-      canvas.drawImageRect(
-        source,
-        crop,
-        ui.Rect.fromLTWH(0, 0, _faceSize.toDouble(), _faceSize.toDouble()),
-        ui.Paint()..filterQuality = ui.FilterQuality.high,
-      );
+      final paint = ui.Paint()..filterQuality = ui.FilterQuality.high;
+      if (leftEye != null && rightEye != null) {
+        final firstEye = leftEye.x <= rightEye.x ? leftEye : rightEye;
+        final secondEye = leftEye.x <= rightEye.x ? rightEye : leftEye;
+        final dx = (secondEye.x - firstEye.x).toDouble();
+        final dy = (secondEye.y - firstEye.y).toDouble();
+        final eyeDistance = math.sqrt(dx * dx + dy * dy);
+        if (eyeDistance >= 1) {
+          final theta = math.atan2(dy, dx);
+          final cropSize = eyeDistance * 2.5;
+          final eyeCenter = ui.Offset(
+            (firstEye.x + secondEye.x) / 2,
+            (firstEye.y + secondEye.y) / 2,
+          );
+          final center =
+              eyeCenter +
+              ui.Offset(-math.sin(theta), math.cos(theta)) * cropSize * 0.15;
+          canvas
+            ..translate(_faceSize / 2, _faceSize / 2)
+            ..rotate(-theta)
+            ..scale(_faceSize / cropSize)
+            ..translate(-center.dx, -center.dy)
+            ..drawImage(source, ui.Offset.zero, paint);
+        } else {
+          _drawFaceCrop(canvas, source, crop, paint);
+        }
+      } else {
+        _drawFaceCrop(canvas, source, crop, paint);
+      }
       final resized = await recorder.endRecording().toImage(
         _faceSize,
         _faceSize,
@@ -276,6 +317,20 @@ class FaceRecognitionService {
       source.dispose();
       codec.dispose();
     }
+  }
+
+  static void _drawFaceCrop(
+    ui.Canvas canvas,
+    ui.Image source,
+    ui.Rect crop,
+    ui.Paint paint,
+  ) {
+    canvas.drawImageRect(
+      source,
+      crop,
+      ui.Rect.fromLTWH(0, 0, _faceSize.toDouble(), _faceSize.toDouble()),
+      paint,
+    );
   }
 
   static double _cosineSimilarity(List<double> first, List<double> second) {

@@ -157,6 +157,7 @@ class _StudentRosterListState extends State<StudentRosterList> {
   }
 
   Widget _statusWrap(StudentRosterEntry student, Color primary) {
+    final attended = student.attendanceStatus.startsWith('Đã điểm danh');
     return LayoutBuilder(
       builder: (context, constraints) => Wrap(
         spacing: 6,
@@ -177,10 +178,8 @@ class _StudentRosterListState extends State<StudentRosterList> {
               constraints: BoxConstraints(maxWidth: constraints.maxWidth),
               child: _statusChip(
                 student.attendanceStatus,
-                student.attendanceStatus == 'Đã điểm danh QR'
-                    ? primary
-                    : widget.mutedColor,
-                student.attendanceStatus == 'Đã điểm danh QR'
+                attended ? primary : widget.mutedColor,
+                attended
                     ? primary.withValues(alpha: 0.09)
                     : widget.dividerColor.withValues(alpha: 0.45),
               ),

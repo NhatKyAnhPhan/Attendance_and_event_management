@@ -2,6 +2,7 @@ class ApiEndpoints {
   ApiEndpoints._();
 
   static const login = '/api/auth/login';
+  static const publicStats = '/api/public/stats';
   static const logout = '/api/auth/logout';
   static const currentUser = '/api/me';
   static const events = '/api/events';
@@ -15,10 +16,14 @@ class ApiEndpoints {
   static String attendanceSessionStudents(String sessionId) =>
       '$adminAttendanceSessions/${Uri.encodeComponent(sessionId)}/students';
   static const attendanceCheckIn = '/api/attendance/check-in';
+  static const attendanceFaceOptions = '/api/attendance/face-options';
   static const attendanceFaceCheckIn = '/api/attendance/face-check-in';
   static const eventAttendanceCheckIn = '/api/events/attendance/check-in';
   static String eventAttendanceQr(String eventId) =>
       '/api/organizer/events/${Uri.encodeComponent(eventId)}/attendance/qr';
+  static String closeEventAttendanceSession(String eventId, String sessionId) =>
+      '/api/organizer/events/${Uri.encodeComponent(eventId)}/attendance/sessions/'
+      '${Uri.encodeComponent(sessionId)}/close';
   static String sendEventCertificates(String eventId) =>
       '/api/organizer/events/${Uri.encodeComponent(eventId)}/certificates/send';
   static const reports = '/api/reports';

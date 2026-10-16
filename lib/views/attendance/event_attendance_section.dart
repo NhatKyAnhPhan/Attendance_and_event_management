@@ -110,7 +110,7 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
           ],
         ),
         Text(
-          'Chọn sự kiện để xem danh sách đăng ký và trạng thái quét QR.',
+          'Chọn sự kiện để xem danh sách đăng ký và trạng thái điểm danh.',
           style: AppTextStyles.bodySm(colors.mutedForeground),
         ),
         const SizedBox(height: 12),
@@ -220,7 +220,10 @@ class _EventAttendanceCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              Text(details, style: AppTextStyles.bodySm(colors.mutedForeground)),
+              Text(
+                details,
+                style: AppTextStyles.bodySm(colors.mutedForeground),
+              ),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
@@ -232,7 +235,7 @@ class _EventAttendanceCard extends StatelessWidget {
                     color: colors.primary,
                   ),
                   _CountPill(
-                    label: 'Đã điểm danh QR',
+                    label: 'Đã điểm danh',
                     count: checkedInCount,
                     color: colors.success,
                   ),
@@ -338,7 +341,10 @@ class _EventAttendanceRosterPageState
       return query.isEmpty || searchable.contains(query);
     }).toList();
     final checkedIn = _students
-        .where((student) => student['attendanceStatus'] == 'Đã điểm danh QR')
+        .where(
+          (student) => (student['attendanceStatus']?.toString() ?? '')
+              .startsWith('Đã điểm danh'),
+        )
         .length;
     final eventName = widget.event['name']?.toString() ?? 'Sự kiện';
 
@@ -361,7 +367,7 @@ class _EventAttendanceRosterPageState
           padding: const EdgeInsets.all(16),
           children: [
             Text(
-              '${_students.length} sinh viên đăng ký · $checkedIn đã điểm danh QR',
+              '${_students.length} sinh viên đăng ký · $checkedIn đã điểm danh',
               style: AppTextStyles.bodySm(colors.mutedForeground),
             ),
             const SizedBox(height: 12),
@@ -408,12 +414,14 @@ class _EventAttendanceRosterPageState
                 final name = student['studentName']?.toString().trim() ?? '';
                 final studentId = student['studentId']?.toString() ?? '';
                 final checkedAt = _parseDate(student['checkedInAt']);
-                final isCheckedIn =
-                    student['attendanceStatus'] == 'Đã điểm danh QR';
+                final attendanceStatus =
+                    student['attendanceStatus']?.toString() ?? 'Chưa điểm danh';
+                final isCheckedIn = attendanceStatus.startsWith('Đã điểm danh');
                 final subtitle = [
                   studentId,
+                  attendanceStatus,
                   if (checkedAt != null)
-                    'Quét lúc ${DateFormat('dd/MM/yyyy HH:mm').format(checkedAt.toLocal())}',
+                    'Điểm danh lúc ${DateFormat('dd/MM/yyyy HH:mm').format(checkedAt.toLocal())}',
                 ].where((item) => item.isNotEmpty).join(' · ');
 
                 return Card(
@@ -422,7 +430,9 @@ class _EventAttendanceRosterPageState
                   child: ListTile(
                     leading: CircleAvatar(
                       child: Text(
-                        name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+                        name.isEmpty
+                            ? '?'
+                            : name.characters.first.toUpperCase(),
                       ),
                     ),
                     title: Text(name.isEmpty ? 'Sinh viên' : name),
@@ -500,7 +510,9 @@ class _MessageCard extends StatelessWidget {
 DateTime? _parseDate(dynamic value) {
   final text = value?.toString();
   if (text == null || text.isEmpty) return null;
-  return DateTime.tryParse(text.contains('T') ? text : text.replaceFirst(' ', 'T'));
+  return DateTime.tryParse(
+    text.contains('T') ? text : text.replaceFirst(' ', 'T'),
+  );
 }
 
 int _count(dynamic value) => int.tryParse(value?.toString() ?? '') ?? 0;

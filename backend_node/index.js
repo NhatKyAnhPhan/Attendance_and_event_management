@@ -209,6 +209,152 @@ async function ensureEventAttendanceTable() {
        UNIQUE KEY unique_event_attendance_device (event_id, device_id)
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
+  const [indexes] = await pool.query('SHOW INDEX FROM event_attendance');
+  const uniqueIndexes = new Map();
+  for (const index of indexes) {
+    if (Number(index.Non_unique) !== 0 || index.Key_name === 'PRIMARY') continue;
+    const columns = uniqueIndexes.get(index.Key_name) || [];
+    columns[index.Seq_in_index - 1] = index.Column_name;
+    uniqueIndexes.set(index.Key_name, columns);
+  }
+  for (const [name, columns] of uniqueIndexes) {
+    if (columns.join(',') === 'event_id,device_id') {
+      const escapedName = name.replace(/`/g, '``');
+      await pool.query(`ALTER TABLE event_attendance DROP INDEX \`${escapedName}\``);
+    }
+  }
+}
+
+async function ensureEventAttendanceSessionsTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS event_attendance_sessions (
+       session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       event_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+         NOT NULL,
+       latitude DOUBLE NOT NULL,
+       longitude DOUBLE NOT NULL,
+       radius_meters INT NOT NULL,
+       expires_at DATETIME NOT NULL,
+       closed_at DATETIME NULL,
+       created_by VARCHAR(64) NOT NULL,
+       opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (session_id),
+       INDEX idx_event_attendance_sessions_event (event_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+  const [columns] = await pool.query('SHOW COLUMNS FROM event_attendance_sessions');
+  const columnNames = new Set(columns.map((column) => column.Field));
+  if (!columnNames.has('session_id')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_sessions ADD COLUMN session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER event_id',
+    );
+  }
+  if (!columnNames.has('closed_at')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_sessions ADD COLUMN closed_at DATETIME NULL',
+    );
+  }
+  if (!columnNames.has('opened_at')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_sessions ADD COLUMN opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP',
+    );
+  }
+  await pool.query(
+    `UPDATE event_attendance_sessions
+     SET session_id = UUID()
+     WHERE session_id IS NULL OR session_id = ''`,
+  );
+  const [indexes] = await pool.query('SHOW INDEX FROM event_attendance_sessions');
+  const primaryColumns = indexes
+    .filter((index) => index.Key_name === 'PRIMARY')
+    .sort((left, right) => left.Seq_in_index - right.Seq_in_index)
+    .map((index) => index.Column_name);
+  const hasEventIndex = indexes.some(
+    (index) => index.Key_name === 'idx_event_attendance_sessions_event',
+  );
+  const alterParts = [];
+  if (primaryColumns.length !== 1 || primaryColumns[0] !== 'session_id') {
+    alterParts.push('DROP PRIMARY KEY', 'ADD PRIMARY KEY (session_id)');
+  }
+  if (!hasEventIndex) {
+    alterParts.push('ADD INDEX idx_event_attendance_sessions_event (event_id)');
+  }
+  if (alterParts.length > 0) {
+    await pool.query(`ALTER TABLE event_attendance_sessions ${alterParts.join(', ')}`);
+  }
+  await pool.query(
+    `ALTER TABLE event_attendance_sessions
+     MODIFY session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL`,
+  );
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS event_attendance_records (
+       event_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+       session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       student_id VARCHAR(64) NOT NULL,
+       device_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       method VARCHAR(16) NOT NULL DEFAULT 'QR',
+       checked_in_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (session_id, student_id),
+       UNIQUE KEY unique_event_session_device (session_id, device_id),
+       INDEX idx_event_attendance_records_event (event_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+  const collationMappings = [
+    {
+      sourceTable: 'sukien',
+      sourceColumn: 'MaSuKien',
+      table: 'event_attendance_sessions',
+      column: 'event_id',
+    },
+    {
+      sourceTable: 'sukien',
+      sourceColumn: 'MaSuKien',
+      table: 'event_attendance_records',
+      column: 'event_id',
+    },
+    {
+      sourceTable: 'sinhvien',
+      sourceColumn: 'MaSV',
+      table: 'event_attendance_records',
+      column: 'student_id',
+    },
+  ];
+  for (const mapping of collationMappings) {
+    const [[sourceColumn]] = await pool.query(
+      `SELECT COLLATION_NAME AS collation
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = ?
+         AND COLUMN_NAME = ?
+       LIMIT 1`,
+      [mapping.sourceTable, mapping.sourceColumn],
+    );
+    const collation = sourceColumn?.collation;
+    if (typeof collation !== 'string' || !/^[A-Za-z0-9_]+$/.test(collation)) {
+      throw new Error(
+        `Unable to determine collation for ${mapping.sourceTable}.${mapping.sourceColumn}.`,
+      );
+    }
+    const [[column]] = await pool.query(
+      `SELECT COLLATION_NAME AS collation
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = ?
+         AND COLUMN_NAME = ?
+       LIMIT 1`,
+      [mapping.table, mapping.column],
+    );
+    if (!column) {
+      throw new Error(`Missing ${mapping.column} column in ${mapping.table}.`);
+    }
+    if (column.collation !== collation) {
+      await pool.query(
+        `ALTER TABLE ${mapping.table}
+         MODIFY ${mapping.column} VARCHAR(64) CHARACTER SET utf8mb4
+           COLLATE ${collation} NOT NULL`,
+      );
+    }
+  }
 }
 
 app.use(cors());
@@ -1113,6 +1259,28 @@ app.delete('/api/events/:eventId/register', requireAuth, async (request, respons
   }
 });
 
+// Cung cấp số liệu tổng quan không nhạy cảm cho màn hình đăng nhập.
+app.get('/api/public/stats', async (_request, response) => {
+  try {
+    const [[counts]] = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM sinhvien) AS students,
+         (SELECT COUNT(*) FROM giangvien) AS lecturers,
+         (SELECT COUNT(*) FROM lophocphan) AS classes,
+         (SELECT COUNT(*) FROM sukien) AS events`,
+    );
+    return response.json({
+      students: Number(counts.students || 0),
+      lecturers: Number(counts.lecturers || 0),
+      classes: Number(counts.classes || 0),
+      events: Number(counts.events || 0),
+    });
+  } catch (error) {
+    console.error('Public stats error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải số liệu hệ thống.' });
+  }
+});
+
 // Tổng hợp số lớp, sự kiện và kết quả điểm danh của sinh viên.
 app.get('/api/dashboard', requireAuth, async (request, response) => {
   try {
@@ -1283,19 +1451,6 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
   if (typeof payload.eventId !== 'string' || !payload.eventId) {
     return response.status(410).json({ message: 'Mã QR sự kiện không hợp lệ.' });
   }
-  const eventCoordinates = readCoordinates(payload);
-  const radiusMeters = Number(payload.radiusMeters);
-  if (!eventCoordinates || radiusMeters !== eventAttendanceRadiusMeters) {
-    return response.status(410).json({
-      message: 'Mã QR sự kiện thiếu thông tin vị trí hợp lệ hoặc đã hết hạn.',
-    });
-  }
-  if (distanceInMeters(eventCoordinates, coordinates) > radiusMeters) {
-    return response.status(403).json({
-      message: `Bạn đang cách vị trí sự kiện quá xa (phạm vi ${radiusMeters} m).`,
-    });
-  }
-
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -1310,16 +1465,41 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
                   AND NOW() < sk.Thoigianketthuc
                   AND sk.Trangthaisukien <> 'Đã đóng' THEN 1
                 ELSE 0
-              END AS isOpen
+              END AS isOpen,
+              eas.session_id AS sessionId,
+              eas.latitude AS latitude,
+              eas.longitude AS longitude,
+              eas.radius_meters AS radiusMeters,
+              eas.opened_at AS openedAt
        FROM sukien sk
+       JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
        WHERE sk.Masukien = ?
+         AND (? IS NULL OR eas.session_id = ?)
+         AND eas.closed_at IS NULL
+         AND eas.expires_at > NOW()
+       ORDER BY eas.opened_at DESC, eas.session_id DESC
+       LIMIT 1
        FOR UPDATE`,
-      [payload.eventId],
+      [
+        payload.eventId,
+        typeof payload.sessionId === 'string' ? payload.sessionId : null,
+        typeof payload.sessionId === 'string' ? payload.sessionId : null,
+      ],
     );
     if (!event || Number(event.isOpen) !== 1) {
       await connection.rollback();
       return response.status(410).json({
-        message: 'QR được nhận diện nhưng sự kiện chưa đến giờ điểm danh, đã kết thúc hoặc đã bị đóng.',
+        message: 'Phiên điểm danh đã đóng, hết hạn hoặc sự kiện chưa đến giờ điểm danh.',
+      });
+    }
+    const radiusMeters = Number(event.radiusMeters);
+    if (distanceInMeters(
+      { latitude: Number(event.latitude), longitude: Number(event.longitude) },
+      coordinates,
+    ) > radiusMeters) {
+      await connection.rollback();
+      return response.status(403).json({
+        message: `Bạn đang cách vị trí sự kiện quá xa (phạm vi ${radiusMeters} m).`,
       });
     }
 
@@ -1342,7 +1522,13 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
     }
 
     await connection.execute(
-      `INSERT INTO event_attendance (event_id, student_id, device_id)
+      `INSERT INTO event_attendance_records
+       (event_id, session_id, student_id, device_id, method)
+       VALUES (?, ?, ?, ?, 'QR')`,
+      [event.id, event.sessionId, request.auth.sub, deviceId],
+    );
+    await connection.execute(
+      `INSERT IGNORE INTO event_attendance (event_id, student_id, device_id)
        VALUES (?, ?, ?)`,
       [event.id, request.auth.sub, deviceId],
     );
@@ -1352,14 +1538,23 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
               sk.Thoigianketthuc AS endTime,
               COALESCE(dv.Tendv, '') AS organizerName,
               ea.checked_in_at AS checkedInAt,
-              nd.Mand AS studentId, COALESCE(nd.Hoten, nd.Mand) AS studentName
-       FROM event_attendance ea
+              nd.Mand AS studentId, COALESCE(nd.Hoten, nd.Mand) AS studentName,
+              ea.session_id AS attendanceSessionId,
+              (SELECT COUNT(*)
+               FROM event_attendance_sessions previous
+               WHERE previous.event_id = ea.event_id
+                 AND (previous.opened_at < session.opened_at
+                   OR (previous.opened_at = session.opened_at
+                     AND previous.session_id <= session.session_id))) AS sessionNumber
+       FROM event_attendance_records ea
        INNER JOIN sukien sk ON sk.Masukien = ea.event_id
+       INNER JOIN event_attendance_sessions session
+         ON session.session_id = ea.session_id
        LEFT JOIN donvi dv ON dv.Madv = sk.Madv
        INNER JOIN nguoidung nd ON nd.Mand = ea.student_id
-       WHERE ea.event_id = ? AND ea.student_id = ?
+       WHERE ea.event_id = ? AND ea.session_id = ? AND ea.student_id = ?
        LIMIT 1`,
-      [event.id, request.auth.sub],
+      [event.id, event.sessionId, request.auth.sub],
     );
     await connection.commit();
     return response.status(201).json({
@@ -1371,7 +1566,7 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
     await connection.rollback();
     if (error.code === 'ER_DUP_ENTRY') {
       return response.status(409).json({
-        message: 'Bạn đã điểm danh sự kiện này hoặc thiết bị đã được dùng.',
+        message: 'Bạn đã điểm danh phiên này hoặc thiết bị đã được dùng trong phiên.',
       });
     }
     throw error;
@@ -1421,6 +1616,13 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
                 sk.Thoigianbatdau AS startTime,
                 sk.Thoigianketthuc AS endTime,
                 COALESCE(dv.Tendv, '') AS organizerName,
+                eas.session_id AS attendanceSessionId,
+                (SELECT COUNT(*)
+                 FROM event_attendance_sessions previous
+                 WHERE previous.event_id = eas.event_id
+                   AND (previous.opened_at < eas.opened_at
+                     OR (previous.opened_at = eas.opened_at
+                       AND previous.session_id <= eas.session_id))) AS sessionNumber,
                 nd.Mand AS studentId,
                 COALESCE(nd.Hoten, nd.Mand) AS studentName,
                 CASE
@@ -1428,13 +1630,25 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
                     AND NOW() < sk.Thoigianketthuc
                     AND sk.Trangthaisukien <> 'Đã đóng' THEN 1
                   ELSE 0
-                END AS isOpen
+                END AS isOpen,
+                eas.closed_at AS sessionClosedAt,
+                eas.expires_at AS sessionExpiresAt
          FROM sukien sk
+         JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
          LEFT JOIN donvi dv ON dv.Madv = sk.Madv
          JOIN nguoidung nd ON nd.Mand = ?
          WHERE sk.Masukien = ?
+           AND (? IS NULL OR eas.session_id = ?)
+           AND eas.closed_at IS NULL
+           AND eas.expires_at > NOW()
+         ORDER BY eas.opened_at DESC, eas.session_id DESC
          LIMIT 1`,
-        [request.auth.sub, payload.eventId],
+        [
+          request.auth.sub,
+          payload.eventId,
+          typeof payload.sessionId === 'string' ? payload.sessionId : null,
+          typeof payload.sessionId === 'string' ? payload.sessionId : null,
+        ],
       );
       if (!preview || Number(preview.isOpen) !== 1) {
         return response.status(410).json({
@@ -1458,14 +1672,23 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
       }
       const [[existing]] = await pool.execute(
         `SELECT 1 AS checkedIn
-         FROM event_attendance
-         WHERE event_id = ? AND student_id = ?
+         FROM event_attendance_records
+         WHERE event_id = ? AND session_id = ? AND student_id = ?
          LIMIT 1`,
-        [preview.eventId, request.auth.sub],
+        [preview.eventId, preview.attendanceSessionId, request.auth.sub],
       );
-      if (existing) {
+      const [[legacyAttendance]] = typeof payload.sessionId !== 'string'
+        ? await pool.execute(
+            `SELECT 1 AS checkedIn
+             FROM event_attendance
+             WHERE event_id = ? AND student_id = ?
+             LIMIT 1`,
+            [preview.eventId, request.auth.sub],
+          )
+        : [[null]];
+      if (existing || legacyAttendance) {
         return response.status(409).json({
-          message: 'Bạn đã điểm danh sự kiện này.',
+          message: 'Bạn đã điểm danh phiên này.',
         });
       }
       return response.json({
@@ -1475,6 +1698,8 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
         startTime: preview.startTime,
         endTime: preview.endTime,
         organizerName: preview.organizerName,
+        attendanceSessionId: preview.attendanceSessionId,
+        sessionNumber: preview.sessionNumber,
         studentId: preview.studentId,
         studentName: preview.studentName,
         status: 'Chờ xác nhận',
@@ -2091,10 +2316,86 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
 });
 
 // Kiểm tra phiên khuôn mặt và vị trí trước khi tiếp nhận kết quả nhận diện.
+app.get('/api/attendance/face-options', requireAuth, async (request, response) => {
+  if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
+    return response.status(403).json({
+      message: 'Chỉ sinh viên mới được chọn phiên điểm danh khuôn mặt.',
+    });
+  }
+  try {
+    const [classSessions] = await pool.execute(
+      `SELECT 'class' AS type, bpd.Mabuoidiemdanh AS sessionId,
+              COALESCE(mh.Tenmon, '') AS title,
+              COALESCE(lhp.Tenlop, '') AS subtitle,
+              COALESCE(b.Noidung, '') AS sessionName,
+              b.Thoigianbatdau AS startTime,
+              bpd.Thoigiandong AS endTime
+       FROM buoidiemdanh bpd
+       JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+       JOIN thanhvienlop tvl ON tvl.Malop = b.Malop AND tvl.Masv = ?
+       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN monhoc mh ON mh.Mamon = lhp.Mamon
+       WHERE bpd.Trangthaidiemdanh = 'Đang mở'
+         AND bpd.Phuongthuc IN ('Face', 'Both')
+         AND bpd.Thoigiandong > NOW()
+         AND NOT EXISTS (
+           SELECT 1 FROM ketquadiemdanh kd
+           WHERE kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
+             AND kd.Masv = tvl.Masv
+         )
+       ORDER BY bpd.Thoigianmo DESC`,
+      [request.auth.sub],
+    );
+    const [events] = await pool.execute(
+      `SELECT 'event' AS type, eas.session_id AS sessionId,
+              sk.Masukien AS eventId,
+              sk.Tensukien AS title,
+              COALESCE(dv.Tendv, '') AS subtitle,
+              CONCAT(
+                'Phiên ',
+                (SELECT COUNT(*)
+                 FROM event_attendance_sessions previous
+                 WHERE previous.event_id = eas.event_id
+                   AND (previous.opened_at < eas.opened_at
+                     OR (previous.opened_at = eas.opened_at
+                       AND previous.session_id <= eas.session_id)))
+              ) AS sessionName,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime
+       FROM sukien sk
+       JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
+       JOIN dangkysukien dk ON dk.Masukien = sk.Masukien AND dk.Masv = ?
+       LEFT JOIN donvi dv ON dv.Madv = sk.Madv
+       WHERE eas.expires_at > NOW()
+         AND eas.closed_at IS NULL
+         AND NOW() >= sk.Thoigianbatdau
+         AND NOW() < sk.Thoigianketthuc
+         AND sk.Trangthaisukien <> 'Đã đóng'
+         AND LOWER(TRIM(COALESCE(dk.Trangthaidangky, ''))) NOT IN ('từ chối', 'đã hủy', 'hủy')
+         AND NOT EXISTS (
+           SELECT 1 FROM event_attendance_records ear
+           WHERE ear.event_id = sk.Masukien
+             AND ear.session_id = eas.session_id
+             AND ear.student_id = dk.Masv
+         )
+       ORDER BY eas.opened_at DESC`,
+      [request.auth.sub],
+    );
+    return response.json({ items: [...classSessions, ...events] });
+  } catch (error) {
+    console.error('Face attendance options error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải các phiên điểm danh khuôn mặt.',
+    });
+  }
+});
+
 app.post('/api/attendance/face-check-in', requireAuth, async (request, response) => {
   const coordinates = readCoordinates(request.body);
   const deviceId = request.body?.deviceId;
   const recognizedStudentId = request.body?.recognizedStudentId;
+  const sessionType = request.body?.sessionType;
+  const sessionId = request.body?.sessionId;
   const previewOnly = request.body?.preview === true;
   if (typeof recognizedStudentId !== 'string'
       || recognizedStudentId !== request.auth.sub) {
@@ -2102,11 +2403,31 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
       message: 'Khuôn mặt không khớp với tài khoản đang đăng nhập.',
     });
   }
+  if (!['class', 'event'].includes(sessionType)
+      || typeof sessionId !== 'string' || !sessionId) {
+    return response.status(400).json({
+      message: 'Cần chọn môn học hoặc sự kiện trước khi điểm danh khuôn mặt.',
+    });
+  }
+  if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
+    return response.status(403).json({
+      message: 'Sai tài khoản: hãy đăng nhập bằng tài khoản sinh viên để điểm danh.',
+    });
+  }
   if (!previewOnly && (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId))) {
     return response.status(400).json({ message: 'Không xác định được thiết bị điểm danh.' });
   }
   if (!previewOnly && !coordinates) {
     return response.status(400).json({ message: 'Cần xác nhận vị trí hiện tại.' });
+  }
+
+  if (sessionType === 'event') {
+    return checkInEventFace(request, response, {
+      sessionId,
+      previewOnly,
+      deviceId,
+      coordinates,
+    });
   }
 
   try {
@@ -2141,13 +2462,17 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
        LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
        LEFT JOIN nguoidung lecturer ON lecturer.Mand = gv.Magv
        LEFT JOIN nguoidung attendee ON attendee.Mand = tvl.Masv
-       WHERE tvl.Masv = ? AND bpd.Trangthaidiemdanh = 'Đang mở'
+       WHERE bpd.Mabuoidiemdanh = ?
+         AND tvl.Masv = ? AND bpd.Trangthaidiemdanh = 'Đang mở'
          AND bpd.Thoigiandong > NOW()
-       ORDER BY bpd.Thoigianmo DESC LIMIT 1`,
-      [request.auth.sub],
+         AND bpd.Phuongthuc IN ('Face', 'Both')
+       LIMIT 1`,
+      [sessionId, request.auth.sub],
     );
-    if (!session || !['Face', 'Both'].includes(session.method)) {
-      return response.status(404).json({ message: 'Không có phiên khuôn mặt đang mở cho bạn.' });
+    if (!session) {
+      return response.status(404).json({
+        message: 'Môn học đã đóng, không hỗ trợ điểm danh khuôn mặt hoặc bạn không thuộc lớp.',
+      });
     }
     if (previewOnly) {
       const [[existing]] = await pool.execute(
@@ -2267,6 +2592,158 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
   }
 });
 
+async function checkInEventFace(
+  request,
+  response,
+  { sessionId, previewOnly, deviceId, coordinates },
+) {
+  try {
+    const [[event]] = await pool.execute(
+      `SELECT sk.Masukien AS eventId, sk.Tensukien AS eventName,
+              COALESCE(sk.Diadiem, '') AS location,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime,
+              COALESCE(dv.Tendv, '') AS organizerName,
+              eas.latitude AS latitude, eas.longitude AS longitude,
+              eas.radius_meters AS radiusMeters,
+              eas.session_id AS attendanceSessionId,
+              (SELECT COUNT(*)
+               FROM event_attendance_sessions previous
+               WHERE previous.event_id = eas.event_id
+                 AND (previous.opened_at < eas.opened_at
+                   OR (previous.opened_at = eas.opened_at
+                     AND previous.session_id <= eas.session_id))) AS sessionNumber,
+              nd.Mand AS studentId,
+              COALESCE(nd.Hoten, nd.Mand) AS studentName
+       FROM sukien sk
+       JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
+       JOIN dangkysukien dk ON dk.Masukien = sk.Masukien AND dk.Masv = ?
+       JOIN nguoidung nd ON nd.Mand = dk.Masv
+       LEFT JOIN donvi dv ON dv.Madv = sk.Madv
+       WHERE eas.session_id = ?
+         AND eas.expires_at > NOW()
+         AND eas.closed_at IS NULL
+         AND NOW() >= sk.Thoigianbatdau
+         AND NOW() < sk.Thoigianketthuc
+         AND sk.Trangthaisukien <> 'Đã đóng'
+         AND LOWER(TRIM(COALESCE(dk.Trangthaidangky, ''))) NOT IN ('từ chối', 'đã hủy', 'hủy')
+       LIMIT 1`,
+      [request.auth.sub, sessionId],
+    );
+    if (!event) {
+      return response.status(404).json({
+        message: 'Phiên điểm danh đã đóng hoặc bạn chưa đăng ký sự kiện.',
+      });
+    }
+
+    const [[existing]] = await pool.execute(
+      `SELECT 1 AS id FROM event_attendance_records
+       WHERE session_id = ? AND student_id = ? LIMIT 1`,
+      [sessionId, request.auth.sub],
+    );
+    if (existing) {
+      return response.status(409).json({
+        message: 'Bạn đã điểm danh phiên này.',
+      });
+    }
+    if (previewOnly) {
+      return response.json({
+        ...event,
+        status: 'Chờ xác nhận',
+        method: 'Face',
+      });
+    }
+
+    const distance = distanceInMeters(
+      { latitude: Number(event.latitude), longitude: Number(event.longitude) },
+      coordinates,
+    );
+    const radiusMeters = Number(event.radiusMeters);
+    if (!Number.isFinite(distance) || distance > radiusMeters) {
+      return response.status(403).json({
+        message: `Bạn đang cách vị trí sự kiện quá xa (phạm vi ${radiusMeters} m).`,
+      });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[activeSession]] = await connection.execute(
+        `SELECT eas.session_id AS sessionId
+         FROM event_attendance_sessions eas
+         JOIN sukien sk ON sk.Masukien = eas.event_id
+         WHERE eas.session_id = ? AND eas.expires_at > NOW()
+           AND eas.closed_at IS NULL
+           AND NOW() >= sk.Thoigianbatdau
+           AND NOW() < sk.Thoigianketthuc
+           AND sk.Trangthaisukien <> 'Đã đóng'
+         FOR UPDATE`,
+        [sessionId],
+      );
+      if (!activeSession) {
+        await connection.rollback();
+        return response.status(410).json({
+          message: 'Phiên điểm danh sự kiện đã đóng hoặc hết hạn.',
+        });
+      }
+      const [[registration]] = await connection.execute(
+        `SELECT 1 AS registered
+         FROM dangkysukien
+         WHERE Masukien = ? AND Masv = ?
+           AND LOWER(TRIM(COALESCE(Trangthaidangky, ''))) NOT IN ('từ chối', 'đã hủy', 'hủy')
+         LIMIT 1 FOR UPDATE`,
+        [event.eventId, request.auth.sub],
+      );
+      if (!registration) {
+        await connection.rollback();
+        return response.status(403).json({
+          message: 'Bạn cần có đăng ký hợp lệ cho sự kiện mới được điểm danh.',
+        });
+      }
+      await connection.execute(
+        `INSERT INTO event_attendance_records
+         (event_id, session_id, student_id, device_id, method)
+         VALUES (?, ?, ?, ?, 'Face')`,
+        [event.eventId, sessionId, request.auth.sub, deviceId],
+      );
+      await connection.execute(
+        `INSERT IGNORE INTO event_attendance (event_id, student_id, device_id)
+         VALUES (?, ?, ?)`,
+        [event.eventId, request.auth.sub, deviceId],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      if (error.code === 'ER_DUP_ENTRY') {
+        return response.status(409).json({
+          message: 'Bạn đã điểm danh phiên này hoặc thiết bị đã được dùng trong phiên.',
+        });
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    const [[attendance]] = await pool.execute(
+      `SELECT checked_in_at AS checkedInAt
+       FROM event_attendance_records
+       WHERE session_id = ? AND student_id = ? LIMIT 1`,
+      [sessionId, request.auth.sub],
+    );
+    return response.status(201).json({
+      ...event,
+      checkedInAt: attendance.checkedInAt,
+      status: 'Có mặt',
+      method: 'Face',
+    });
+  } catch (error) {
+    console.error('Event face check-in error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể ghi nhận điểm danh khuôn mặt sự kiện.',
+    });
+  }
+}
+
 // Các tuyến quản lý sự kiện và đơn vị dành cho quản trị viên, ban tổ chức.
 // Lấy danh sách sự kiện phục vụ màn hình quản lý.
 app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
@@ -2344,10 +2821,12 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
         message: 'Sự kiện sắp kết thúc, không thể tạo mã QR mới.',
       });
     }
+    const sessionId = crypto.randomUUID();
     const qr = jwt.sign(
       {
         type: 'event-attendance',
         eventId: event.id,
+        sessionId,
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
         radiusMeters: eventAttendanceRadiusMeters,
@@ -2355,9 +2834,32 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
       jwtSecret,
       { expiresIn },
     );
+    await pool.execute(
+      `INSERT INTO event_attendance_sessions
+       (session_id, event_id, latitude, longitude, radius_meters,
+        expires_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sessionId,
+        event.id,
+        coordinates.latitude,
+        coordinates.longitude,
+        eventAttendanceRadiusMeters,
+        expiresAt,
+        request.auth.sub,
+      ],
+    );
+    const [[sessionNumber]] = await pool.execute(
+      `SELECT COUNT(*) AS value
+       FROM event_attendance_sessions
+       WHERE event_id = ?`,
+      [event.id],
+    );
     return response.json({
       eventId: event.id,
       eventName: event.name,
+      sessionId,
+      sessionNumber: Number(sessionNumber.value),
       expiresAt,
       radiusMeters: eventAttendanceRadiusMeters,
       qr,
@@ -2366,6 +2868,52 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
     console.error('Create event attendance QR error:', error.message);
     return response.status(500).json({
       message: 'Không thể tạo mã QR điểm danh sự kiện.',
+    });
+  }
+});
+
+app.post('/api/organizer/events/:eventId/attendance/sessions/:sessionId/close', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên', 'event_organizer'), async (request, response) => {
+  const isAdmin = ['quản trị viên', 'admin'].includes(
+    String(request.auth.role || '').trim().toLowerCase(),
+  );
+  try {
+    const [[session]] = await pool.execute(
+      `SELECT eas.session_id AS sessionId,
+              EXISTS (
+                SELECT 1 FROM donvi dv
+                WHERE dv.Madv = sk.Madv AND dv.Manv = ?
+              ) AS isOrganizer
+       FROM event_attendance_sessions eas
+       JOIN sukien sk ON sk.Masukien = eas.event_id
+       WHERE eas.event_id = ? AND eas.session_id = ?
+       LIMIT 1`,
+      [request.auth.sub, request.params.eventId, request.params.sessionId],
+    );
+    if (!session) {
+      return response.status(404).json({ message: 'Không tìm thấy phiên điểm danh.' });
+    }
+    if (!isAdmin && !Number(session.isOrganizer)) {
+      return response.status(403).json({
+        message: 'Bạn không phụ trách sự kiện này.',
+      });
+    }
+    const [result] = await pool.execute(
+      `UPDATE event_attendance_sessions
+       SET closed_at = COALESCE(closed_at, NOW())
+       WHERE event_id = ? AND session_id = ? AND closed_at IS NULL`,
+      [request.params.eventId, request.params.sessionId],
+    );
+    if (result.affectedRows === 0) {
+      return response.status(409).json({ message: 'Phiên điểm danh đã được đóng.' });
+    }
+    return response.json({
+      message: 'Đã đóng phiên điểm danh.',
+      sessionId: session.sessionId,
+    });
+  } catch (error) {
+    console.error('Close event attendance session error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể đóng phiên điểm danh sự kiện.',
     });
   }
 });
@@ -2399,25 +2947,53 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         message: 'Bạn không phụ trách sự kiện này.',
       });
     }
-    if (new Date(event.endTime) > new Date()) {
+    const eventIsClosed =
+      String(event.status || '').trim().toLowerCase() === 'đã đóng';
+    if (!eventIsClosed && new Date(event.endTime) > new Date()) {
       return response.status(409).json({
-        message: 'Chỉ có thể gửi chứng nhận sau khi sự kiện kết thúc.',
+        message: 'Chỉ có thể cấp chứng nhận sau khi sự kiện kết thúc hoặc đã đóng.',
       });
     }
 
     const [attendees] = await pool.execute(
-      `SELECT ea.student_id AS studentId,
-              COALESCE(nd.Hoten, ea.student_id) AS studentName,
+      `SELECT checked_in.student_id AS studentId,
+              COALESCE(nd.Hoten, checked_in.student_id) AS studentName,
               COALESCE(nd.Email, '') AS email
-       FROM event_attendance ea
-       LEFT JOIN nguoidung nd ON nd.Mand = ea.student_id
-       WHERE ea.event_id = ?
-       ORDER BY ea.checked_in_at, ea.student_id`,
-      [event.id],
+       FROM (
+         SELECT ea.event_id, ea.student_id, MIN(ea.checked_in_at) AS checkedInAt
+         FROM event_attendance ea
+         WHERE ea.event_id = ?
+         GROUP BY ea.event_id, ea.student_id
+         UNION ALL
+         SELECT ear.event_id, ear.student_id, MIN(ear.checked_in_at) AS checkedInAt
+         FROM event_attendance_records ear
+         WHERE ear.event_id = ?
+           AND NOT EXISTS (
+             SELECT 1
+             FROM event_attendance ea
+             WHERE ea.event_id = ear.event_id
+               AND ea.student_id = ear.student_id
+           )
+         GROUP BY ear.event_id, ear.student_id
+       ) checked_in
+       LEFT JOIN nguoidung nd ON nd.Mand = checked_in.student_id
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM chungnhan issued
+         WHERE issued.Masv = checked_in.student_id
+           AND issued.Masukien = checked_in.event_id
+           AND issued.Trangthaichungnhan = 'Đã cấp'
+       )
+       ORDER BY checked_in.checkedInAt, checked_in.student_id`,
+      [event.id, event.id],
     );
     if (attendees.length === 0) {
-      return response.status(409).json({
-        message: 'Chưa có sinh viên điểm danh sự kiện để cấp chứng nhận.',
+      return response.json({
+        eventId: event.id,
+        sent: 0,
+        skipped: 0,
+        failures: [],
+        message: 'Không còn sinh viên đủ điều kiện cấp chứng nhận.',
       });
     }
 
@@ -2437,10 +3013,11 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
       || `${request.protocol}://${request.get('host')}`
     ).replace(/\/+$/, '');
     let sent = 0;
+    let skipped = 0;
     const failures = [];
 
     for (const attendee of attendees) {
-      if (!attendee.email.trim()) {
+      if (!String(attendee.email || '').trim()) {
         failures.push({
           studentId: attendee.studentId,
           message: `${attendee.studentName}: tài khoản chưa có email.`,
@@ -2458,24 +3035,56 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
            FOR UPDATE`,
           [event.id, attendee.studentId],
         );
-        const [[existingCertificate]] = await connection.execute(
-          `SELECT Machungnhan AS id, Ngaycap AS issuedAt
+        await connection.execute(
+          `SELECT session_id
+           FROM event_attendance_records
+           WHERE event_id = ? AND student_id = ?
+           FOR UPDATE`,
+          [event.id, attendee.studentId],
+        );
+        const [existingCertificates] = await connection.execute(
+          `SELECT Machungnhan AS id, Ngaycap AS issuedAt,
+                  Trangthaichungnhan AS status
            FROM chungnhan
            WHERE Masv = ? AND Masukien = ?
            ORDER BY Ngaycap DESC, Machungnhan DESC
-           LIMIT 1
            FOR UPDATE`,
           [attendee.studentId, event.id],
         );
-        let certificateId = existingCertificate?.id;
-        let issuedAt = existingCertificate?.issuedAt;
+        if (
+          existingCertificates.some(
+            (certificate) =>
+              String(certificate.status).trim().toLowerCase() === 'đã cấp',
+          )
+        ) {
+          await connection.commit();
+          connection.release();
+          connection = null;
+          skipped += 1;
+          continue;
+        }
+        if (
+          existingCertificates.some(
+            (certificate) =>
+              String(certificate.status).trim().toLowerCase() === 'đang gửi',
+          )
+        ) {
+          await connection.commit();
+          connection.release();
+          connection = null;
+          skipped += 1;
+          continue;
+        }
+
+        const pendingCertificate = existingCertificates[0];
+        let certificateId = pendingCertificate?.id;
         if (!certificateId) {
           const year = new Date().getFullYear();
           certificateId = `GCN-${year}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
           await connection.execute(
             `INSERT INTO chungnhan
               (Machungnhan, Masv, Masukien, Ngaycap, Noidung, Trangthaichungnhan)
-             VALUES (?, ?, ?, NOW(), ?, 'Đã cấp')`,
+             VALUES (?, ?, ?, NOW(), ?, 'Đang gửi')`,
             [
               certificateId,
               attendee.studentId,
@@ -2483,11 +3092,15 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
               `Giấy chứng nhận tham gia sự kiện ${event.name}`,
             ],
           );
-          issuedAt = new Date();
+        } else {
+          await connection.execute(
+            `UPDATE chungnhan
+             SET Trangthaichungnhan = 'Đang gửi'
+             WHERE Machungnhan = ?`,
+            [certificateId],
+          );
         }
-        await connection.commit();
-        connection.release();
-        connection = null;
+        const issuedAt = new Date();
 
         const verificationUrl =
           `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificateId)}`;
@@ -2513,6 +3126,15 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
             contentType: 'application/pdf',
           }],
         });
+        await connection.execute(
+          `UPDATE chungnhan
+           SET Trangthaichungnhan = 'Đã cấp', Ngaycap = NOW()
+           WHERE Machungnhan = ?`,
+          [certificateId],
+        );
+        await connection.commit();
+        connection.release();
+        connection = null;
         sent += 1;
       } catch (error) {
         if (connection) {
@@ -2531,7 +3153,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
       }
     }
 
-    return response.json({ eventId: event.id, sent, failures });
+    return response.json({ eventId: event.id, sent, skipped, failures });
   } catch (error) {
     if (connection) {
       await connection.rollback();
@@ -2572,14 +3194,31 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
               COALESCE(nd.Hoten, dk.Masv) AS studentName,
               COALESCE(nd.Email, '') AS email,
               COALESCE(dk.Trangthaidangky, '') AS status,
-              CASE WHEN ea.checked_in_at IS NULL
-                   THEN 'Chưa điểm danh' ELSE 'Đã điểm danh QR' END AS attendanceStatus,
-              ea.checked_in_at AS checkedInAt,
+              CASE
+                WHEN COALESCE(records.checkedInAt, ea.checked_in_at) IS NULL
+                  THEN 'Chưa điểm danh'
+                WHEN records.methods = 'Face'
+                  THEN 'Đã điểm danh khuôn mặt'
+                WHEN records.methods = 'QR'
+                  THEN 'Đã điểm danh QR'
+                WHEN records.methods IS NOT NULL
+                  THEN 'Đã điểm danh QR và khuôn mặt'
+                ELSE 'Đã điểm danh QR'
+              END AS attendanceStatus,
+              COALESCE(records.checkedInAt, ea.checked_in_at) AS checkedInAt,
               DATE_FORMAT(dk.Ngaydangky, '%d/%m/%Y') AS dateLabel
        FROM dangkysukien dk
        LEFT JOIN nguoidung nd ON nd.Mand = dk.Masv
        LEFT JOIN event_attendance ea
          ON ea.event_id = dk.Masukien AND ea.student_id = dk.Masv
+       LEFT JOIN (
+         SELECT event_id, student_id,
+                MIN(checked_in_at) AS checkedInAt,
+                GROUP_CONCAT(DISTINCT method ORDER BY method SEPARATOR ',') AS methods
+         FROM event_attendance_records
+         GROUP BY event_id, student_id
+       ) records
+         ON records.event_id = dk.Masukien AND records.student_id = dk.Masv
        WHERE dk.Masukien = ?
        ORDER BY dk.Ngaydangky DESC, nd.Hoten, dk.Masv`,
       [request.params.eventId],
@@ -3449,6 +4088,7 @@ ensureAttendanceLocationColumns()
   .then(async () => {
     await ensureAttendanceDeviceClaimsTable();
     await ensureEventAttendanceTable();
+    await ensureEventAttendanceSessionsTable();
     await synchronizeEventStatuses();
     const statusSyncTimer = setInterval(() => {
       synchronizeEventStatuses().catch((error) => {

@@ -1,9 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +12,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/api/api_client.dart';
 import '../../data/api/endpoints.dart';
-import '../../data/face/face_recognition_service.dart';
+import '../../data/face/face_recognition_service_web.dart'
+    if (dart.library.io) '../../data/face/face_recognition_service.dart';
+import '../../data/face/temporary_image_cleanup.dart';
 
 /// Mục 14 bản thiết kế — "Student Mobile: QR Scanner, Processing state,
 /// Success, Expired QR, Invalid QR, Already checked in".
@@ -43,8 +44,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   bool _faceBusy = false;
   bool _faceDetected = false;
   bool _checkInBusy = false;
+  bool _faceOptionsLoading = false;
   bool _cameraErrorDialogVisible = false;
   Map<String, dynamic>? _checkInDetails;
+  List<Map<String, dynamic>> _faceOptions = [];
+  String? _selectedFaceOptionKey;
+  String? _faceOptionsError;
   final Stopwatch _faceFrameClock = Stopwatch()..start();
   int _lastFaceFrameMs = 0;
   String? _errorMessage;
@@ -99,6 +104,12 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
   // Hiển thị scanner; MobileScanner tự khởi động khi widget được gắn vào cây.
   void _startScan() {
     if (!widget.isActive || _state == _ScanState.scanning) return;
+    if (_method == _ScanMethod.face && _selectedFaceOption == null) {
+      setState(() {
+        _errorMessage = 'Hãy chọn môn học hoặc sự kiện đang mở điểm danh.';
+      });
+      return;
+    }
     setState(() {
       _state = _ScanState.scanning;
       _errorMessage = null;
@@ -153,6 +164,49 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       _checkInBusy = false;
       _checkInDetails = null;
     });
+    if (method == _ScanMethod.face) await _loadFaceOptions();
+  }
+
+  Map<String, dynamic>? get _selectedFaceOption {
+    for (final option in _faceOptions) {
+      if (_faceOptionKey(option) == _selectedFaceOptionKey) return option;
+    }
+    return null;
+  }
+
+  String _faceOptionKey(Map<String, dynamic> option) =>
+      '${option['type']}:${option['sessionId']}';
+
+  Future<void> _loadFaceOptions() async {
+    setState(() {
+      _faceOptionsLoading = true;
+      _faceOptionsError = null;
+    });
+    try {
+      final body = await _apiClient.get(ApiEndpoints.attendanceFaceOptions);
+      final items = body['items'];
+      final options = items is List
+          ? items.map((item) => Map<String, dynamic>.from(item as Map)).toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        _faceOptions = options;
+        if (!_faceOptions.any(
+          (option) => _faceOptionKey(option) == _selectedFaceOptionKey,
+        )) {
+          _selectedFaceOptionKey = null;
+        }
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _faceOptions = [];
+        _selectedFaceOptionKey = null;
+        _faceOptionsError = error.message;
+      });
+    } finally {
+      if (mounted) setState(() => _faceOptionsLoading = false);
+    }
   }
 
   // Khởi tạo camera trước và bắt đầu gửi từng khung hình cho bộ nhận diện.
@@ -373,16 +427,25 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       );
       if (recognizedStudentId == null) {
         throw const ApiException(
-          'Khuôn mặt không khớp với hồ sơ đã đăng ký.',
+          'Không tìm thấy khuôn mặt khớp với các hồ sơ mẫu đã đăng ký. '
+          'Hãy kiểm tra ảnh mẫu và tài khoản sinh viên.',
         );
       }
+      final selectedOption = _selectedFaceOption;
+      if (selectedOption == null) {
+        throw const ApiException(
+          'Phiên điểm danh đã thay đổi. Hãy chọn lại môn học hoặc sự kiện.',
+        );
+      }
+      final sessionData = {
+        'sessionType': selectedOption['type'],
+        'sessionId': selectedOption['sessionId'],
+        'recognizedStudentId': recognizedStudentId,
+      };
       await _stopCameras();
       final preview = await _apiClient.post(
         ApiEndpoints.attendanceFaceCheckIn,
-        data: {
-          'preview': true,
-          'recognizedStudentId': recognizedStudentId,
-        },
+        data: {...sessionData, 'preview': true},
       );
       if (!mounted) return;
       setState(() => _checkInDetails = preview);
@@ -398,7 +461,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       final result = await _apiClient.post(
         ApiEndpoints.attendanceFaceCheckIn,
         data: {
-          'recognizedStudentId': recognizedStudentId,
+          ...sessionData,
           'deviceId': deviceId,
           'latitude': position.latitude,
           'longitude': position.longitude,
@@ -425,11 +488,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
     } finally {
       _checkInBusy = false;
       if (capturedImage != null) {
-        try {
-          await File(capturedImage.path).delete();
-        } on FileSystemException catch (error) {
-          debugPrint('Could not remove temporary face image: $error');
-        }
+        await deleteTemporaryImage(capturedImage.path);
       }
     }
   }
@@ -533,15 +592,17 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
               onTap: () => _setMethod(_ScanMethod.qr),
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _MethodButton(
-              label: 'Face',
-              icon: Icons.face_retouching_natural,
-              active: _method == _ScanMethod.face,
-              onTap: () => _setMethod(_ScanMethod.face),
+          if (!kIsWeb) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: _MethodButton(
+                label: 'Face',
+                icon: Icons.face_retouching_natural,
+                active: _method == _ScanMethod.face,
+                onTap: () => _setMethod(_ScanMethod.face),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -557,6 +618,10 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          if (_method == _ScanMethod.face) ...[
+            _buildFaceSessionSelector(),
+            const SizedBox(height: 22),
+          ],
           Container(
             width: 96,
             height: 96,
@@ -586,7 +651,11 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: _startScan,
+              onPressed:
+                  _method == _ScanMethod.face &&
+                      (_selectedFaceOption == null || _faceOptionsLoading)
+                  ? null
+                  : _startScan,
               child: Text(
                 _method == _ScanMethod.qr
                     ? 'Bắt đầu quét QR'
@@ -594,6 +663,124 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFaceSessionSelector() {
+    final option = _selectedFaceOption;
+    String label(Map<String, dynamic> item) {
+      final title = item['title']?.toString().trim() ?? '';
+      final subtitle = item['subtitle']?.toString().trim() ?? '';
+      final sessionName = item['sessionName']?.toString().trim() ?? '';
+      return [
+        if (title.isNotEmpty) title,
+        if (subtitle.isNotEmpty) subtitle,
+        if (sessionName.isNotEmpty) sessionName,
+      ].join(' · ');
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Chọn môn học / sự kiện đang mở',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Tải lại phiên điểm danh',
+                onPressed: _faceOptionsLoading ? null : _loadFaceOptions,
+                icon: const Icon(Icons.refresh, color: Colors.white70),
+              ),
+            ],
+          ),
+          if (_faceOptionsLoading)
+            const LinearProgressIndicator()
+          else if (_faceOptionsError != null)
+            Text(
+              _faceOptionsError!,
+              style: const TextStyle(color: Color(0xFFFCA5A5)),
+            )
+          else if (_faceOptions.isEmpty)
+            const Text(
+              'Không có phiên khuôn mặt nào đang mở cho bạn.',
+              style: TextStyle(color: Colors.white70),
+            )
+          else
+            DropdownButtonFormField<String>(
+              initialValue: _selectedFaceOptionKey,
+              isExpanded: true,
+              dropdownColor: const Color(0xFF172033),
+              style: const TextStyle(color: Color(0xFF172033)),
+              iconEnabledColor: const Color(0xFF172033),
+              decoration: const InputDecoration(
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+              ),
+              selectedItemBuilder: (context) => _faceOptions
+                  .map(
+                    (item) => Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        label(item),
+                        style: const TextStyle(color: Color(0xFF172033)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              hint: const Text(
+                'Chọn môn học hoặc sự kiện',
+                style: TextStyle(color: Color(0xFF172033)),
+              ),
+              items: _faceOptions
+                  .map(
+                    (item) => DropdownMenuItem<String>(
+                      value: _faceOptionKey(item),
+                      child: Text(
+                        label(item),
+                        style: const TextStyle(color: Colors.white),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() {
+                _selectedFaceOptionKey = value;
+                _errorMessage = null;
+              }),
+            ),
+          if (option != null && !_faceOptionsLoading) ...[
+            const SizedBox(height: 8),
+            Text(
+              option['type'] == 'event'
+                  ? 'Sự kiện đã được ban tổ chức mở điểm danh.'
+                  : 'Phiên học đã được giảng viên mở điểm danh.',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
         ],
       ),
     );

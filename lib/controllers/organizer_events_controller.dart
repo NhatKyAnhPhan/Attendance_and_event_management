@@ -28,13 +28,10 @@ class OrganizerEventsController extends GetxController {
     super.onInit();
     load();
     loadUnits();
-    _statusRefreshTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) {
-        statusRefreshTick.value++;
-        load();
-      },
-    );
+    _statusRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      statusRefreshTick.value++;
+      load();
+    });
   }
 
   // Dừng bộ đếm khi controller không còn được sử dụng.
@@ -154,6 +151,10 @@ class OrganizerEventsController extends GetxController {
       latitude: latitude,
       longitude: longitude,
     );
+  }
+
+  Future<void> closeAttendanceSession(String eventId, String sessionId) {
+    return _repository.closeEventAttendanceSession(eventId, sessionId);
   }
 
   Future<Map<String, dynamic>> sendCertificates(String eventId) {

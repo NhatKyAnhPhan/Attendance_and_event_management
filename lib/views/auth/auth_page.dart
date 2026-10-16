@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../controllers/auth_controller.dart';
+import '../../data/api/api_client.dart';
+import '../../data/api/endpoints.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../widgets/huit_logo_mark.dart';
@@ -152,9 +154,18 @@ class _AuthPageState extends State<AuthPage> {
           final showLeftPanel =
               constraints.maxWidth >=
               900; // tương ứng breakpoint "lg" của Tailwind
+          final leftPanelWidth = (constraints.maxWidth * 0.38).clamp(
+            360.0,
+            560.0,
+          );
           return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (showLeftPanel) _LeftPanel(c: c),
+              if (showLeftPanel)
+                SizedBox(
+                  width: leftPanelWidth,
+                  child: _LeftPanel(c: c),
+                ),
               Expanded(
                 child: Center(
                   child: SingleChildScrollView(
@@ -492,122 +503,216 @@ class _AuthPageState extends State<AuthPage> {
 // ============ Widget con dùng riêng cho trang này ============
 // (Có thể tách ra lib/widgets/ sau nếu app_input.dart/app_button.dart cần dùng lại chỗ khác)
 
-class _LeftPanel extends StatelessWidget {
+class _LeftPanel extends StatefulWidget {
   final AppColors c;
   const _LeftPanel({required this.c});
 
   @override
+  State<_LeftPanel> createState() => _LeftPanelState();
+}
+
+class _LeftPanelState extends State<_LeftPanel> {
+  List<Map<String, String>>? _stats;
+  String? _statsError;
+  bool _loadingStats = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStats();
+  }
+
+  Future<void> _loadStats() async {
+    setState(() {
+      _loadingStats = true;
+      _statsError = null;
+    });
+
+    try {
+      final response = await ApiClient().get(ApiEndpoints.publicStats);
+      final stats =
+          [
+            {'key': 'students', 'label': 'Sinh viên'},
+            {'key': 'lecturers', 'label': 'Giảng viên'},
+            {'key': 'classes', 'label': 'Lớp học'},
+            {'key': 'events', 'label': 'Sự kiện'},
+          ].map((item) {
+            final value = response[item['key']];
+            if (value is! num) {
+              throw FormatException('Số liệu ${item['label']} không hợp lệ.');
+            }
+            return {'n': _formatCount(value.toInt()), 'l': item['label']!};
+          }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _stats = stats;
+        _loadingStats = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _statsError = error.message;
+        _loadingStats = false;
+      });
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _statsError = error.message;
+        _loadingStats = false;
+      });
+    }
+  }
+
+  String _formatCount(int value) {
+    final digits = value.toString();
+    final formatted = StringBuffer();
+    for (var index = 0; index < digits.length; index++) {
+      if (index > 0 && (digits.length - index) % 3 == 0) {
+        formatted.write(',');
+      }
+      formatted.write(digits[index]);
+    }
+    return formatted.toString();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    const stats = [
-      {'n': '1,240', 'l': 'Sinh viên'},
-      {'n': '68', 'l': 'Giảng viên'},
-      {'n': '94', 'l': 'Lớp học'},
-      {'n': '28', 'l': 'Sự kiện'},
-    ];
+    final c = widget.c;
     return Container(
-      width: 420,
-      padding: const EdgeInsets.all(40),
+      padding: const EdgeInsets.all(28),
       color: c.primary,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: const HuitLogoMark(),
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'HUIT',
-                    style: TextStyle(
-                      fontFamily: 'Nunito',
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                      fontSize: 16,
-                    ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  Text(
-                    'hệ thống điểm danh và quản lý sự kiện',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: const HuitLogoMark(),
                   ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 48),
-          const Text(
-            'Hệ thống Quản lý Điểm danh',
-            style: TextStyle(
-              fontFamily: 'Nunito',
-              fontWeight: FontWeight.w800,
-              fontSize: 30,
-              height: 1.2,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Quản lý điểm danh lớp học và sự kiện tại trường Đại học Công Thương TP.HCM.',
-            style: TextStyle(fontSize: 14, height: 1.7, color: Colors.white70),
-          ),
-          const Spacer(),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 1.6,
-            children: stats.map((s) {
-              return Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Column(
+                const SizedBox(width: 12),
+                const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      s['n']!,
-                      style: const TextStyle(
+                      'HUIT',
+                      style: TextStyle(
                         fontFamily: 'Nunito',
                         fontWeight: FontWeight.w800,
                         color: Colors.white,
-                        fontSize: 22,
+                        fontSize: 16,
                       ),
                     ),
                     Text(
-                      s['l']!,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
-                      ),
+                      'hệ thống điểm danh và quản lý sự kiện',
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
                     ),
                   ],
                 ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            '© 2025 HUIT — Đại Học Công Thương TP.HCM',
-            style: TextStyle(color: Colors.white38, fontSize: 12),
-          ),
-        ],
+              ],
+            ),
+            const SizedBox(height: 32),
+            const Text(
+              'Hệ thống Quản lý Điểm danh',
+              style: TextStyle(
+                fontFamily: 'Nunito',
+                fontWeight: FontWeight.w800,
+                fontSize: 30,
+                height: 1.2,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Quản lý điểm danh lớp học và sự kiện tại trường Đại học Công Thương TP.HCM.',
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.7,
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 28),
+            if (_loadingStats)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(color: Colors.white),
+                ),
+              )
+            else if (_statsError != null)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _statsError!,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  TextButton(
+                    onPressed: _loadStats,
+                    child: const Text(
+                      'Thử tải lại',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              )
+            else
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.6,
+                children: _stats!.map((s) {
+                  return Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          s['n']!,
+                          style: const TextStyle(
+                            fontFamily: 'Nunito',
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            fontSize: 22,
+                          ),
+                        ),
+                        Text(
+                          s['l']!,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            const SizedBox(height: 20),
+            const Text(
+              '© 2025 HUIT — Đại Học Công Thương TP.HCM',
+              style: TextStyle(color: Colors.white38, fontSize: 12),
+            ),
+          ],
+        ),
       ),
     );
   }

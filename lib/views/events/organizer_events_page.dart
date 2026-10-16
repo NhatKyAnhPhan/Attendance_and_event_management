@@ -660,10 +660,10 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               onPressed: () =>
                   _showEventAttendanceQr(dialogContext, controller, event),
               icon: const Icon(Icons.qr_code_2),
-              label: const Text('QR điểm danh'),
+              label: const Text('Mở phiên điểm danh'),
             ),
           if (Get.find<AuthController>().canManageEvents &&
-              event.endTime.isBefore(DateTime.now()))
+              (event.isClosed || !event.endTime.isAfter(DateTime.now())))
             FilledButton.icon(
               onPressed: _sendingCertificates
                   ? null
@@ -700,11 +700,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       );
       final qr = result['qr'].toString();
       final radiusMeters = (result['radiusMeters'] as num).toInt();
+      final sessionId = result['sessionId'].toString();
+      final sessionNumber = (result['sessionNumber'] as num).toInt();
       if (!context.mounted) return;
       await showDialog<void>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('QR điểm danh sự kiện'),
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Phiên điểm danh $sessionNumber'),
           content: SizedBox(
             width: 300,
             child: Column(
@@ -713,6 +715,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                 Text(event.name, textAlign: TextAlign.center),
                 const SizedBox(height: 12),
                 QrImageView(data: qr, size: 250),
+                const Text(
+                  'Mỗi sinh viên được ghi nhận riêng trong phiên này. '
+                  'Có thể mở phiên mới để điểm danh lần tiếp theo. '
+                  'Ẩn mã QR không đóng phiên.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
                 Text(
                   'Mã QR có hiệu lực đến ${DateFormat('dd/MM/yyyy HH:mm').format(event.endTime)}.',
                   textAlign: TextAlign.center,
@@ -732,8 +741,27 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Đóng'),
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Ẩn mã QR'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                try {
+                  await controller.closeAttendanceSession(event.id, sessionId);
+                  if (!context.mounted) return;
+                  Navigator.pop(dialogContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Đã đóng phiên điểm danh.')),
+                  );
+                } catch (error) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Không thể đóng phiên: $error')),
+                  );
+                }
+              },
+              icon: const Icon(Icons.stop_circle_outlined),
+              label: const Text('Đóng phiên'),
             ),
           ],
         ),
@@ -772,8 +800,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       builder: (context) => AlertDialog(
         title: const Text('Gửi chứng nhận qua email?'),
         content: Text(
-          'Chứng nhận PDF sẽ chỉ gửi cho sinh viên đã điểm danh QR '
-          'sự kiện “${event.name}”.',
+          'Chứng nhận PDF sẽ chỉ gửi cho sinh viên đã điểm danh sự kiện '
+          '“${event.name}” và chưa được cấp chứng nhận.',
         ),
         actions: [
           TextButton(
@@ -794,6 +822,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       final result = await controller.sendCertificates(event.id);
       if (!context.mounted) return;
       final sent = result['sent'] as int? ?? 0;
+      final skipped = result['skipped'] as int? ?? 0;
+      final message = result['message']?.toString();
       final failures = result['failures'] is List
           ? (result['failures'] as List)
                 .whereType<Map>()
@@ -812,8 +842,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Gửi thành công: $sent'),
-                  Text('Gửi thất bại: ${failures.length}'),
+                  if (message != null && message.isNotEmpty)
+                    Text(message)
+                  else ...[
+                    Text('Gửi thành công: $sent'),
+                    if (skipped > 0) Text('Đã cấp trước đó: $skipped'),
+                    Text('Gửi thất bại: ${failures.length}'),
+                  ],
                   for (final failure in failures)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),

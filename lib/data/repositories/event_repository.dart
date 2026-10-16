@@ -193,7 +193,22 @@ class EventRepository {
     if (body['radiusMeters'] is! num) {
       throw const FormatException('Máy chủ không trả về phạm vi điểm danh.');
     }
+    if (body['sessionId']?.toString().isEmpty ?? true) {
+      throw const FormatException('Máy chủ không trả về mã phiên điểm danh.');
+    }
+    if (body['sessionNumber'] is! num) {
+      throw const FormatException('Máy chủ không trả về số thứ tự phiên.');
+    }
     return body;
+  }
+
+  Future<void> closeEventAttendanceSession(
+    String eventId,
+    String sessionId,
+  ) async {
+    await _client.post(
+      ApiEndpoints.closeEventAttendanceSession(eventId, sessionId),
+    );
   }
 
   Future<Map<String, dynamic>> sendEventCertificates(String eventId) {

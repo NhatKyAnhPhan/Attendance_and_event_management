@@ -54,7 +54,10 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
     return Scaffold(
       backgroundColor: c.background,
-      body: IndexedStack(index: _index, children: pages),
+      body: SafeArea(
+        bottom: false,
+        child: IndexedStack(index: _index, children: pages),
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
         onTap: _goTo,
