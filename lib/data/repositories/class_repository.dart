@@ -1,6 +1,7 @@
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/class_model.dart';
+import '../models/calendar_model.dart';
 import '../models/student_class_detail.dart';
 import '../models/student_roster_entry.dart';
 import '../models/student_summaries.dart';
@@ -9,6 +10,18 @@ class ClassRepository {
   ClassRepository({ApiClient? client}) : _client = client ?? ApiClient();
 
   final ApiClient _client;
+
+  Future<List<CalendarClass>> getCalendarClasses() async {
+    final body = await _client.get('/api/calendar/classes');
+    final items = body['items'];
+    if (items is! List) return const [];
+    return items
+        .whereType<Map>()
+        .map(
+          (item) => CalendarClass.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList();
+  }
 
   // Đọc danh sách lớp từ API và chuyển từng bản ghi thành model ứng dụng.
   Future<List<StudentClassSummary>> getStudentClasses() async {

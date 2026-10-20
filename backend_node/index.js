@@ -672,6 +672,75 @@ app.get('/api/classes', requireAuth, async (request, response) => {
   }
 });
 
+app.get(
+  '/api/calendar/classes',
+  requireAuth,
+  requireRole('Sinh viên', 'student', 'Giảng viên', 'lecturer'),
+  async (request, response) => {
+    const role = String(request.auth.role || '').trim().toLowerCase();
+    const isStudent = role === 'sinh viên' || role === 'student';
+    try {
+      const [rows] = await pool.execute(
+        `SELECT lhp.Malop AS id, lhp.Tenlop AS name,
+                COALESCE(mh.Tenmon, '') AS subjectName,
+                COALESCE(nd.Hoten, '') AS lecturerName,
+                lh.Malich AS scheduleId, lh.ThuTrongTuan AS weekday,
+                TIME_FORMAT(lh.GioBatDau, '%H:%i') AS startTime,
+                TIME_FORMAT(lh.GioKetThuc, '%H:%i') AS endTime,
+                COALESCE(lh.PhongHoc, '') AS room,
+                DATE_FORMAT(lh.NgayBatDau, '%Y-%m-%d') AS startsOn,
+                DATE_FORMAT(lh.NgayKetThuc, '%Y-%m-%d') AS endsOn
+         FROM lophocphan lhp
+         LEFT JOIN monhoc mh ON mh.Mamon = lhp.Mamon
+         LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
+         LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
+         LEFT JOIN lichhocphan lh ON lh.Malop = lhp.Malop
+         WHERE COALESCE(lhp.Trangthailop, '') <> 'Đã đóng'
+           AND ${
+             isStudent
+               ? `EXISTS (
+                    SELECT 1 FROM thanhvienlop tvl
+                    WHERE tvl.Malop = lhp.Malop AND tvl.Masv = ?
+                  )`
+               : 'lhp.Magv = ?'
+           }
+         ORDER BY lhp.Malop, lh.ThuTrongTuan, lh.GioBatDau`,
+        [request.auth.sub],
+      );
+      const classes = new Map();
+      for (const row of rows) {
+        let classItem = classes.get(String(row.id));
+        if (!classItem) {
+          classItem = {
+            id: String(row.id),
+            name: row.name || '',
+            subjectName: row.subjectName || '',
+            lecturerName: row.lecturerName || '',
+            schedules: [],
+          };
+          classes.set(String(row.id), classItem);
+        }
+        if (row.scheduleId != null) {
+          classItem.schedules.push({
+            weekday: Number(row.weekday),
+            startTime: row.startTime || '',
+            endTime: row.endTime || '',
+            room: row.room || '',
+            startsOn: row.startsOn || '',
+            endsOn: row.endsOn || '',
+          });
+        }
+      }
+      return response.json({ items: [...classes.values()] });
+    } catch (error) {
+      console.error('Calendar classes error:', error.message);
+      return response.status(500).json({
+        message: 'Không thể tải lịch học.',
+      });
+    }
+  },
+);
+
 // Sinh viên chỉ được xem chi tiết và danh sách thành viên của lớp mình tham gia.
 app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', 'student'), async (request, response) => {
   try {

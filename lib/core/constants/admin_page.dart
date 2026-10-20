@@ -1,6 +1,7 @@
 /// Tương ứng `type Page` trong Sidebar.tsx — các trang bên trong admin_shell.
 enum AdminPage {
   dashboard,
+  calendar,
   users,
   orgUnits,
   classes,
@@ -19,6 +20,8 @@ extension AdminPageX on AdminPage {
     switch (this) {
       case AdminPage.dashboard:
         return 'Dashboard';
+      case AdminPage.calendar:
+        return 'Lịch của tôi';
       case AdminPage.users:
         return 'Quản lý người dùng';
       case AdminPage.orgUnits:

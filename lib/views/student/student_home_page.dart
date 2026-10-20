@@ -16,6 +16,7 @@ import '../../widgets/app_badge.dart';
 import '../../widgets/statistics_charts.dart';
 import '../notifications/notifications_page.dart';
 import 'student_checkin_page.dart';
+import '../calendar/calendar_page.dart';
 import 'student_classes_page.dart';
 import 'student_class_details_page.dart';
 import 'student_events_page.dart';
@@ -45,10 +46,14 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final c = AppColors.of(isDark);
 
     final pages = [
-      _HomeTabContent(onScan: () => _goTo(3), onGoToClasses: () => _goTo(1)),
+      _HomeTabContent(onScan: () => _goTo(4), onGoToClasses: () => _goTo(1)),
       const StudentClassesPage(),
       const StudentEventsPage(),
-      StudentCheckinPage(isActive: _index == 3),
+      CalendarPage(
+        role: Role.student,
+        onOpenAttendance: ({required isEvent}) => _goTo(4),
+      ),
+      StudentCheckinPage(isActive: _index == 4),
       const StudentProfilePage(),
     ];
 
@@ -88,6 +93,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
             icon: Icon(Icons.event_outlined),
             activeIcon: Icon(Icons.event),
             label: 'Sự kiện',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.calendar_month_outlined),
+            activeIcon: Icon(Icons.calendar_month),
+            label: 'Lịch',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.qr_code_scanner_outlined),

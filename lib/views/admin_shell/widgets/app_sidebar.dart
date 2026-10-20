@@ -29,6 +29,7 @@ const _adminNav = [
 
 const _lecturerNav = [
   _NavItem(Icons.home_outlined, AdminPage.dashboard),
+  _NavItem(Icons.calendar_month_outlined, AdminPage.calendar),
   _NavItem(Icons.menu_book_outlined, AdminPage.classes),
   _NavItem(Icons.check_box_outlined, AdminPage.attendance),
   _NavItem(Icons.bar_chart_outlined, AdminPage.reports),
@@ -37,6 +38,7 @@ const _lecturerNav = [
 
 const _organizerNav = [
   _NavItem(Icons.home_outlined, AdminPage.dashboard),
+  _NavItem(Icons.calendar_month_outlined, AdminPage.calendar),
   _NavItem(Icons.check_box_outlined, AdminPage.attendance),
   _NavItem(Icons.event_outlined, AdminPage.events),
   _NavItem(Icons.workspace_premium_outlined, AdminPage.certificates),

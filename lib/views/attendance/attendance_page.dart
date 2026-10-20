@@ -15,7 +15,12 @@ import 'event_attendance_section.dart';
 import 'qr_generator_page.dart';
 
 class AttendancePage extends StatefulWidget {
-  const AttendancePage({super.key});
+  final bool initialShowEventAttendance;
+
+  const AttendancePage({
+    super.key,
+    this.initialShowEventAttendance = false,
+  });
 
   @override
   State<AttendancePage> createState() => _AttendancePageState();
@@ -23,9 +28,15 @@ class AttendancePage extends StatefulWidget {
 
 class _AttendancePageState extends State<AttendancePage> {
   String _query = '';
-  bool _showEventAttendance = false;
+  late bool _showEventAttendance;
   final GlobalKey<EventAttendanceSectionState> _eventAttendanceKey =
       GlobalKey<EventAttendanceSectionState>();
+
+  @override
+  void initState() {
+    super.initState();
+    _showEventAttendance = widget.initialShowEventAttendance;
+  }
 
   /// Hiển thị phiên điểm danh và kết quả truy vấn theo quyền hiện tại.
   @override

@@ -12,6 +12,7 @@ import '../staff/staff_records_page.dart';
 import '../dashboard/dashboard_page.dart';
 import '../attendance/attendance_page.dart';
 import '../classes/classes_page.dart';
+import '../calendar/calendar_page.dart';
 import '../notifications/notifications_page.dart';
 import '../reports/reports_page.dart';
 import '../events/organizer_events_page.dart';
@@ -33,11 +34,20 @@ class _AdminShellPageState extends State<AdminShellPage> {
   AdminPage _activePage = AdminPage.dashboard;
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _routingAway = false;
+  bool _attendanceEventMode = false;
 
   /// Chuyển trang hiện tại và đóng drawer nếu ứng dụng đang ở màn hình hẹp.
   void _navigate(AdminPage page) {
-    setState(() => _activePage = page);
+    setState(() {
+      _activePage = page;
+      if (page != AdminPage.attendance) _attendanceEventMode = false;
+    });
     Navigator.of(context).maybePop(); // đóng Drawer nếu đang mở (màn hẹp)
+  }
+
+  void _openCalendarAttendance({required bool isEvent}) {
+    setState(() => _attendanceEventMode = isEvent);
+    _navigate(AdminPage.attendance);
   }
 
   /// Chọn nội dung tương ứng với mục điều hướng đang được mở.
@@ -46,6 +56,11 @@ class _AdminShellPageState extends State<AdminShellPage> {
     switch (_activePage) {
       case AdminPage.dashboard:
         return DashboardPage(role: Get.find<AuthController>().role.value);
+      case AdminPage.calendar:
+        return CalendarPage(
+          role: Get.find<AuthController>().role.value,
+          onOpenAttendance: _openCalendarAttendance,
+        );
       case AdminPage.users:
         return const AdminDataPage(
           title: 'Quản lý người dùng',
@@ -63,7 +78,9 @@ class _AdminShellPageState extends State<AdminShellPage> {
       case AdminPage.events:
         return const OrganizerEventsPage();
       case AdminPage.attendance:
-        return const AttendancePage();
+        return AttendancePage(
+          initialShowEventAttendance: _attendanceEventMode,
+        );
       case AdminPage.reports:
         return const ReportsPage();
       case AdminPage.feedback:
