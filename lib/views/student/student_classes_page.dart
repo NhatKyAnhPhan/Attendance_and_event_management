@@ -36,6 +36,60 @@ class StudentClassesPage extends StatefulWidget {
 class _StudentClassesPageState extends State<StudentClassesPage> {
   String _query = '';
 
+  Future<void> _joinClass(
+    BuildContext context,
+    ClassesController controller,
+  ) async {
+    final classCodeController = TextEditingController();
+    final classCode = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Tham gia lớp học'),
+        content: TextField(
+          controller: classCodeController,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(
+            labelText: 'Mã lớp',
+            hintText: 'Nhập mã lớp được cung cấp',
+          ),
+          onSubmitted: (value) {
+            if (value.trim().isNotEmpty) {
+              Navigator.pop(dialogContext, value.trim());
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = classCodeController.text.trim();
+              if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+            },
+            child: const Text('Tham gia'),
+          ),
+        ],
+      ),
+    );
+    classCodeController.dispose();
+    if (classCode == null || !context.mounted) return;
+
+    try {
+      await controller.joinClass(classCode);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Đã tham gia lớp học.')));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Không thể tham gia lớp: $error')));
+    }
+  }
+
   /// Hiển thị lớp và kết quả điểm danh lấy từ API sinh viên.
   @override
   Widget build(BuildContext context) {
@@ -82,10 +136,22 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Lớp học của tôi',
-                    style: AppTextStyles.displayLg(c.foreground)
-                        .copyWith(fontSize: 22),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        'Lớp học của tôi',
+                        style: AppTextStyles.displayLg(c.foreground)
+                            .copyWith(fontSize: 22),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _joinClass(context, controller),
+                        icon: const Icon(Icons.login_rounded),
+                        label: const Text('Nhập mã lớp'),
+                      ),
+                    ],
                   ),
                   Text(
                     '${filteredClasses.length} lớp trong dữ liệu của bạn',

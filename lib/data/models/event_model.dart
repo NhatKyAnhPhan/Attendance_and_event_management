@@ -130,3 +130,28 @@ class OrganizerEventSummary {
     );
   }
 }
+
+class EventStudentImportResult {
+  final int importedCount;
+  final int alreadyRegisteredCount;
+  final List<String> unknownStudentIds;
+
+  const EventStudentImportResult({
+    required this.importedCount,
+    required this.alreadyRegisteredCount,
+    required this.unknownStudentIds,
+  });
+
+  factory EventStudentImportResult.fromJson(Map<String, dynamic> json) =>
+      EventStudentImportResult(
+        importedCount:
+            int.tryParse(json['importedCount']?.toString() ?? '') ?? 0,
+        alreadyRegisteredCount:
+            int.tryParse(json['alreadyRegisteredCount']?.toString() ?? '') ?? 0,
+        unknownStudentIds: json['unknownStudentIds'] is List
+            ? (json['unknownStudentIds'] as List)
+                  .map((id) => id.toString())
+                  .toList()
+            : const [],
+      );
+}

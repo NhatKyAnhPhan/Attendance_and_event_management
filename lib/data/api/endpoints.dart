@@ -2,11 +2,17 @@ class ApiEndpoints {
   ApiEndpoints._();
 
   static const login = '/api/auth/login';
+  static const requestPasswordReset = '/api/auth/password-reset/request';
+  static const verifyPasswordReset = '/api/auth/password-reset/verify';
+  static const completePasswordReset = '/api/auth/password-reset/complete';
   static const publicStats = '/api/public/stats';
   static const logout = '/api/auth/logout';
   static const currentUser = '/api/me';
   static const events = '/api/events';
   static const classes = '/api/classes';
+  static const joinClass = '/api/classes/join';
+  static String importEventStudents(String eventId) =>
+      '/api/organizer/events/${Uri.encodeComponent(eventId)}/students/import';
   static const adminClasses = '/api/admin/classes';
   static const attendance = '/api/attendance';
   static const attendanceSessions = '/api/attendance/sessions';
@@ -28,6 +34,10 @@ class ApiEndpoints {
       '/api/organizer/events/${Uri.encodeComponent(eventId)}/certificates/send';
   static const reports = '/api/reports';
   static const attendanceReport = '/api/reports/attendance';
+  // Danh sách và tệp PDF chỉ dành cho chứng nhận của sinh viên đang đăng nhập.
+  static const studentCertificates = '/api/student/certificates';
+  static String studentCertificatePdf(String certificateId) =>
+      '$studentCertificates/${Uri.encodeComponent(certificateId)}/pdf';
   static const staffCertificates = '/api/staff/certificates';
   static const staffFeedback = '/api/staff/feedback';
 }

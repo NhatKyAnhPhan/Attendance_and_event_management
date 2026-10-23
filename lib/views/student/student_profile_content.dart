@@ -9,6 +9,7 @@ import '../../data/api/api_client.dart';
 import '../lecturer_profile/profile_view_model.dart';
 import '../lecturer_profile/widgets/profile_contact_editor.dart';
 import '../lecturer_profile/widgets/profile_info_section.dart';
+import 'student_certificates_page.dart';
 
 class StudentProfileContent extends StatefulWidget {
   const StudentProfileContent({super.key});
@@ -45,7 +46,9 @@ class _StudentProfileContentState extends State<StudentProfileContent> {
   Future<void> _saveApiUrl() async {
     final rawUrl = _apiUrlController.text.trim();
     final uri = Uri.tryParse(rawUrl);
-    if (uri == null || !uri.hasAuthority || !{'http', 'https'}.contains(uri.scheme)) {
+    if (uri == null ||
+        !uri.hasAuthority ||
+        !{'http', 'https'}.contains(uri.scheme)) {
       setState(() {
         _isConnected = false;
         _connectionMessage = 'Nhập địa chỉ máy chủ HTTP hoặc HTTPS hợp lệ.';
@@ -201,6 +204,17 @@ class _StudentProfileContentState extends State<StudentProfileContent> {
             ],
           ),
           const SizedBox(height: 16),
+          // Mở trang chứng nhận được lọc theo tài khoản sinh viên hiện tại.
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const StudentCertificatesPage(),
+              ),
+            ),
+            icon: const Icon(Icons.workspace_premium_outlined),
+            label: const Text('Chứng nhận của tôi'),
+          ),
+          const SizedBox(height: 16),
           Container(
             decoration: BoxDecoration(
               color: colors.card,
@@ -280,7 +294,9 @@ class _StudentProfileContentState extends State<StudentProfileContent> {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.sync),
                         label: const Text('Kiểm tra'),
@@ -306,8 +322,8 @@ class _StudentProfileContentState extends State<StudentProfileContent> {
                             color: _isConnected == false
                                 ? colors.danger
                                 : _isConnected == true
-                                    ? colors.success
-                                    : colors.foreground,
+                                ? colors.success
+                                : colors.foreground,
                           ),
                         ),
                       ),

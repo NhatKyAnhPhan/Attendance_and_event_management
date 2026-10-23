@@ -55,4 +55,41 @@ class AuthRepository {
       user: user is Map ? Map<String, dynamic>.from(user) : <String, dynamic>{},
     );
   }
+
+  Future<void> requestPasswordReset(String email) async {
+    await _client.post(
+      ApiEndpoints.requestPasswordReset,
+      data: {'email': email.trim()},
+    );
+  }
+
+  Future<String> verifyPasswordResetCode({
+    required String email,
+    required String code,
+  }) async {
+    final body = await _client.post(
+      ApiEndpoints.verifyPasswordReset,
+      data: {'email': email.trim(), 'code': code},
+    );
+    final resetToken = body['resetToken']?.toString();
+    if (resetToken == null || resetToken.isEmpty) {
+      throw const ApiException('Phản hồi xác nhận mã không hợp lệ.');
+    }
+    return resetToken;
+  }
+
+  Future<void> completePasswordReset({
+    required String email,
+    required String resetToken,
+    required String newPassword,
+  }) async {
+    await _client.post(
+      ApiEndpoints.completePasswordReset,
+      data: {
+        'email': email.trim(),
+        'resetToken': resetToken,
+        'newPassword': newPassword,
+      },
+    );
+  }
 }

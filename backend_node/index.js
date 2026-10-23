@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
 const { createUpdateProfileHandler } = require('./profile_handler');
 const { createCertificatePdf, createMailTransport } = require('./certificate_mailer');
+const { createPasswordResetHandlers } = require('./password_reset_handler');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -22,6 +23,11 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   charset: 'utf8mb4',
+});
+const passwordResetHandlers = createPasswordResetHandlers({
+  pool,
+  secret: process.env.PASSWORD_RESET_SECRET,
+  mailTransportFactory: createMailTransport,
 });
 
 const eventStatusSql = `CASE
@@ -196,6 +202,22 @@ async function ensureAttendanceDeviceClaimsTable() {
        ADD PRIMARY KEY (device_id, attendance_session_id)`,
     );
   }
+}
+
+async function ensurePasswordResetChallengesTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS password_reset_challenges (
+       user_id VARCHAR(64) NOT NULL,
+       email VARCHAR(150) NOT NULL,
+       code_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+       reset_token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+       expires_at DATETIME NOT NULL,
+       requested_at DATETIME NOT NULL,
+       attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+       PRIMARY KEY (user_id),
+       INDEX idx_password_reset_challenges_email (email)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
 }
 
 async function ensureEventAttendanceTable() {
@@ -493,6 +515,10 @@ app.post('/api/auth/login', async (request, response) => {
   }
 });
 
+app.post('/api/auth/password-reset/request', passwordResetHandlers.requestCode);
+app.post('/api/auth/password-reset/verify', passwordResetHandlers.verifyCode);
+app.post('/api/auth/password-reset/complete', passwordResetHandlers.resetPassword);
+
 // Lấy hồ sơ người dùng hiện tại từ token đăng nhập.
 app.get('/api/me', requireAuth, async (request, response) => {
   try {
@@ -669,6 +695,70 @@ app.get('/api/classes', requireAuth, async (request, response) => {
   } catch (error) {
     console.error('Classes error:', error.message);
     return response.status(500).json({ message: 'Không thể tải danh sách lớp.' });
+  }
+});
+
+app.post('/api/classes/join', requireAuth, requireRole('Sinh viên', 'student'), async (request, response) => {
+  const classCode = typeof request.body?.classCode === 'string'
+    ? request.body.classCode.trim()
+    : '';
+  if (!classCode || classCode.length > 64) {
+    return response.status(400).json({ message: 'Mã lớp không hợp lệ.' });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [[classInfo]] = await connection.execute(
+      `SELECT Malop, Trangthailop AS status, Soluongtoida AS capacity,
+              (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
+       FROM lophocphan WHERE Malop = ? FOR UPDATE`,
+      [classCode],
+    );
+    if (!classInfo) {
+      await connection.rollback();
+      return response.status(404).json({ message: 'Không tìm thấy lớp theo mã đã nhập.' });
+    }
+    if (classInfo.status === 'Đã đóng' || Number(classInfo.isArchived)) {
+      await connection.rollback();
+      return response.status(409).json({ message: 'Lớp đã đóng hoặc đã lưu trữ.' });
+    }
+
+    const [[membership]] = await connection.execute(
+      'SELECT 1 AS isMember FROM thanhvienlop WHERE Malop = ? AND Masv = ? LIMIT 1',
+      [classInfo.Malop, request.auth.sub],
+    );
+    if (membership) {
+      await connection.rollback();
+      return response.status(409).json({ message: 'Bạn đã tham gia lớp này.' });
+    }
+
+    const [[count]] = await connection.execute(
+      'SELECT COUNT(*) AS total FROM thanhvienlop WHERE Malop = ?',
+      [classInfo.Malop],
+    );
+    if (Number(count.total) >= Number(classInfo.capacity)) {
+      await connection.rollback();
+      return response.status(409).json({ message: 'Lớp đã đủ số lượng sinh viên.' });
+    }
+
+    await connection.execute(
+      `INSERT INTO thanhvienlop (Malop, Masv, NgayThamGia, TrangThaiThanhVien)
+       VALUES (?, ?, CURRENT_DATE, 'Đang tham gia')`,
+      [classInfo.Malop, request.auth.sub],
+    );
+    await connection.commit();
+    return response.status(201).json({ message: 'Tham gia lớp thành công.' });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    if (error.code === 'ER_DUP_ENTRY') {
+      return response.status(409).json({ message: 'Bạn đã tham gia lớp này.' });
+    }
+    console.error('Join class error:', error.message);
+    return response.status(500).json({ message: 'Không thể tham gia lớp học.' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -3301,6 +3391,117 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
   }
 });
 
+app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
+  const { studentIds } = request.body || {};
+  if (!Array.isArray(studentIds) || studentIds.length === 0 || studentIds.length > 2000) {
+    return response.status(400).json({
+      message: 'Danh sách mã sinh viên phải có từ 1 đến 2.000 mã.',
+    });
+  }
+  if (studentIds.some((id) => typeof id !== 'string' || !id.trim() || id.trim().length > 64)) {
+    return response.status(400).json({
+      message: 'Danh sách chứa mã sinh viên không hợp lệ.',
+    });
+  }
+
+  const uniqueIdsByKey = new Map();
+  for (const studentId of studentIds) {
+    const normalizedId = studentId.trim();
+    const key = normalizedId.toUpperCase();
+    if (!uniqueIdsByKey.has(key)) uniqueIdsByKey.set(key, normalizedId);
+  }
+  const normalizedIds = [...uniqueIdsByKey.values()];
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [[event]] = await connection.execute(
+      `SELECT Masukien, Madv AS organizerId, Thoigianketthuc AS endTime,
+              Soluongtoida AS capacity, Trangthaisukien AS status
+       FROM sukien WHERE Masukien = ? FOR UPDATE`,
+      [request.params.eventId],
+    );
+    if (!event) {
+      await connection.rollback();
+      return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    if (!await managesUnit(connection, request.auth, event.organizerId)) {
+      await connection.rollback();
+      return response.status(403).json({ message: 'Bạn không phụ trách sự kiện này.' });
+    }
+    if (event.status === 'Đã đóng' || new Date(event.endTime) <= new Date()) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Sự kiện đã đóng hoặc đã kết thúc, không thể nhập sinh viên.',
+      });
+    }
+
+    const placeholders = normalizedIds.map(() => '?').join(', ');
+    const [students] = await connection.execute(
+      `SELECT Masv FROM sinhvien WHERE Masv IN (${placeholders})`,
+      normalizedIds,
+    );
+    const studentsByKey = new Map(
+      students.map((student) => [String(student.Masv).toUpperCase(), String(student.Masv)]),
+    );
+    const unknownStudentIds = normalizedIds.filter(
+      (id) => !studentsByKey.has(id.toUpperCase()),
+    );
+    const validIds = normalizedIds
+      .map((id) => studentsByKey.get(id.toUpperCase()))
+      .filter(Boolean);
+
+    let alreadyRegisteredIds = new Set();
+    if (validIds.length > 0) {
+      const validPlaceholders = validIds.map(() => '?').join(', ');
+      const [registrations] = await connection.execute(
+        `SELECT Masv FROM dangkysukien
+         WHERE Masukien = ? AND Masv IN (${validPlaceholders})`,
+        [event.Masukien, ...validIds],
+      );
+      alreadyRegisteredIds = new Set(
+        registrations.map((registration) => String(registration.Masv)),
+      );
+    }
+    const newIds = validIds.filter((id) => !alreadyRegisteredIds.has(id));
+    const [[registrationCount]] = await connection.execute(
+      'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masukien = ?',
+      [event.Masukien],
+    );
+    const remainingCapacity = Number(event.capacity) - Number(registrationCount.total);
+    if (newIds.length > remainingCapacity) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: `Sự kiện chỉ còn ${Math.max(0, remainingCapacity)} chỗ trống; không có sinh viên nào được nhập.`,
+      });
+    }
+
+    for (let offset = 0; offset < newIds.length; offset += 250) {
+      const batch = newIds.slice(offset, offset + 250);
+      const values = batch.map(() => '(?, ?, NOW(), ?)').join(', ');
+      await connection.execute(
+        `INSERT INTO dangkysukien
+         (Masukien, Masv, Ngaydangky, Trangthaidangky)
+         VALUES ${values}`,
+        batch.flatMap((studentId) => [event.Masukien, studentId, 'Đã duyệt']),
+      );
+    }
+
+    await connection.commit();
+    return response.status(200).json({
+      importedCount: newIds.length,
+      alreadyRegisteredCount: alreadyRegisteredIds.size,
+      unknownStudentIds,
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Import event students error:', error.message);
+    return response.status(500).json({ message: 'Không thể nhập sinh viên vào sự kiện.' });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 // Lấy danh sách đơn vị để dùng trong biểu mẫu sự kiện.
 app.get('/api/organizer/units', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   try {
@@ -3606,6 +3807,84 @@ app.get('/api/certificates/:certificateId', async (request, response) => {
     console.error('Verify certificate error:', error.message);
     return response.status(500).json({
       message: 'Không thể xác minh chứng nhận.',
+    });
+  }
+});
+
+// Sinh viên chỉ xem chứng nhận đã cấp gắn với mã tài khoản trong token.
+app.get('/api/student/certificates', requireAuth, requireRole('Sinh viên', 'student'), async (request, response) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT cn.Machungnhan AS id, cn.Masukien AS eventId,
+              sk.Tensukien AS eventName, cn.Ngaycap AS issuedAt,
+              cn.Noidung AS content, cn.Trangthaichungnhan AS status
+       FROM chungnhan cn
+       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
+       WHERE cn.Masv = ? AND cn.Trangthaichungnhan = 'Đã cấp'
+       ORDER BY cn.Ngaycap DESC, cn.Machungnhan DESC`,
+      [request.auth.sub],
+    );
+    return response.json({ items: rows });
+  } catch (error) {
+    console.error('Student certificates error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải danh sách chứng nhận.',
+    });
+  }
+});
+
+// Tạo lại PDF từ thông tin chứng nhận và chỉ cho đúng chủ sở hữu tải xuống.
+app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole('Sinh viên', 'student'), async (request, response) => {
+  try {
+    const [[certificate]] = await pool.execute(
+      `SELECT cn.Machungnhan AS certificateId,
+              COALESCE(nd.Hoten, cn.Masv) AS studentName,
+              cn.Masv AS studentId, sk.Tensukien AS eventName,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime,
+              sk.Diadiem AS location, cn.Ngaycap AS issuedAt
+       FROM chungnhan cn
+       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
+       LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
+       WHERE cn.Machungnhan = ?
+         AND cn.Masv = ?
+         AND cn.Trangthaichungnhan = 'Đã cấp'
+       LIMIT 1`,
+      [request.params.certificateId, request.auth.sub],
+    );
+    if (!certificate) {
+      return response.status(404).json({ message: 'Không tìm thấy chứng nhận.' });
+    }
+
+    const publicBaseUrl = (
+      process.env.PUBLIC_API_BASE_URL
+      || `${request.protocol}://${request.get('host')}`
+    ).replace(/\/+$/, '');
+    const verificationUrl =
+      `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificate.certificateId)}`;
+    const pdf = await createCertificatePdf({
+      studentName: certificate.studentName,
+      studentId: certificate.studentId,
+      eventName: certificate.eventName,
+      startTime: certificate.startTime,
+      endTime: certificate.endTime,
+      location: certificate.location,
+      certificateId: certificate.certificateId,
+      issuedAt: certificate.issuedAt,
+      verificationUrl,
+    });
+
+    response.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${certificate.certificateId}.pdf"`,
+      'Content-Length': pdf.length,
+      'Cache-Control': 'private, no-store',
+    });
+    return response.send(pdf);
+  } catch (error) {
+    console.error('Download student certificate error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải chứng nhận.',
     });
   }
 });
@@ -4155,6 +4434,7 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
 
 ensureAttendanceLocationColumns()
   .then(async () => {
+    await ensurePasswordResetChallengesTable();
     await ensureAttendanceDeviceClaimsTable();
     await ensureEventAttendanceTable();
     await ensureEventAttendanceSessionsTable();

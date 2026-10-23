@@ -1,9 +1,12 @@
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../controllers/reports_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../core/utils/attendance_report_export.dart';
 import '../../widgets/app_search_field.dart';
 import '../../widgets/statistics_charts.dart';
 
@@ -16,6 +19,54 @@ class ReportsPage extends StatefulWidget {
 
 class _ReportsPageState extends State<ReportsPage> {
   String _query = '';
+  bool _exporting = false;
+
+  Future<void> _exportReport(ReportsController controller) async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    try {
+      final summary = controller.summary;
+      final bytes = buildAttendanceReportWorkbook(
+        total: _number(summary['total']),
+        present: _number(summary['present']),
+        late: _number(summary['late']),
+        absent: _number(summary['absent']),
+        dailyItems: controller.dailyItems.where((item) {
+          final query = _query.trim().toLowerCase();
+          return query.isEmpty ||
+              item.values.join(' ').toLowerCase().contains(query);
+        }).toList(),
+      );
+      final now = DateTime.now();
+      final fileName =
+          'bao_cao_diem_danh_${now.year}'
+          '${now.month.toString().padLeft(2, '0')}'
+          '${now.day.toString().padLeft(2, '0')}.xlsx';
+      final path = await FilePicker.saveFile(
+        dialogTitle: 'Lưu báo cáo điểm danh',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        bytes: Uint8List.fromList(bytes),
+      );
+      if (!mounted) return;
+      if (kIsWeb) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Báo cáo đã được tải xuống.')),
+        );
+      } else if (path != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Đã lưu báo cáo tại $path')));
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Không thể xuất báo cáo: $error')));
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
 
   /// Hiển thị thống kê điểm danh được truy vấn trực tiếp từ backend.
   @override
@@ -43,9 +94,49 @@ class _ReportsPageState extends State<ReportsPage> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(20),
           children: [
-            Text(
-              'Báo cáo & thống kê',
-              style: AppTextStyles.displayLg(colors.foreground),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final exportButton = OutlinedButton.icon(
+                  onPressed:
+                      _exporting ||
+                          controller.loading.value ||
+                          controller.error.value.isNotEmpty
+                      ? null
+                      : () => _exportReport(controller),
+                  icon: _exporting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download_outlined),
+                  label: Text(_exporting ? 'Đang xuất...' : 'Xuất Excel'),
+                );
+                if (constraints.maxWidth < 480) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Báo cáo & thống kê',
+                        style: AppTextStyles.displayLg(colors.foreground),
+                      ),
+                      const SizedBox(height: 8),
+                      exportButton,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Báo cáo & thống kê',
+                        style: AppTextStyles.displayLg(colors.foreground),
+                      ),
+                    ),
+                    exportButton,
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 6),
             Text(

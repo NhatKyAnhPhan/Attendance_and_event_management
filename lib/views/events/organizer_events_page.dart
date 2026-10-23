@@ -1,3 +1,5 @@
+import 'package:excel/excel.dart' hide Border;
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:geolocator/geolocator.dart';
@@ -8,6 +10,7 @@ import '../../controllers/auth_controller.dart';
 import '../../controllers/organizer_events_controller.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../core/utils/excel_file_decoder.dart';
 import '../../data/models/event_model.dart';
 import '../../widgets/app_search_field.dart';
 import '../../widgets/student_roster_list.dart';
@@ -47,6 +50,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
   bool _sendingCertificates = false;
+  final Set<String> _importingEventIds = {};
 
   // Hiển thị danh sách sự kiện cùng các thao tác theo vai trò.
   @override
@@ -657,6 +661,20 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               !event.isClosed &&
               event.endTime.isAfter(DateTime.now()))
             OutlinedButton.icon(
+              onPressed: _importingEventIds.contains(event.id)
+                  ? null
+                  : () => _importEventStudents(context, controller, event),
+              icon: const Icon(Icons.upload_file_outlined),
+              label: Text(
+                _importingEventIds.contains(event.id)
+                    ? 'Đang nhập...'
+                    : 'Nhập Excel',
+              ),
+            ),
+          if (Get.find<AuthController>().canManageEvents &&
+              !event.isClosed &&
+              event.endTime.isAfter(DateTime.now()))
+            OutlinedButton.icon(
               onPressed: () =>
                   _showEventAttendanceQr(dialogContext, controller, event),
               icon: const Icon(Icons.qr_code_2),
@@ -684,6 +702,170 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _importEventStudents(
+    BuildContext context,
+    OrganizerEventsController controller,
+    OrganizerEventSummary event,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Định dạng file Excel'),
+        content: const Text(
+          'Chọn file .xlsx có tiêu đề cột MSSV, Mã SV hoặc Mã sinh viên ở dòng đầu. '
+          'Nếu mã sinh viên có số 0 ở đầu, hãy định dạng cột đó là Văn bản trong Excel.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Chọn file'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    FilePickerResult? selection;
+    try {
+      selection = await FilePicker.pickFiles(
+        dialogTitle: 'Chọn Excel có cột MSSV hoặc Mã sinh viên',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        allowMultiple: false,
+        withData: true,
+      );
+    } on Exception catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể mở file Excel: $exception')),
+      );
+      return;
+    }
+    if (selection == null || selection.files.isEmpty || !context.mounted) {
+      return;
+    }
+
+    final bytes = selection.files.single.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không đọc được nội dung file Excel.')),
+      );
+      return;
+    }
+
+    try {
+      setState(() => _importingEventIds.add(event.id));
+      final workbook = decodeExcelWorkbook(bytes);
+      if (workbook.tables.isEmpty) {
+        throw const FormatException('File Excel không có trang tính dữ liệu.');
+      }
+      final rows = workbook.tables.values.first.rows;
+      if (rows.isEmpty) {
+        throw const FormatException('Trang tính Excel không có dữ liệu.');
+      }
+
+      final header = rows.first.map(_excelCellText).toList();
+      final idColumn = header.indexWhere(_isStudentIdHeader);
+      if (idColumn < 0) {
+        throw const FormatException(
+          'Cột mã sinh viên cần có tiêu đề MSSV, Mã SV hoặc Mã sinh viên.',
+        );
+      }
+
+      final uniqueIds = <String>{};
+      final studentIds = <String>[];
+      var duplicateRows = 0;
+      for (final row in rows.skip(1)) {
+        if (idColumn >= row.length) continue;
+        final studentId = _excelCellText(row[idColumn]).trim();
+        if (studentId.isEmpty) continue;
+        if (uniqueIds.add(studentId.toUpperCase())) {
+          studentIds.add(studentId);
+        } else {
+          duplicateRows++;
+        }
+      }
+      if (studentIds.isEmpty) {
+        throw const FormatException(
+          'Không tìm thấy mã sinh viên nào trong file Excel.',
+        );
+      }
+      if (studentIds.length > 2000) {
+        throw const FormatException(
+          'Mỗi lần chỉ có thể nhập tối đa 2.000 sinh viên.',
+        );
+      }
+
+      final result = await controller.importEventStudents(
+        eventId: event.id,
+        studentIds: studentIds,
+      );
+      await controller.load();
+      if (!context.mounted) return;
+
+      final details = <String>[
+        'Đã thêm: ${result.importedCount} sinh viên.',
+        'Đã đăng ký trước đó: ${result.alreadyRegisteredCount} sinh viên.',
+        if (duplicateRows > 0) 'Mã trùng trong file: $duplicateRows dòng.',
+        if (result.unknownStudentIds.isNotEmpty)
+          'Không tìm thấy trong hệ thống (${result.unknownStudentIds.length}): '
+              '${result.unknownStudentIds.take(10).join(', ')}'
+              '${result.unknownStudentIds.length > 10 ? ', ...' : ''}',
+      ];
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Kết quả nhập sinh viên · ${event.name}'),
+          content: Text(details.join('\n')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+    } on FormatException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể nhập sinh viên: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _importingEventIds.remove(event.id));
+    }
+  }
+
+  static String _excelCellText(Data? cell) {
+    final value = cell?.value;
+    return switch (value) {
+      TextCellValue(:final value) =>
+        value.text ??
+            value.children?.map((span) => span.text ?? '').join() ??
+            '',
+      _ => value?.toString() ?? '',
+    };
+  }
+
+  static bool _isStudentIdHeader(String header) {
+    final normalized = header.toLowerCase().replaceAll(RegExp(r'[\s_.-]'), '');
+    return const {
+      'mssv',
+      'masv',
+      'mãsv',
+      'mãsinhviên',
+      'studentid',
+      'studentcode',
+    }.contains(normalized);
   }
 
   Future<void> _showEventAttendanceQr(

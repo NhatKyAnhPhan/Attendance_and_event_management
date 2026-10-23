@@ -28,6 +28,24 @@ endpoint. On Windows the API uses Arial by default; on Linux/macOS set
 `CERTIFICATE_FONT_PATH` to a Vietnamese-capable TTF font if the system default
 font candidates are unavailable.
 
+## Password recovery
+
+The login page sends a six-digit, single-use code to the account email. Codes
+expire after 10 minutes, allow at most five verification attempts, and can be
+requested once per minute. A verified code grants a separate, short-lived
+single-use reset token; the password is hashed by the API and never sent by
+email.
+
+Configure the SMTP variables above and set `PASSWORD_RESET_SECRET` in
+`backend_node/.env` to an independent random value of at least 32 bytes. Replace
+the example secrets in `.env.example` before use; do not commit `.env` or real
+SMTP credentials. Restart the backend after changing environment settings.
+
+Recovery uses the email currently stored for the account. Profile email edits
+are not verified yet, so users should use an email they can access; before
+production, add email verification (or have an administrator confirm school
+addresses) and require verification when an email is changed.
+
 ## Face attendance test
 
 The Flutter app bundles the consented `facedataset/Dieu/`,

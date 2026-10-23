@@ -26,6 +26,24 @@ class AuthController extends GetxController {
   final RxBool isReady = false.obs;
   final AuthRepository _authRepository = AuthRepository();
 
+  Future<void> requestPasswordReset(String email) =>
+      _authRepository.requestPasswordReset(email);
+
+  Future<String> verifyPasswordResetCode({
+    required String email,
+    required String code,
+  }) => _authRepository.verifyPasswordResetCode(email: email, code: code);
+
+  Future<void> completePasswordReset({
+    required String email,
+    required String resetToken,
+    required String newPassword,
+  }) => _authRepository.completePasswordReset(
+    email: email,
+    resetToken: resetToken,
+    newPassword: newPassword,
+  );
+
   @override
   void onInit() {
     super.onInit();

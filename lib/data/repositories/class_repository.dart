@@ -37,6 +37,10 @@ class ClassRepository {
         .toList();
   }
 
+  Future<void> joinClass(String classCode) async {
+    await _client.post(ApiEndpoints.joinClass, data: {'classCode': classCode});
+  }
+
   Future<StudentClassDetail> getStudentClassDetail(String classId) async {
     final body = await _client.get('/api/classes/$classId/detail');
     return StudentClassDetail.fromJson(body);

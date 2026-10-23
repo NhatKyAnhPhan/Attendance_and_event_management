@@ -41,6 +41,17 @@ class EventRepository {
         .toList();
   }
 
+  Future<EventStudentImportResult> importEventStudents({
+    required String eventId,
+    required List<String> studentIds,
+  }) async {
+    final body = await _client.post(
+      ApiEndpoints.importEventStudents(eventId),
+      data: {'studentIds': studentIds},
+    );
+    return EventStudentImportResult.fromJson(body);
+  }
+
   // Gửi yêu cầu đăng ký và trạng thái xác nhận trùng lịch học.
   Future<void> register(
     String eventId, {

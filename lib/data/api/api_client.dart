@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 
@@ -49,7 +51,7 @@ class ApiClient {
     if (token == null || token.isEmpty) {
       _dio.options.headers.remove('Authorization');
     } else {
-      _dio.options.headers['Authorization'] = 'Bearer $token';
+      _dio.options.headers['Authorization'] = 'Bearer $_sharedToken';
     }
   }
 
@@ -79,6 +81,53 @@ class ApiClient {
 
   Future<Map<String, dynamic>> get(String path) async {
     return _request(() => _dio.get<Map<String, dynamic>>(path));
+  }
+
+  // Gọi API có xác thực và trả về nội dung nhị phân như PDF hoặc tệp Excel.
+  Future<Uint8List> getBytes(String path) async {
+    if (!isConfigured) {
+      throw const ApiException('Chưa cấu hình API_BASE_URL.');
+    }
+
+    try {
+      if (_sharedToken != null && _sharedToken!.isNotEmpty) {
+        _dio.options.headers['Authorization'] = 'Bearer $_sharedToken';
+      }
+      final response = await _dio.get<List<int>>(
+        path,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = response.data;
+      if (bytes == null || bytes.isEmpty) {
+        throw const ApiException('API trả về tệp rỗng.');
+      }
+      return Uint8List.fromList(bytes);
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401 &&
+          error.requestOptions.path != '/api/auth/login') {
+        await onUnauthorized?.call();
+      }
+      Object? responseData = error.response?.data;
+      if (responseData is List<int>) {
+        try {
+          responseData = jsonDecode(utf8.decode(responseData));
+        } on FormatException {
+          responseData = null;
+        }
+      }
+      final message = responseData is Map
+          ? (responseData['message']?.toString() ?? 'Yêu cầu API thất bại.')
+          : error.response == null
+          ? 'Không thể kết nối tới máy chủ.'
+          : 'Máy chủ trả về lỗi HTTP ${error.response?.statusCode}.';
+      throw ApiException(
+        message,
+        statusCode: error.response?.statusCode,
+        data: responseData is Map
+            ? Map<String, dynamic>.from(responseData)
+            : null,
+      );
+    }
   }
 
   Future<Map<String, dynamic>> postMultipart(String path, FormData data) async {

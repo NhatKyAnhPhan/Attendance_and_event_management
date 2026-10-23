@@ -76,6 +76,16 @@ class OrganizerEventsController extends GetxController {
     return _repository.getEventStudents(eventId);
   }
 
+  Future<EventStudentImportResult> importEventStudents({
+    required String eventId,
+    required List<String> studentIds,
+  }) {
+    return _repository.importEventStudents(
+      eventId: eventId,
+      studentIds: studentIds,
+    );
+  }
+
   // Gọi repository để tạo, sửa hoặc xóa rồi tải lại danh sách.
   Future<void> createEvent({
     required String name,

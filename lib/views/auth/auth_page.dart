@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -22,7 +24,10 @@ class _AuthPageState extends State<AuthPage> {
   _AuthStep _step = _AuthStep.login;
   bool _showPw = false;
   bool _loading = false;
+  int _resendSeconds = 0;
+  Timer? _resendTimer;
   String _error = '';
+  String? _resetToken;
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _newPwCtrl = TextEditingController();
@@ -40,6 +45,7 @@ class _AuthPageState extends State<AuthPage> {
     _passwordCtrl.dispose();
     _newPwCtrl.dispose();
     _confirmPwCtrl.dispose();
+    _resendTimer?.cancel();
     for (final c in _otpCtrls) {
       c.dispose();
     }
@@ -74,28 +80,43 @@ class _AuthPageState extends State<AuthPage> {
     }
   }
 
-  // Kiểm tra email và chuyển sang bước nhập mã OTP.
+  // Gửi mã OTP đến email rồi mới mở bước xác nhận.
   Future<void> _handleForgot() async {
-    if (_emailCtrl.text.isEmpty) {
-      setState(() => _error = 'Vui lòng nhập email.');
+    final email = _emailCtrl.text.trim();
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      setState(() => _error = 'Vui lòng nhập email hợp lệ.');
       return;
     }
     setState(() {
       _error = '';
       _loading = true;
     });
-    await Future.delayed(const Duration(milliseconds: 800));
+    try {
+      await Get.find<AuthController>().requestPasswordReset(email);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _loading = false;
       _step = _AuthStep.otp;
+      _resetToken = null;
+      for (final controller in _otpCtrls) {
+        controller.clear();
+      }
     });
+    _startResendCooldown();
   }
 
-  // Ghép sáu ô OTP, kiểm tra đủ mã rồi chuyển sang bước đổi mật khẩu.
+  // Xác minh OTP với backend trước khi cho phép tạo mật khẩu mới.
   Future<void> _handleOtp() async {
     final code = _otpCtrls.map((c) => c.text).join();
-    if (code.length < 6) {
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
       setState(() => _error = 'Vui lòng nhập đủ 6 chữ số OTP.');
       return;
     }
@@ -103,7 +124,19 @@ class _AuthPageState extends State<AuthPage> {
       _error = '';
       _loading = true;
     });
-    await Future.delayed(const Duration(milliseconds: 700));
+    try {
+      _resetToken = await Get.find<AuthController>().verifyPasswordResetCode(
+        email: _emailCtrl.text.trim(),
+        code: code,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _loading = false;
@@ -111,7 +144,7 @@ class _AuthPageState extends State<AuthPage> {
     });
   }
 
-  // Kiểm tra mật khẩu mới trước khi hoàn tất quy trình khôi phục tài khoản.
+  // Kiểm tra mật khẩu và đổi mật khẩu bằng reset token dùng một lần.
   Future<void> _handleNewPassword() async {
     if (_newPwCtrl.text.length < 8) {
       setState(() => _error = 'Mật khẩu phải có ít nhất 8 ký tự.');
@@ -125,11 +158,51 @@ class _AuthPageState extends State<AuthPage> {
       _error = '';
       _loading = true;
     });
-    await Future.delayed(const Duration(milliseconds: 700));
+    final resetToken = _resetToken;
+    if (resetToken == null) {
+      setState(() {
+        _loading = false;
+        _error = 'Mã xác nhận đã hết hạn. Vui lòng yêu cầu mã mới.';
+      });
+      return;
+    }
+    try {
+      await Get.find<AuthController>().completePasswordReset(
+        email: _emailCtrl.text.trim(),
+        resetToken: resetToken,
+        newPassword: _newPwCtrl.text,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _loading = false;
       _step = _AuthStep.success;
+      _resetToken = null;
+    });
+  }
+
+  void _startResendCooldown() {
+    _resendTimer?.cancel();
+    setState(() => _resendSeconds = 60);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _resendSeconds -= 1;
+        if (_resendSeconds <= 0) {
+          _resendSeconds = 0;
+          timer.cancel();
+        }
+      });
     });
   }
 
@@ -392,19 +465,13 @@ class _AuthPageState extends State<AuthPage> {
         ),
         const SizedBox(height: 16),
         Center(
-          child: Text.rich(
-            TextSpan(
-              style: AppTextStyles.bodySm(c.mutedForeground),
-              children: [
-                const TextSpan(text: 'Chưa nhận được mã? '),
-                TextSpan(
-                  text: 'Gửi lại (60s)',
-                  style: TextStyle(
-                    color: c.primary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+          child: TextButton(
+            onPressed: _loading || _resendSeconds > 0 ? null : _handleForgot,
+            child: Text(
+              _resendSeconds > 0
+                  ? 'Chưa nhận được mã? Gửi lại (${_resendSeconds}s)'
+                  : 'Chưa nhận được mã? Gửi lại',
+              style: AppTextStyles.bodySm(c.primary),
             ),
           ),
         ),

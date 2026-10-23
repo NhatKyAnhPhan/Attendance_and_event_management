@@ -38,6 +38,11 @@ class ClassesController extends GetxController {
     }
   }
 
+  Future<void> joinClass(String classCode) async {
+    await _repository.joinClass(classCode);
+    await load();
+  }
+
   Future<Map<String, dynamic>> getFeedback(String classId) {
     return _repository.getClassFeedback(classId);
   }
