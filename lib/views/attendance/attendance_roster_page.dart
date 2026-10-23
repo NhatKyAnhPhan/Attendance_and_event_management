@@ -1,13 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 
+import '../../controllers/auth_controller.dart';
+import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/api/api_client.dart';
 import '../../data/api/endpoints.dart';
 import '../../widgets/app_badge.dart';
+import 'student_attendance_detail_page.dart';
 
 class AttendanceRosterPage extends StatefulWidget {
   final String sessionId;
@@ -28,6 +32,7 @@ class AttendanceRosterPage extends StatefulWidget {
 class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
   final _client = ApiClient();
   final _searchController = TextEditingController();
+  final _pageScrollController = ScrollController();
   Timer? _refreshTimer;
   List<Map<String, dynamic>> _students = [];
   Map<String, dynamic>? _session;
@@ -53,6 +58,7 @@ class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _searchController.dispose();
+    _pageScrollController.dispose();
     super.dispose();
   }
 
@@ -94,10 +100,7 @@ class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
   }
 
   /// Lưu trạng thái thủ công của sinh viên rồi làm mới danh sách.
-  Future<void> _setStatus(
-    Map<String, dynamic> student,
-    String status,
-  ) async {
+  Future<void> _setStatus(Map<String, dynamic> student, String status) async {
     final studentId = student['studentId']?.toString() ?? '';
     if (_saving || studentId.isEmpty) return;
     setState(() {
@@ -144,13 +147,18 @@ class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
             ),
             ListTile(
               leading: const Icon(Icons.schedule),
-              title: const Text('Đi trễ'),
+              title: const Text('Đi muộn'),
               onTap: () => Navigator.pop(context, 'late'),
             ),
             ListTile(
               leading: const Icon(Icons.cancel_outlined),
               title: const Text('Vắng mặt'),
               onTap: () => Navigator.pop(context, 'absent'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.event_busy_outlined),
+              title: const Text('Vắng có phép'),
+              onTap: () => Navigator.pop(context, 'excused'),
             ),
             const SizedBox(height: 8),
           ],
@@ -162,12 +170,12 @@ class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
 
   /// Đếm số sinh viên có một trạng thái điểm danh cụ thể.
   static int _count(List<Map<String, dynamic>> students, String status) =>
-      students
-          .where(
-            (student) =>
-                (student['attendanceStatus']?.toString() ?? '') == status,
-          )
-          .length;
+      students.where((student) {
+        final attendanceStatus = student['attendanceStatus']?.toString() ?? '';
+        return status == 'Đi trễ'
+            ? attendanceStatus == 'Đi trễ' || attendanceStatus == 'Đi muộn'
+            : attendanceStatus == status;
+      }).length;
 
   /// Ánh xạ trạng thái từ API sang màu badge của giao diện.
   static BadgeStatus _badgeStatus(String? status) {
@@ -175,9 +183,12 @@ class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
       case 'Có mặt':
         return BadgeStatus.present;
       case 'Đi trễ':
+      case 'Đi muộn':
         return BadgeStatus.late;
       case 'Vắng mặt':
         return BadgeStatus.absent;
+      case 'Vắng có phép':
+        return BadgeStatus.excused;
       default:
         return BadgeStatus.pending;
     }
@@ -190,11 +201,13 @@ class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
     final filteredStudents = _students.where((student) {
       final query = _query.trim().toLowerCase();
       return query.isEmpty ||
-          '${student['studentName']} ${student['studentId']} ${student['email']}'
+          '${student['studentName']} ${student['studentId']}'
               .toLowerCase()
               .contains(query);
     }).toList();
     final canEdit = _session?['canEdit'] == true;
+    final canViewStudentDetails =
+        Get.find<AuthController>().role.value != Role.student;
 
     return Scaffold(
       backgroundColor: c.background,
@@ -212,194 +225,233 @@ class _AttendanceRosterPageState extends State<AttendanceRosterPage> {
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _loadRoster,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(20),
-                children: [
-                  if (_session != null) ...[
-                    Text(
-                      _session!['sessionName']?.toString().isNotEmpty == true
-                          ? _session!['sessionName'].toString()
-                          : widget.title,
-                      style: AppTextStyles.displaySm(c.foreground),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${_session!['classId'] ?? ''} · ${_session!['className'] ?? ''}',
-                      style: AppTextStyles.bodySm(c.mutedForeground),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _CountChip(
-                          label: 'Có mặt',
-                          count: _count(_students, 'Có mặt'),
-                          status: BadgeStatus.present,
-                        ),
-                        _CountChip(
-                          label: 'Đi trễ',
-                          count: _count(_students, 'Đi trễ'),
-                          status: BadgeStatus.late,
-                        ),
-                        _CountChip(
-                          label: 'Vắng mặt',
-                          count: _count(_students, 'Vắng mặt'),
-                          status: BadgeStatus.absent,
-                        ),
-                        _CountChip(
-                          label: 'Chưa ghi nhận',
-                          count: _count(_students, ''),
-                          status: BadgeStatus.pending,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Icon(
-                          canEdit ? Icons.sync : Icons.lock_outline,
-                          size: 16,
-                          color: canEdit ? c.success : c.mutedForeground,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            canEdit
-                                ? 'Tự cập nhật mỗi 3 giây · Phiên đang mở'
-                                : 'Phiên đã đóng · Chỉ xem danh sách',
-                            style: AppTextStyles.bodyXs(c.mutedForeground),
+              child: Scrollbar(
+                controller: _pageScrollController,
+                thumbVisibility: true,
+                interactive: true,
+                child: ListView(
+                  controller: _pageScrollController,
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(20),
+                  children: [
+                    if (_session != null) ...[
+                      Text(
+                        _session!['sessionName']?.toString().isNotEmpty == true
+                            ? _session!['sessionName'].toString()
+                            : widget.title,
+                        style: AppTextStyles.displaySm(c.foreground),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${_session!['classId'] ?? ''} · ${_session!['className'] ?? ''}',
+                        style: AppTextStyles.bodySm(c.mutedForeground),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _CountChip(
+                            label: 'Có mặt',
+                            count: _count(_students, 'Có mặt'),
+                            status: BadgeStatus.present,
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: c.danger.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
+                          _CountChip(
+                            label: 'Đi muộn',
+                            count: _count(_students, 'Đi trễ'),
+                            status: BadgeStatus.late,
+                          ),
+                          _CountChip(
+                            label: 'Vắng mặt',
+                            count: _count(_students, 'Vắng mặt'),
+                            status: BadgeStatus.absent,
+                          ),
+                          _CountChip(
+                            label: 'Vắng có phép',
+                            count: _count(_students, 'Vắng có phép'),
+                            status: BadgeStatus.excused,
+                          ),
+                          _CountChip(
+                            label: 'Chưa ghi nhận',
+                            count: _count(_students, ''),
+                            status: BadgeStatus.pending,
+                          ),
+                        ],
                       ),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: c.danger),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Tìm tên hoặc mã sinh viên',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _query.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _query = '');
-                              },
-                              icon: const Icon(Icons.close),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Icon(
+                            canEdit ? Icons.sync : Icons.lock_outline,
+                            size: 16,
+                            color: canEdit ? c.success : c.mutedForeground,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              canEdit
+                                  ? 'Tự cập nhật mỗi 3 giây · Phiên đang mở'
+                                  : 'Phiên đã đóng · Chỉ xem danh sách',
+                              style: AppTextStyles.bodyXs(c.mutedForeground),
                             ),
-                      border: const OutlineInputBorder(),
-                    ),
-                    onChanged: (value) => setState(() => _query = value),
-                  ),
-                  const SizedBox(height: 12),
-                  if (_loading && _session != null)
-                    const LinearProgressIndicator(),
-                  if (filteredStudents.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 36),
-                      child: Center(
-                        child: Text(
-                          _students.isEmpty
-                              ? 'Lớp chưa có sinh viên trong danh sách.'
-                              : 'Không tìm thấy sinh viên phù hợp.',
-                          style: AppTextStyles.bodySm(c.mutedForeground),
-                        ),
-                      ),
-                    )
-                  else
-                    ...filteredStudents.map((student) {
-                      final status =
-                          student['attendanceStatus']?.toString() ?? '';
-                      final name =
-                          student['studentName']?.toString().trim() ?? '';
-                      final checkedInAt = DateTime.tryParse(
-                        student['checkedInAt']?.toString() ?? '',
-                      );
-                      final subtitle = [
-                        student['studentId']?.toString() ?? '',
-                        if (checkedInAt != null)
-                          DateFormat('HH:mm:ss').format(checkedInAt.toLocal()),
-                      ].where((value) => value.isNotEmpty).join(' · ');
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
                           ),
-                          child: Row(
-                            children: [
-                              CircleAvatar(
-                                child: Text(
-                                  name.isEmpty
-                                      ? '?'
-                                      : name.characters.first.toUpperCase(),
-                                ),
+                        ],
+                      ),
+                    ],
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: c.danger.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(_error!, style: TextStyle(color: c.danger)),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Tìm tên hoặc mã sinh viên',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _query.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _query = '');
+                                },
+                                icon: const Icon(Icons.close),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      name.isEmpty ? 'Sinh viên' : name,
-                                      style: AppTextStyles.bodyMd(c.foreground),
-                                    ),
-                                    Text(
-                                      subtitle,
-                                      style: AppTextStyles.bodyXs(
-                                        c.mutedForeground,
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (value) => setState(() => _query = value),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_loading && _session != null)
+                      const LinearProgressIndicator(),
+                    if (filteredStudents.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 36),
+                        child: Center(
+                          child: Text(
+                            _students.isEmpty
+                                ? 'Lớp chưa có sinh viên trong danh sách.'
+                                : 'Không tìm thấy sinh viên phù hợp.',
+                            style: AppTextStyles.bodySm(c.mutedForeground),
+                          ),
+                        ),
+                      )
+                    else
+                      ...filteredStudents.map((student) {
+                        final status =
+                            student['attendanceStatus']?.toString() ?? '';
+                        final name =
+                            student['studentName']?.toString().trim() ?? '';
+                        final checkedInAt = DateTime.tryParse(
+                          student['checkedInAt']?.toString() ?? '',
+                        );
+                        final subtitle = [
+                          student['studentId']?.toString() ?? '',
+                          if (checkedInAt != null)
+                            DateFormat('HH:mm:ss')
+                                .format(checkedInAt.toLocal()),
+                        ].where((value) => value.isNotEmpty).join(' · ');
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  child: Text(
+                                    name.isEmpty
+                                        ? '?'
+                                        : name.characters.first.toUpperCase(),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: canViewStudentDetails
+                                        ? () => Navigator.of(context).push(
+                                            MaterialPageRoute<void>(
+                                              builder: (_) =>
+                                                  StudentAttendanceDetailPage(
+                                                    student: student,
+                                                    contextTitle: widget.title,
+                                                  ),
+                                            ),
+                                          )
+                                        : null,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 6,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            name.isEmpty ? 'Sinh viên' : name,
+                                            style: AppTextStyles.bodyMd(
+                                              c.foreground,
+                                            ),
+                                          ),
+                                          Text(
+                                            subtitle,
+                                            style: AppTextStyles.bodyXs(
+                                              c.mutedForeground,
+                                            ),
+                                          ),
+                                          if (canViewStudentDetails)
+                                            Text(
+                                              'Xem chi tiết',
+                                              style: AppTextStyles.bodyXs(
+                                                c.primary,
+                                              ),
+                                            ),
+                                        ],
                                       ),
                                     ),
-                                  ],
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              if (status.isEmpty)
-                                const AppBadge(
-                                  label: 'Chưa điểm danh',
-                                  status: BadgeStatus.pending,
-                                )
-                              else
-                                AppBadge(
-                                  label: status,
-                                  status: _badgeStatus(status),
-                                ),
-                              if (canEdit) ...[
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  tooltip: status.isEmpty
-                                      ? 'Điểm danh thủ công'
-                                      : 'Điều chỉnh trạng thái',
-                                  onPressed: _saving
-                                      ? null
-                                      : () => _showStatusPicker(student),
-                                  icon: const Icon(Icons.edit_note),
-                                ),
+                                const SizedBox(width: 8),
+                                if (status.isEmpty)
+                                  const AppBadge(
+                                    label: 'Chưa điểm danh',
+                                    status: BadgeStatus.pending,
+                                  )
+                                else
+                                  AppBadge(
+                                    label: status == 'Đi trễ'
+                                        ? 'Đi muộn'
+                                        : status,
+                                    status: _badgeStatus(status),
+                                  ),
+                                if (canEdit) ...[
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    tooltip: status.isEmpty
+                                        ? 'Điểm danh thủ công'
+                                        : 'Điều chỉnh trạng thái',
+                                    onPressed: _saving
+                                        ? null
+                                        : () => _showStatusPicker(student),
+                                    icon: const Icon(Icons.edit_note),
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      );
-                    }),
-                ],
+                        );
+                      }),
+                  ],
+                ),
               ),
             ),
     );

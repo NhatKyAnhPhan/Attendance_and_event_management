@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
@@ -143,60 +144,290 @@ class _StudentCertificatesPageState extends State<StudentCertificatesPage> {
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(color: colors.border),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.workspace_premium_outlined, color: colors.primary),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        eventName,
-                        style: AppTextStyles.bodyMd(colors.foreground),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Mã chứng nhận: $id',
-                        style: AppTextStyles.bodySm(colors.mutedForeground),
-                      ),
-                      if (issuedAt != null) ...[
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openCertificateDetails(item),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.workspace_premium_outlined, color: colors.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          eventName,
+                          style: AppTextStyles.bodyMd(colors.foreground),
+                        ),
                         const SizedBox(height: 4),
                         Text(
-                          'Ngày cấp: ${DateFormat('dd/MM/yyyy').format(issuedAt.toLocal())}',
+                          'Mã chứng nhận: $id',
                           style: AppTextStyles.bodySm(colors.mutedForeground),
                         ),
+                        if (issuedAt != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Ngày cấp: ${DateFormat('dd/MM/yyyy').format(issuedAt.toLocal())}',
+                            style: AppTextStyles.bodySm(colors.mutedForeground),
+                          ),
+                        ],
                       ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.chevron_right, color: colors.mutedForeground),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton.icon(
+                  onPressed: _downloadingId == null
+                      ? () => _downloadCertificate(item)
+                      : null,
+                  icon: isDownloading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download_outlined),
+                  label: Text(isDownloading ? 'Đang tải...' : 'Tải PDF'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openCertificateDetails(Map<String, dynamic> certificate) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _StudentCertificateDetailsPage(
+          certificate: Map<String, dynamic>.from(certificate),
+        ),
+      ),
+    );
+  }
+}
+
+class _StudentCertificateDetailsPage extends StatefulWidget {
+  const _StudentCertificateDetailsPage({required this.certificate});
+
+  final Map<String, dynamic> certificate;
+
+  @override
+  State<_StudentCertificateDetailsPage> createState() =>
+      _StudentCertificateDetailsPageState();
+}
+
+class _StudentCertificateDetailsPageState
+    extends State<_StudentCertificateDetailsPage> {
+  late Future<Uint8List> _pdfFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _pdfFuture = _loadPdf();
+  }
+
+  String get _certificateId => widget.certificate['id']?.toString() ?? '';
+
+  Future<Uint8List> _loadPdf() =>
+      ApiClient().getBytes(ApiEndpoints.studentCertificatePdf(_certificateId));
+
+  void _retry() {
+    setState(() => _pdfFuture = _loadPdf());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    final eventName = widget.certificate['eventName']?.toString() ?? 'Sự kiện';
+    final eventId = widget.certificate['eventId']?.toString() ?? '';
+    final content = widget.certificate['content']?.toString() ?? '';
+    final startTime = DateTime.tryParse(
+      widget.certificate['startTime']?.toString() ?? '',
+    );
+    final endTime = DateTime.tryParse(
+      widget.certificate['endTime']?.toString() ?? '',
+    );
+    final issuedAt = DateTime.tryParse(
+      widget.certificate['issuedAt']?.toString() ?? '',
+    );
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Chi tiết chứng nhận')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            color: colors.card,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: colors.border),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.workspace_premium_outlined,
+                        color: colors.primary,
+                        size: 26,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          eventName,
+                          style: AppTextStyles.displaySm(colors.foreground),
+                        ),
+                      ),
                     ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: _downloadingId == null
-                    ? () => _downloadCertificate(item)
-                    : null,
-                icon: isDownloading
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.download_outlined),
-                label: Text(isDownloading ? 'Đang tải...' : 'Tải PDF'),
+                  const SizedBox(height: 18),
+                  _CertificateDetailRow(
+                    label: 'Mã chứng nhận',
+                    value: _certificateId,
+                    colors: colors,
+                  ),
+                  if (eventId.isNotEmpty)
+                    _CertificateDetailRow(
+                      label: 'Mã sự kiện',
+                      value: eventId,
+                      colors: colors,
+                    ),
+                  _CertificateDetailRow(
+                    label: 'Ngày cấp',
+                    value: issuedAt == null
+                        ? 'Chưa có thông tin'
+                        : DateFormat('dd/MM/yyyy HH:mm')
+                              .format(issuedAt.toLocal()),
+                    colors: colors,
+                  ),
+                  _CertificateDetailRow(
+                    label: 'Trạng thái',
+                    value: 'Đã cấp',
+                    colors: colors,
+                  ),
+                  if (startTime != null)
+                    _CertificateDetailRow(
+                      label: 'Thời gian sự kiện',
+                      value: endTime == null
+                          ? DateFormat('dd/MM/yyyy HH:mm')
+                                .format(startTime.toLocal())
+                          : '${DateFormat('dd/MM/yyyy HH:mm').format(startTime.toLocal())} - '
+                                '${DateFormat('dd/MM/yyyy HH:mm').format(endTime.toLocal())}',
+                      colors: colors,
+                    ),
+                  if ((widget.certificate['location']?.toString() ?? '')
+                      .isNotEmpty)
+                    _CertificateDetailRow(
+                      label: 'Địa điểm',
+                      value: widget.certificate['location'].toString(),
+                      colors: colors,
+                    ),
+                  if (content.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Nội dung',
+                      style: AppTextStyles.bodyXs(colors.mutedForeground),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      content,
+                      style: AppTextStyles.bodySm(colors.foreground),
+                    ),
+                  ],
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Mẫu chứng nhận đã cấp',
+            style: AppTextStyles.displaySm(colors.foreground),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 560,
+            child: FutureBuilder<Uint8List>(
+              future: _pdfFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError || !snapshot.hasData) {
+                  return _MessageCard(
+                    colors: colors,
+                    icon: Icons.picture_as_pdf_outlined,
+                    message:
+                        'Không thể tải mẫu chứng nhận: ${snapshot.error ?? 'Tệp rỗng.'}',
+                    onRetry: _retry,
+                  );
+                }
+                final pdfBytes = snapshot.data!;
+                return PdfPreview(
+                  build: (_) async => pdfBytes,
+                  maxPageWidth: 1000,
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  canDebug: false,
+                  allowPrinting: false,
+                  allowSharing: false,
+                  useActions: false,
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CertificateDetailRow extends StatelessWidget {
+  const _CertificateDetailRow({
+    required this.label,
+    required this.value,
+    required this.colors,
+  });
+
+  final String label;
+  final String value;
+  final AppColors colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 125,
+            child: Text(
+              label,
+              style: AppTextStyles.bodySm(colors.mutedForeground),
+            ),
+          ),
+          Expanded(
+            child: Text(value, style: AppTextStyles.bodySm(colors.foreground)),
+          ),
+        ],
       ),
     );
   }
@@ -207,11 +438,13 @@ class _MessageCard extends StatelessWidget {
     required this.colors,
     required this.icon,
     required this.message,
+    this.onRetry,
   });
 
   final AppColors colors;
   final IconData icon;
   final String message;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -226,6 +459,14 @@ class _MessageCard extends StatelessWidget {
             textAlign: TextAlign.center,
             style: AppTextStyles.bodySm(colors.mutedForeground),
           ),
+          if (onRetry != null) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Thử lại'),
+            ),
+          ],
         ],
       ),
     );

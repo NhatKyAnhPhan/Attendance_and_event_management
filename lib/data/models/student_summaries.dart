@@ -67,6 +67,7 @@ class StudentEventSummary {
   final DateTime? startTime;
   final DateTime? endTime;
   final String status;
+  final String attendanceStatus;
 
   const StudentEventSummary({
     required this.id,
@@ -79,6 +80,7 @@ class StudentEventSummary {
     this.startTime,
     this.endTime,
     this.status = '',
+    this.attendanceStatus = '',
   });
 
   /// Kiểm tra trạng thái kết thúc theo thời gian sự kiện từ API.
@@ -112,6 +114,7 @@ class StudentEventSummary {
           ?.toLocal(),
       endTime: DateTime.tryParse(json['endTime']?.toString() ?? '')?.toLocal(),
       status: json['status']?.toString() ?? '',
+      attendanceStatus: json['attendanceStatus']?.toString() ?? '',
     );
   }
 }

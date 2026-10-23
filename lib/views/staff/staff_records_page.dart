@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
@@ -27,6 +30,12 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   late Future<Map<String, dynamic>> _dataFuture;
   String _query = '';
   String _filter = 'all';
+
+  bool _isCertificateIssued(Map<String, dynamic> item) =>
+      item['status']?.toString().trim().toLowerCase() == 'đã cấp';
+
+  String _certificateStatus(Map<String, dynamic> item) =>
+      _isCertificateIssued(item) ? 'Đã cấp' : 'Chưa cấp';
 
   /// Tải bản ghi thật khi màn hình được khởi tạo.
   @override
@@ -56,7 +65,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
       final matchesFilter =
           _filter == 'all' ||
           (widget.kind == StaffRecordKind.certificates
-              ? item['status']?.toString() == _filter
+              ? _certificateStatus(item) == _filter
               : item['sourceType']?.toString() == _filter);
       final searchable = [
         item['id'],
@@ -170,13 +179,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   Widget _buildSummary(AppColors colors, List<Map<String, dynamic>> items) {
     final isCertificates = widget.kind == StaffRecordKind.certificates;
     final secondaryCount = isCertificates
-        ? items
-              .where(
-                (item) =>
-                    item['status']?.toString().toLowerCase().contains('cấp') ??
-                    false,
-              )
-              .length
+        ? items.where(_isCertificateIssued).length
         : items.where((item) => item['sourceType'] == 'Đánh giá').length;
     final secondaryLabel = isCertificates ? 'Đã cấp' : 'Đánh giá';
 
@@ -207,12 +210,16 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   ) {
     final isCertificates = widget.kind == StaffRecordKind.certificates;
     final counts = <String, int>{};
-    for (final item in items) {
-      final key =
-          (isCertificates ? item['status'] : item['sourceType'])?.toString() ??
-          (isCertificates ? 'Chưa rõ trạng thái' : 'Phản hồi');
-      counts.update(key, (count) => count + 1, ifAbsent: () => 1);
+    if (isCertificates) {
+      counts['Đã cấp'] = items.where(_isCertificateIssued).length;
+      counts['Chưa cấp'] = items.length - counts['Đã cấp']!;
+    } else {
+      for (final item in items) {
+        final key = item['sourceType']?.toString() ?? 'Phản hồi';
+        counts.update(key, (count) => count + 1, ifAbsent: () => 1);
+      }
     }
+
     final labels = counts.keys.toList()..sort();
     final palette = [
       colors.primary,
@@ -274,16 +281,13 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   Widget _buildFilters(AppColors colors, List<Map<String, dynamic>> items) {
     final isCertificates = widget.kind == StaffRecordKind.certificates;
     final options =
-        items
-            .map(
-              (item) =>
-                  (isCertificates ? item['status'] : item['sourceType'])
-                      ?.toString() ??
-                  '',
-            )
-            .where((value) => value.isNotEmpty)
-            .toSet()
-            .toList()
+        isCertificates
+              ? const ['Đã cấp', 'Chưa cấp']
+              : items
+                    .map((item) => item['sourceType']?.toString() ?? '')
+                    .where((value) => value.isNotEmpty)
+                    .toSet()
+                    .toList()
           ..sort();
     final selected = options.contains(_filter) ? _filter : 'all';
 
@@ -343,7 +347,8 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
 
   /// Hiển thị một chứng chỉ cùng người nhận, sự kiện và trạng thái DB.
   Widget _buildCertificate(AppColors colors, Map<String, dynamic> item) {
-    final status = item['status']?.toString() ?? 'Chưa rõ';
+    final status = _certificateStatus(item);
+    final isIssued = _isCertificateIssued(item);
     final studentName =
         item['studentName']?.toString() ??
         item['studentId']?.toString() ??
@@ -483,7 +488,33 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
               ),
             ),
           ],
+          if (isIssued) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                onPressed: () => _openCertificatePreview(item),
+                icon: const Icon(Icons.visibility_outlined),
+                label: const Text('Xem chứng nhận'),
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  void _openCertificatePreview(Map<String, dynamic> item) {
+    final certificateId = item['id']?.toString() ?? '';
+    if (certificateId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chứng nhận không có mã hợp lệ.')),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _CertificatePreviewPage(certificateId: certificateId),
       ),
     );
   }
@@ -656,5 +687,86 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
     return parsed == null
         ? value.toString()
         : DateFormat('dd/MM/yyyy HH:mm').format(parsed.toLocal());
+  }
+}
+
+class _CertificatePreviewPage extends StatefulWidget {
+  const _CertificatePreviewPage({required this.certificateId});
+
+  final String certificateId;
+
+  @override
+  State<_CertificatePreviewPage> createState() =>
+      _CertificatePreviewPageState();
+}
+
+class _CertificatePreviewPageState extends State<_CertificatePreviewPage> {
+  late Future<Uint8List> _pdfFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _pdfFuture = _loadPdf();
+  }
+
+  Future<Uint8List> _loadPdf() => ApiClient().getBytes(
+    ApiEndpoints.staffCertificatePdf(widget.certificateId),
+  );
+
+  void _retry() {
+    setState(() => _pdfFuture = _loadPdf());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(
+      Theme.of(context).brightness == Brightness.dark,
+    );
+    return Scaffold(
+      appBar: AppBar(title: Text('Chứng nhận ${widget.certificateId}')),
+      body: FutureBuilder<Uint8List>(
+        future: _pdfFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError || !snapshot.hasData) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      snapshot.error?.toString() ?? 'Không thể tải chứng nhận.',
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodySm(colors.mutedForeground),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Thử lại'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final pdfBytes = snapshot.data!;
+          return PdfPreview(
+            build: (_) async => pdfBytes,
+            maxPageWidth: 1000,
+            canChangePageFormat: false,
+            canChangeOrientation: false,
+            canDebug: false,
+            allowPrinting: false,
+            allowSharing: false,
+            useActions: false,
+          );
+        },
+      ),
+    );
   }
 }

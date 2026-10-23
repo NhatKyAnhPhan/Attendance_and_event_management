@@ -5,6 +5,7 @@ List<int> buildAttendanceReportWorkbook({
   required int present,
   required int late,
   required int absent,
+  required int excused,
   required List<Map<String, dynamic>> dailyItems,
 }) {
   final workbook = Excel.createExcel();
@@ -17,8 +18,9 @@ List<int> buildAttendanceReportWorkbook({
   ]);
   summary.appendRow([TextCellValue('Tổng kết quả'), IntCellValue(total)]);
   summary.appendRow([TextCellValue('Có mặt'), IntCellValue(present)]);
-  summary.appendRow([TextCellValue('Đi trễ'), IntCellValue(late)]);
+  summary.appendRow([TextCellValue('Đi muộn'), IntCellValue(late)]);
   summary.appendRow([TextCellValue('Vắng mặt'), IntCellValue(absent)]);
+  summary.appendRow([TextCellValue('Vắng có phép'), IntCellValue(excused)]);
   summary.appendRow([
     TextCellValue('Phạm vi'),
     TextCellValue(
@@ -30,8 +32,9 @@ List<int> buildAttendanceReportWorkbook({
   daily.appendRow([
     TextCellValue('Ngày'),
     TextCellValue('Có mặt'),
-    TextCellValue('Đi trễ'),
+    TextCellValue('Đi muộn'),
     TextCellValue('Vắng mặt'),
+    TextCellValue('Vắng có phép'),
   ]);
   for (final item in dailyItems) {
     daily.appendRow([
@@ -39,6 +42,7 @@ List<int> buildAttendanceReportWorkbook({
       IntCellValue(_reportCount(item['present'])),
       IntCellValue(_reportCount(item['late'])),
       IntCellValue(_reportCount(item['absent'])),
+      IntCellValue(_reportCount(item['excused'])),
     ]);
   }
 

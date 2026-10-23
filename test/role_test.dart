@@ -12,6 +12,17 @@ void main() {
       expect(RoleX.fromString('Ban tổ chức'), Role.organizer);
     });
 
+    group('RoleX.isEmployee', () {
+      test('recognizes employee aliases but not other organizer roles', () {
+        expect(RoleX.isEmployee('Nhân viên'), isTrue);
+        expect(RoleX.isEmployee('Công nhân viên'), isTrue);
+        expect(RoleX.isEmployee('employee'), isTrue);
+        expect(RoleX.isEmployee('staff'), isTrue);
+        expect(RoleX.isEmployee('Cán bộ'), isFalse);
+        expect(RoleX.isEmployee('Ban tổ chức'), isFalse);
+      });
+    });
+
     test('admin, event organizers, and assigned staff can manage events', () {
       expect(RoleX.canManageEvents('Cán bộ'), isTrue);
       expect(RoleX.canManageEvents('Nhân viên'), isTrue);

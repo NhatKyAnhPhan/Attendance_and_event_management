@@ -24,6 +24,31 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   charset: 'utf8mb4',
 });
+
+function createCertificatePdfForRequest(request, certificate) {
+  const publicBaseUrl = (
+    process.env.PUBLIC_API_BASE_URL
+    || `${request.protocol}://${request.get('host')}`
+  ).replace(/\/+$/, '');
+  const verificationUrl =
+    `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificate.certificateId)}`;
+
+  return createCertificatePdf({
+    studentName: certificate.studentName,
+    studentId: certificate.studentId,
+    eventName: certificate.eventName,
+    startTime: certificate.startTime,
+    endTime: certificate.endTime,
+    location: certificate.location || '',
+    certificateId: certificate.certificateId,
+    issuedAt: certificate.issuedAt,
+    verificationUrl,
+    isSample: String(certificate.content || '').startsWith(
+      '[MẪU KIỂM THỬ]',
+    ),
+  });
+}
+
 const passwordResetHandlers = createPasswordResetHandlers({
   pool,
   secret: process.env.PASSWORD_RESET_SECRET,
@@ -46,6 +71,66 @@ async function synchronizeEventStatuses() {
   );
 }
 
+async function recordExpiredClassAbsences() {
+  const [sessions] = await pool.execute(
+    `SELECT Mabuoidiemdanh AS id
+     FROM buoidiemdanh bpd
+     WHERE (bpd.Trangthaidiemdanh <> 'Đang mở'
+        OR bpd.Thoigiandong <= NOW())
+       AND EXISTS (
+         SELECT 1
+         FROM buoi b
+         INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
+         LEFT JOIN ketquadiemdanh kd
+           ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
+          AND kd.Masv = tvl.Masv
+         WHERE b.Mabuoi = bpd.Mabuoi
+           AND kd.Maketqua IS NULL
+       )
+     ORDER BY Mabuoidiemdanh`,
+  );
+  for (const session of sessions) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[lockedSession]] = await connection.execute(
+        `SELECT Mabuoidiemdanh AS id
+         FROM buoidiemdanh
+         WHERE Mabuoidiemdanh = ?
+           AND (Trangthaidiemdanh <> 'Đang mở' OR Thoigiandong <= NOW())
+         FOR UPDATE`,
+        [session.id],
+      );
+      if (!lockedSession) {
+        await connection.rollback();
+        continue;
+      }
+      await connection.execute(
+        `INSERT INTO ketquadiemdanh
+         (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Mabuoidiemdanh, Masv)
+         SELECT CONCAT('RS', UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 20))),
+                COALESCE(bpd.Thoigiandong, NOW()),
+                'Vắng mặt', bpd.Mabuoidiemdanh, tvl.Masv
+         FROM buoidiemdanh bpd
+         INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+         INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
+         LEFT JOIN ketquadiemdanh kd
+           ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
+          AND kd.Masv = tvl.Masv
+         WHERE bpd.Mabuoidiemdanh = ?
+           AND kd.Maketqua IS NULL`,
+        [session.id],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+}
+
 // Sinh mã sự kiện ngẫu nhiên; khóa duy nhất của cơ sở dữ liệu ngăn mã trùng.
 function generateRecordId(prefix) {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
@@ -62,6 +147,43 @@ function isValidEventTimeRange(startTime, endTime, { requireFutureStart = false,
     && end - start <= 24 * 60 * 60 * 1000
     && (!requireFutureStart || start > now)
     && (!requireFutureEnd || end > now);
+}
+
+function validateEventAttendancePeriods(periods, eventStart, eventEnd) {
+  if (!Array.isArray(periods) || periods.length > 12) {
+    return { message: 'Sự kiện có thể có tối đa 12 khung điểm danh.' };
+  }
+  const parsed = [];
+  for (const period of periods) {
+    if (!period || typeof period !== 'object'
+        || typeof period.name !== 'string'
+        || !period.name.trim()
+        || period.name.trim().length > 60) {
+      return { message: 'Tên khung điểm danh không hợp lệ (tối đa 60 ký tự).' };
+    }
+    const startTime = new Date(period.startTime);
+    const endTime = new Date(period.endTime);
+    if (!Number.isFinite(startTime.valueOf())
+        || !Number.isFinite(endTime.valueOf())
+        || startTime < eventStart || endTime > eventEnd
+        || endTime <= startTime) {
+      return {
+        message: 'Khung điểm danh phải nằm trong thời gian sự kiện và có giờ kết thúc sau giờ bắt đầu.',
+      };
+    }
+    parsed.push({
+      name: period.name.trim(),
+      startTime,
+      endTime,
+    });
+  }
+  parsed.sort((left, right) => left.startTime - right.startTime);
+  for (let index = 1; index < parsed.length; index += 1) {
+    if (parsed[index].startTime < parsed[index - 1].endTime) {
+      return { message: 'Các khung điểm danh không được chồng lấn nhau.' };
+    }
+  }
+  return { value: parsed };
 }
 
 const eventBenefitTypes = new Set([
@@ -220,6 +342,54 @@ async function ensurePasswordResetChallengesTable() {
   );
 }
 
+async function ensureEventAttendancePeriodsTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS event_attendance_periods (
+       period_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       event_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+       name VARCHAR(60) NOT NULL,
+       starts_at DATETIME NOT NULL,
+       ends_at DATETIME NOT NULL,
+       display_order INT NOT NULL DEFAULT 0,
+       PRIMARY KEY (period_id),
+       INDEX idx_event_attendance_periods_event (event_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+}
+
+async function replaceEventAttendancePeriods(connection, eventId, periods) {
+  await connection.execute(
+    'DELETE FROM event_attendance_periods WHERE event_id = ?',
+    [eventId],
+  );
+  for (const [index, period] of periods.entries()) {
+    await connection.execute(
+      `INSERT INTO event_attendance_periods
+       (period_id, event_id, name, starts_at, ends_at, display_order)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        crypto.randomUUID(),
+        eventId,
+        period.name,
+        period.startTime,
+        period.endTime,
+        index,
+      ],
+    );
+  }
+}
+
+function areEventAttendancePeriodsEqual(existing, proposed) {
+  return existing.length === proposed.length
+    && existing.every((period, index) => (
+      period.name === proposed[index].name
+      && new Date(period.startTime).valueOf()
+        === proposed[index].startTime.valueOf()
+      && new Date(period.endTime).valueOf()
+        === proposed[index].endTime.valueOf()
+    ));
+}
+
 async function ensureEventAttendanceTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS event_attendance (
@@ -257,6 +427,10 @@ async function ensureEventAttendanceSessionsTable() {
        longitude DOUBLE NOT NULL,
        radius_meters INT NOT NULL,
        expires_at DATETIME NOT NULL,
+       period_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+       period_name VARCHAR(60) NULL,
+       period_start DATETIME NULL,
+       period_end DATETIME NULL,
        closed_at DATETIME NULL,
        created_by VARCHAR(64) NOT NULL,
        opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -279,6 +453,26 @@ async function ensureEventAttendanceSessionsTable() {
   if (!columnNames.has('opened_at')) {
     await pool.query(
       'ALTER TABLE event_attendance_sessions ADD COLUMN opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP',
+    );
+  }
+  if (!columnNames.has('period_id')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_sessions ADD COLUMN period_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL',
+    );
+  }
+  if (!columnNames.has('period_name')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_sessions ADD COLUMN period_name VARCHAR(60) NULL',
+    );
+  }
+  if (!columnNames.has('period_start')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_sessions ADD COLUMN period_start DATETIME NULL',
+    );
+  }
+  if (!columnNames.has('period_end')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_sessions ADD COLUMN period_end DATETIME NULL',
     );
   }
   await pool.query(
@@ -611,6 +805,7 @@ app.get('/api/notifications', requireAuth, async (request, response) => {
 // Lấy các lớp học phần mà sinh viên hiện tại đang tham gia.
 app.get('/api/classes', requireAuth, async (request, response) => {
   try {
+    await recordExpiredClassAbsences();
     const [rows] = await pool.execute(
       `SELECT lhp.Malop AS id, lhp.Malop AS code,
               lhp.Tenlop AS name, lhp.Hocky AS semester,
@@ -863,7 +1058,6 @@ app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', '
         message: 'Không tìm thấy lớp hoặc bạn không tham gia lớp này.',
       });
     }
-
     const [schedules] = await pool.execute(
       `SELECT Malich AS id, ThuTrongTuan AS weekday,
               TIME_FORMAT(GioBatDau, '%H:%i') AS startTime,
@@ -887,7 +1081,30 @@ app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', '
        ORDER BY nd.Hoten, tvl.Masv`,
       [request.params.classId],
     );
-    return response.json({ class: classInfo, schedules, students });
+    const [attendanceSessions] = await pool.execute(
+      `SELECT bpd.Mabuoidiemdanh AS id,
+              COALESCE(b.Noidung, '') AS name,
+              DATE_FORMAT(b.Thoigianbatdau, '%d/%m/%Y %H:%i') AS startTime,
+              DATE_FORMAT(kd.Thoigiandiemdanh, '%d/%m/%Y %H:%i') AS checkedInAt,
+              COALESCE(
+                kd.Trangthaiketqua,
+                CASE
+                  WHEN bpd.Trangthaidiemdanh <> 'Đang mở'
+                    OR bpd.Thoigiandong <= NOW() THEN 'Vắng mặt'
+                  ELSE 'Chưa điểm danh'
+                END
+              ) AS status,
+              COALESCE(bpd.Phuongthuc, '') AS method
+       FROM buoidiemdanh bpd
+       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN ketquadiemdanh kd
+         ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
+        AND kd.Masv = ?
+       WHERE b.Malop = ?
+       ORDER BY b.Thoigianbatdau DESC, bpd.Thoigianmo DESC`,
+      [request.auth.sub, request.params.classId],
+    );
+    return response.json({ class: classInfo, schedules, attendanceSessions, students });
   } catch (error) {
     console.error('Student class detail error:', error.message);
     return response.status(500).json({
@@ -909,7 +1126,22 @@ app.get('/api/events', requireAuth, async (request, response) => {
               COUNT(DISTINCT dkAll.Masv) AS registeredCount,
               dkMine.Ngaydangky AS registeredAt,
               CASE WHEN dkMine.Masv IS NULL THEN 'notRegistered'
-                   ELSE LOWER(REPLACE(dkMine.Trangthaidangky, ' ', '')) END AS registrationStatus
+                   ELSE LOWER(REPLACE(dkMine.Trangthaidangky, ' ', '')) END AS registrationStatus,
+              CASE
+                WHEN dkMine.Masv IS NULL THEN ''
+                WHEN EXISTS (
+                  SELECT 1 FROM event_attendance ea
+                  WHERE ea.event_id = sk.Masukien
+                    AND ea.student_id = dkMine.Masv
+                ) OR EXISTS (
+                  SELECT 1 FROM event_attendance_records ear
+                  WHERE ear.event_id = sk.Masukien
+                    AND ear.student_id = dkMine.Masv
+                ) THEN 'Có mặt'
+                WHEN sk.Trangthaisukien = 'Đã đóng'
+                  OR NOW() >= sk.Thoigianketthuc THEN 'Vắng mặt'
+                ELSE 'Chưa điểm danh'
+              END AS attendanceStatus
        FROM sukien sk
        LEFT JOIN donvi dv ON dv.Madv = sk.Madv
        LEFT JOIN dangkysukien dkAll ON dkAll.Masukien = sk.Masukien
@@ -978,7 +1210,15 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
     } catch (error) {
       if (error.code !== 'ER_NO_SUCH_TABLE') throw error;
     }
-    return response.json({ ...event, benefits, rules });
+    const [attendancePeriods] = await pool.execute(
+      `SELECT period_id AS id, name, starts_at AS startTime,
+              ends_at AS endTime
+       FROM event_attendance_periods
+       WHERE event_id = ?
+       ORDER BY display_order, starts_at`,
+      [event.id],
+    );
+    return response.json({ ...event, benefits, rules, attendancePeriods });
   } catch (error) {
     console.error('Event details error:', error.message);
     return response.status(500).json({ message: 'Không thể tải chi tiết sự kiện.' });
@@ -1443,6 +1683,7 @@ app.get('/api/public/stats', async (_request, response) => {
 // Tổng hợp số lớp, sự kiện và kết quả điểm danh của sinh viên.
 app.get('/api/dashboard', requireAuth, async (request, response) => {
   try {
+    await recordExpiredClassAbsences();
     const currentRole = String(request.auth.role || '').trim().toLowerCase();
     const userId = request.auth.sub;
 
@@ -1636,6 +1877,8 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
          AND (? IS NULL OR eas.session_id = ?)
          AND eas.closed_at IS NULL
          AND eas.expires_at > NOW()
+         AND (eas.period_start IS NULL
+           OR (NOW() >= eas.period_start AND NOW() < eas.period_end))
        ORDER BY eas.opened_at DESC, eas.session_id DESC
        LIMIT 1
        FOR UPDATE`,
@@ -1648,7 +1891,7 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
     if (!event || Number(event.isOpen) !== 1) {
       await connection.rollback();
       return response.status(410).json({
-        message: 'Phiên điểm danh đã đóng, hết hạn hoặc sự kiện chưa đến giờ điểm danh.',
+        message: 'Phiên điểm danh đã đóng, hết hạn hoặc hiện không nằm trong khung giờ điểm danh.',
       });
     }
     const radiusMeters = Number(event.radiusMeters);
@@ -1699,6 +1942,9 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
               ea.checked_in_at AS checkedInAt,
               nd.Mand AS studentId, COALESCE(nd.Hoten, nd.Mand) AS studentName,
               ea.session_id AS attendanceSessionId,
+              session.period_name AS periodName,
+              session.period_start AS periodStart,
+              session.period_end AS periodEnd,
               (SELECT COUNT(*)
                FROM event_attendance_sessions previous
                WHERE previous.event_id = ea.event_id
@@ -1776,6 +2022,9 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
                 sk.Thoigianketthuc AS endTime,
                 COALESCE(dv.Tendv, '') AS organizerName,
                 eas.session_id AS attendanceSessionId,
+                eas.period_name AS periodName,
+                eas.period_start AS periodStart,
+                eas.period_end AS periodEnd,
                 (SELECT COUNT(*)
                  FROM event_attendance_sessions previous
                  WHERE previous.event_id = eas.event_id
@@ -1800,6 +2049,8 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
            AND (? IS NULL OR eas.session_id = ?)
            AND eas.closed_at IS NULL
            AND eas.expires_at > NOW()
+           AND (eas.period_start IS NULL
+             OR (NOW() >= eas.period_start AND NOW() < eas.period_end))
          ORDER BY eas.opened_at DESC, eas.session_id DESC
          LIMIT 1`,
         [
@@ -1811,7 +2062,7 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
       );
       if (!preview || Number(preview.isOpen) !== 1) {
         return response.status(410).json({
-          message: 'Sự kiện chưa đến giờ điểm danh, đã kết thúc hoặc đã bị đóng.',
+          message: 'Sự kiện chưa đến giờ, QR đang ngoài khung điểm danh, đã kết thúc hoặc đã bị đóng.',
         });
       }
       const [[registration]] = await pool.execute(
@@ -1858,6 +2109,9 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
         endTime: preview.endTime,
         organizerName: preview.organizerName,
         attendanceSessionId: preview.attendanceSessionId,
+        periodName: preview.periodName,
+        periodStart: preview.periodStart,
+        periodEnd: preview.periodEnd,
         sessionNumber: preview.sessionNumber,
         studentId: preview.studentId,
         studentName: preview.studentName,
@@ -1930,7 +2184,7 @@ async function findManagedAttendanceSession(sessionId, auth) {
          ? IN ('Quản trị viên', 'admin')
          OR (? IN ('Giảng viên', 'lecturer') AND lhp.Magv = ?)
          OR (
-           ? IN ('Cán bộ', 'Nhân viên', 'organizer', 'staff')
+           ? IN ('Cán bộ', 'organizer')
            AND EXISTS (
              SELECT 1 FROM donvi dv
              WHERE dv.Madv = lhp.Madv AND dv.Manv = ?
@@ -1951,7 +2205,7 @@ async function findManagedAttendanceSession(sessionId, auth) {
 }
 
 // Tải các buổi học mà giảng viên hoặc quản trị viên được phép mở điểm danh.
-app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
+app.get('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer'), async (request, response) => {
   try {
     const [rows] = await pool.execute(
       `SELECT b.Mabuoi AS classSessionId, b.Malop AS classId,
@@ -1974,8 +2228,9 @@ app.get('/api/attendance/sessions', requireAuth, async (request, response) => {
 });
 
 // Lấy các phiên điểm danh cùng số lượt có mặt, trễ và vắng từ cơ sở dữ liệu.
-app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'Cán bộ', 'Nhân viên', 'organizer', 'staff'), async (request, response) => {
+app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer', 'Cán bộ', 'organizer'), async (request, response) => {
   try {
+    await recordExpiredClassAbsences();
     const [rows] = await pool.execute(
       `SELECT bpd.Mabuoidiemdanh AS id, b.Malop AS classId,
               COALESCE(lhp.Tenlop, '') AS className,
@@ -1994,7 +2249,7 @@ app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị
          ? IN ('Quản trị viên', 'admin')
          OR (? IN ('Giảng viên', 'lecturer') AND lhp.Magv = ?)
          OR (
-           ? IN ('Cán bộ', 'Nhân viên', 'organizer', 'staff')
+           ? IN ('Cán bộ', 'organizer')
            AND EXISTS (
              SELECT 1 FROM donvi dv
              WHERE dv.Madv = lhp.Madv AND dv.Manv = ?
@@ -2021,8 +2276,9 @@ app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị
 });
 
 // Trả danh sách sinh viên cùng trạng thái điểm danh của một phiên được phép quản lý.
-app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'Cán bộ', 'Nhân viên', 'organizer', 'staff'), async (request, response) => {
+app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer', 'Cán bộ', 'organizer'), async (request, response) => {
   try {
+    await recordExpiredClassAbsences();
     const session = await findManagedAttendanceSession(
       request.params.sessionId,
       request.auth,
@@ -2033,10 +2289,15 @@ app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requi
       });
     }
 
+    const canViewStudentDetails = !['sinh viên', 'student'].includes(
+      String(request.auth.role || '').trim().toLowerCase(),
+    );
     const [items] = await pool.execute(
       `SELECT tvl.Masv AS studentId,
               COALESCE(nd.Hoten, tvl.Masv) AS studentName,
-              COALESCE(nd.Email, '') AS email,
+              ${canViewStudentDetails ? `
+                COALESCE(sv.Lop, '') AS className,
+                COALESCE(sv.Chuyennganh, '') AS major,` : ''}
               kd.Maketqua AS attendanceId,
               kd.Trangthaiketqua AS attendanceStatus,
               kd.Thoigiandiemdanh AS checkedInAt
@@ -2044,6 +2305,7 @@ app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requi
        INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
        INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
        LEFT JOIN nguoidung nd ON nd.Mand = tvl.Masv
+       LEFT JOIN sinhvien sv ON sv.Masv = tvl.Masv
        LEFT JOIN ketquadiemdanh kd
          ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
         AND kd.Masv = tvl.Masv
@@ -2067,11 +2329,12 @@ app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requi
 });
 
 // Ghi nhận hoặc cập nhật kết quả điểm danh thủ công của sinh viên trong phiên đang mở.
-app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'Cán bộ', 'Nhân viên', 'organizer', 'staff'), async (request, response) => {
+app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer', 'Cán bộ', 'organizer'), async (request, response) => {
   const statusLabels = new Map([
     ['present', 'Có mặt'],
     ['late', 'Đi trễ'],
     ['absent', 'Vắng mặt'],
+    ['excused', 'Vắng có phép'],
   ]);
   const attendanceStatus = statusLabels.get(request.body?.status);
   if (!attendanceStatus) {
@@ -2163,29 +2426,34 @@ app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requir
 // Tổng hợp kết quả điểm danh theo trạng thái và ngày cho Admin/Giảng viên.
 app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
   try {
+    await recordExpiredClassAbsences();
     const scope = [request.auth.role, request.auth.sub];
     const [[summary]] = await pool.execute(
       `SELECT COUNT(kd.Maketqua) AS total,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
-              SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
-              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+              SUM(CASE WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng có phép' THEN 1 ELSE 0 END) AS excused
        FROM ketquadiemdanh kd
        INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
        INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
        LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)`,
+       WHERE kd.Trangthaiketqua IN ('Có mặt', 'Đi trễ', 'Đi muộn', 'Vắng mặt', 'Vắng có phép')
+         AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)`,
       scope,
     );
     const [rows] = await pool.execute(
       `SELECT DATE(kd.Thoigiandiemdanh) AS date,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
-              SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
-              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+              SUM(CASE WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent,
+              SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng có phép' THEN 1 ELSE 0 END) AS excused
        FROM ketquadiemdanh kd
        INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
        INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
        LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
        WHERE kd.Thoigiandiemdanh >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+         AND kd.Trangthaiketqua IN ('Có mặt', 'Đi trễ', 'Đi muộn', 'Vắng mặt', 'Vắng có phép')
          AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
        GROUP BY DATE(kd.Thoigiandiemdanh)
        ORDER BY date`,
@@ -2197,6 +2465,7 @@ app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên'
         present: Number(summary.present || 0),
         late: Number(summary.late || 0),
         absent: Number(summary.absent || 0),
+        excused: Number(summary.excused || 0),
       },
       items: rows,
     });
@@ -2766,6 +3035,9 @@ async function checkInEventFace(
               eas.latitude AS latitude, eas.longitude AS longitude,
               eas.radius_meters AS radiusMeters,
               eas.session_id AS attendanceSessionId,
+              eas.period_name AS periodName,
+              eas.period_start AS periodStart,
+              eas.period_end AS periodEnd,
               (SELECT COUNT(*)
                FROM event_attendance_sessions previous
                WHERE previous.event_id = eas.event_id
@@ -2782,6 +3054,8 @@ async function checkInEventFace(
        WHERE eas.session_id = ?
          AND eas.expires_at > NOW()
          AND eas.closed_at IS NULL
+         AND (eas.period_start IS NULL
+           OR (NOW() >= eas.period_start AND NOW() < eas.period_end))
          AND NOW() >= sk.Thoigianbatdau
          AND NOW() < sk.Thoigianketthuc
          AND sk.Trangthaisukien <> 'Đã đóng'
@@ -2791,7 +3065,7 @@ async function checkInEventFace(
     );
     if (!event) {
       return response.status(404).json({
-        message: 'Phiên điểm danh đã đóng hoặc bạn chưa đăng ký sự kiện.',
+        message: 'Phiên điểm danh đã đóng, đang ngoài khung giờ hoặc bạn chưa đăng ký sự kiện.',
       });
     }
 
@@ -2916,8 +3190,52 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
               COALESCE(sk.Soluongtoida, 0) AS capacity,
               COUNT(dk.Masv) AS registeredCount,
               (SELECT COUNT(*)
-               FROM event_attendance ea
-               WHERE ea.event_id = sk.Masukien) AS checkedInCount
+               FROM dangkysukien dkPresent
+               WHERE dkPresent.Masukien = sk.Masukien
+                 AND (
+                   EXISTS (
+                     SELECT 1 FROM event_attendance ea
+                     WHERE ea.event_id = sk.Masukien
+                       AND ea.student_id = dkPresent.Masv
+                   )
+                   OR EXISTS (
+                     SELECT 1 FROM event_attendance_records ear
+                     WHERE ear.event_id = sk.Masukien
+                       AND ear.student_id = dkPresent.Masv
+                   )
+                 )) AS checkedInCount,
+              (SELECT COUNT(*)
+               FROM dangkysukien dkAbsent
+               WHERE dkAbsent.Masukien = sk.Masukien
+                 AND (
+                   sk.Trangthaisukien = 'Đã đóng'
+                   OR NOW() >= sk.Thoigianketthuc
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM event_attendance ea
+                   WHERE ea.event_id = sk.Masukien
+                     AND ea.student_id = dkAbsent.Masv
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM event_attendance_records ear
+                   WHERE ear.event_id = sk.Masukien
+                     AND ear.student_id = dkAbsent.Masv
+                 )) AS absentCount,
+              (SELECT COUNT(*)
+               FROM dangkysukien dkPending
+               WHERE dkPending.Masukien = sk.Masukien
+                 AND sk.Trangthaisukien <> 'Đã đóng'
+                 AND NOW() < sk.Thoigianketthuc
+                 AND NOT EXISTS (
+                   SELECT 1 FROM event_attendance ea
+                   WHERE ea.event_id = sk.Masukien
+                     AND ea.student_id = dkPending.Masv
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM event_attendance_records ear
+                   WHERE ear.event_id = sk.Masukien
+                     AND ear.student_id = dkPending.Masv
+                 )) AS pendingCount
        FROM sukien sk
        LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
        WHERE ? = 1 OR EXISTS (
@@ -2946,6 +3264,11 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
       message: 'Cần lấy vị trí thiết bị để tạo QR điểm danh sự kiện.',
     });
   }
+  const requestedPeriodId = request.body?.periodId;
+  if (requestedPeriodId !== undefined
+      && (typeof requestedPeriodId !== 'string' || !requestedPeriodId)) {
+    return response.status(400).json({ message: 'Khung điểm danh không hợp lệ.' });
+  }
   try {
     const [[event]] = await pool.execute(
       `SELECT sk.Masukien AS id, sk.Tensukien AS name,
@@ -2968,7 +3291,33 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
         message: 'Bạn không phụ trách sự kiện này.',
       });
     }
-    const expiresAt = new Date(event.endTime);
+    const [periods] = await pool.execute(
+      `SELECT period_id AS id, name, starts_at AS startTime,
+              ends_at AS endTime
+       FROM event_attendance_periods
+       WHERE event_id = ?
+       ORDER BY display_order, starts_at`,
+      [event.id],
+    );
+    let period = null;
+    if (periods.length > 0) {
+      if (!requestedPeriodId) {
+        return response.status(400).json({
+          message: 'Cần chọn khung điểm danh trước khi tạo mã QR.',
+        });
+      }
+      [period] = periods.filter((item) => item.id === requestedPeriodId);
+      if (!period) {
+        return response.status(404).json({
+          message: 'Không tìm thấy khung điểm danh của sự kiện.',
+        });
+      }
+    } else if (requestedPeriodId) {
+      return response.status(400).json({
+        message: 'Sự kiện chưa cấu hình khung điểm danh.',
+      });
+    }
+    const expiresAt = new Date(period?.endTime ?? event.endTime);
     if (event.status === 'Đã đóng' || expiresAt <= new Date()) {
       return response.status(409).json({
         message: 'Không thể tạo QR cho sự kiện đã đóng hoặc đã kết thúc.',
@@ -2996,8 +3345,8 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
     await pool.execute(
       `INSERT INTO event_attendance_sessions
        (session_id, event_id, latitude, longitude, radius_meters,
-        expires_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        expires_at, period_id, period_name, period_start, period_end, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sessionId,
         event.id,
@@ -3005,6 +3354,10 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
         coordinates.longitude,
         eventAttendanceRadiusMeters,
         expiresAt,
+        period?.id ?? null,
+        period?.name ?? null,
+        period?.startTime ?? null,
+        period?.endTime ?? null,
         request.auth.sub,
       ],
     );
@@ -3019,6 +3372,10 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
       eventName: event.name,
       sessionId,
       sessionNumber: Number(sessionNumber.value),
+      periodId: period?.id ?? null,
+      periodName: period?.name ?? null,
+      periodStart: period?.startTime ?? null,
+      periodEnd: period?.endTime ?? null,
       expiresAt,
       radiusMeters: eventAttendanceRadiusMeters,
       qr,
@@ -3327,9 +3684,13 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
 
 app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên'), async (request, response) => {
   const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
+  const canViewStudentDetails = !['sinh viên', 'student'].includes(
+    String(request.auth.role || '').trim().toLowerCase(),
+  );
   try {
     const [[event]] = await pool.execute(
       `SELECT sk.Masukien AS id,
+              sk.Thoigianketthuc AS endTime,
               EXISTS (
                 SELECT 1 FROM donvi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
@@ -3351,11 +3712,17 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
     const [rows] = await pool.execute(
       `SELECT dk.Masv AS studentId,
               COALESCE(nd.Hoten, dk.Masv) AS studentName,
-              COALESCE(nd.Email, '') AS email,
+              ${canViewStudentDetails ? `
+                COALESCE(sv.Lop, '') AS className,
+                COALESCE(sv.Chuyennganh, '') AS major,` : ''}
               COALESCE(dk.Trangthaidangky, '') AS status,
               CASE
                 WHEN COALESCE(records.checkedInAt, ea.checked_in_at) IS NULL
-                  THEN 'Chưa điểm danh'
+                  THEN CASE
+                    WHEN sk.Trangthaisukien = 'Đã đóng'
+                      OR NOW() >= sk.Thoigianketthuc THEN 'Vắng mặt'
+                    ELSE 'Chưa điểm danh'
+                  END
                 WHEN records.methods = 'Face'
                   THEN 'Đã điểm danh khuôn mặt'
                 WHEN records.methods = 'QR'
@@ -3368,6 +3735,7 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
               DATE_FORMAT(dk.Ngaydangky, '%d/%m/%Y') AS dateLabel
        FROM dangkysukien dk
        LEFT JOIN nguoidung nd ON nd.Mand = dk.Masv
+       LEFT JOIN sinhvien sv ON sv.Masv = dk.Masv
        LEFT JOIN event_attendance ea
          ON ea.event_id = dk.Masukien AND ea.student_id = dk.Masv
        LEFT JOIN (
@@ -3523,6 +3891,11 @@ app.get('/api/organizer/units', requireAuth, requireRole(...eventManagerRoles), 
 app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const body = request.body || {};
   const { name, organizerId, startTime, endTime, location, capacity } = body;
+  const attendancePeriodsResult = validateEventAttendancePeriods(
+    body.attendancePeriods ?? [],
+    new Date(startTime),
+    new Date(endTime),
+  );
   const parsedCapacity = Number(capacity);
   const parsedStart = new Date(startTime);
   const parsedEnd = new Date(endTime);
@@ -3537,6 +3910,11 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
   }
   if (contentResult.message) {
     return response.status(400).json({ message: contentResult.message });
+  }
+  if (attendancePeriodsResult.message) {
+    return response.status(400).json({
+      message: attendancePeriodsResult.message,
+    });
   }
 
   try {
@@ -3567,6 +3945,11 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
           ],
         );
         await replaceEventContent(connection, id, contentResult.value);
+        await replaceEventAttendancePeriods(
+          connection,
+          id,
+          attendancePeriodsResult.value,
+        );
         await connection.commit();
         return response.status(201).json({ id, message: 'Tạo sự kiện thành công.' });
       } catch (error) {
@@ -3592,12 +3975,20 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
 app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const body = request.body || {};
   const { name, organizerId, startTime, endTime, location, capacity } = body;
+  const hasAttendancePeriods = Object.hasOwn(body, 'attendancePeriods');
   const parsedCapacity = Number(capacity);
   const parsedStart = new Date(startTime);
   const parsedEnd = new Date(endTime);
   const hasEventContent = ['description', 'benefits', 'rules']
     .some((field) => Object.hasOwn(body, field));
   const contentResult = validateEventContent(body);
+  const attendancePeriodsResult = hasAttendancePeriods
+    ? validateEventAttendancePeriods(
+      body.attendancePeriods,
+      parsedStart,
+      parsedEnd,
+    )
+    : null;
 
   if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
       || parsedCapacity <= 0
@@ -3608,6 +3999,11 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
   }
   if (hasEventContent && contentResult.message) {
     return response.status(400).json({ message: contentResult.message });
+  }
+  if (attendancePeriodsResult?.message) {
+    return response.status(400).json({
+      message: attendancePeriodsResult.message,
+    });
   }
 
   try {
@@ -3679,6 +4075,32 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
       );
       if (hasEventContent) {
         await replaceEventContent(connection, request.params.eventId, contentResult.value);
+      }
+      if (hasAttendancePeriods) {
+        const [existingPeriods] = await connection.execute(
+          `SELECT name, starts_at AS startTime, ends_at AS endTime
+           FROM event_attendance_periods
+           WHERE event_id = ?
+           ORDER BY display_order, starts_at`,
+          [request.params.eventId],
+        );
+        if (!areEventAttendancePeriodsEqual(
+          existingPeriods,
+          attendancePeriodsResult.value,
+        )) {
+          await connection.execute(
+            `UPDATE event_attendance_sessions
+             SET closed_at = COALESCE(closed_at, NOW())
+             WHERE event_id = ? AND period_id IS NOT NULL
+               AND closed_at IS NULL`,
+            [request.params.eventId],
+          );
+          await replaceEventAttendancePeriods(
+            connection,
+            request.params.eventId,
+            attendancePeriodsResult.value,
+          );
+        }
       }
       await connection.commit();
       if (result.affectedRows === 0) {
@@ -3816,7 +4238,10 @@ app.get('/api/student/certificates', requireAuth, requireRole('Sinh viên', 'stu
   try {
     const [rows] = await pool.execute(
       `SELECT cn.Machungnhan AS id, cn.Masukien AS eventId,
-              sk.Tensukien AS eventName, cn.Ngaycap AS issuedAt,
+              sk.Tensukien AS eventName,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime,
+              sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
               cn.Noidung AS content, cn.Trangthaichungnhan AS status
        FROM chungnhan cn
        INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
@@ -3842,7 +4267,8 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
               cn.Masv AS studentId, sk.Tensukien AS eventName,
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
-              sk.Diadiem AS location, cn.Ngaycap AS issuedAt
+              sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
+              cn.Noidung AS content
        FROM chungnhan cn
        INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
        LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
@@ -3856,23 +4282,7 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
       return response.status(404).json({ message: 'Không tìm thấy chứng nhận.' });
     }
 
-    const publicBaseUrl = (
-      process.env.PUBLIC_API_BASE_URL
-      || `${request.protocol}://${request.get('host')}`
-    ).replace(/\/+$/, '');
-    const verificationUrl =
-      `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificate.certificateId)}`;
-    const pdf = await createCertificatePdf({
-      studentName: certificate.studentName,
-      studentId: certificate.studentId,
-      eventName: certificate.eventName,
-      startTime: certificate.startTime,
-      endTime: certificate.endTime,
-      location: certificate.location,
-      certificateId: certificate.certificateId,
-      issuedAt: certificate.issuedAt,
-      verificationUrl,
-    });
+    const pdf = await createCertificatePdfForRequest(request, certificate);
 
     response.set({
       'Content-Type': 'application/pdf',
@@ -3889,6 +4299,56 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
   }
 });
 
+app.get('/api/staff/certificates/:certificateId/pdf', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (request, response) => {
+  const isAdmin = ['quản trị viên', 'admin'].includes(
+    String(request.auth.role || '').trim().toLowerCase(),
+  );
+  try {
+    const [[certificate]] = await pool.execute(
+      `SELECT cn.Machungnhan AS certificateId,
+              COALESCE(nd.Hoten, cn.Masv) AS studentName,
+              cn.Masv AS studentId, sk.Masukien AS eventId,
+              sk.Tensukien AS eventName,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime,
+              sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
+              cn.Noidung AS content
+       FROM chungnhan cn
+       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
+       LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
+       WHERE cn.Machungnhan = ?
+         AND cn.Trangthaichungnhan = 'Đã cấp'
+         AND cn.Ngaycap IS NOT NULL
+         AND (? = 1 OR EXISTS (
+           SELECT 1 FROM donvi dv
+           WHERE dv.Madv = sk.Madv AND dv.Manv = ?
+         ))
+       LIMIT 1`,
+      [request.params.certificateId, isAdmin ? 1 : 0, request.auth.sub],
+    );
+    if (!certificate) {
+      return response.status(404).json({
+        message: 'Không tìm thấy chứng nhận đã cấp.',
+      });
+    }
+
+    const pdf = await createCertificatePdfForRequest(request, certificate);
+    response.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition':
+        `inline; filename="${certificate.certificateId}.pdf"`,
+      'Content-Length': pdf.length,
+      'Cache-Control': 'private, no-store',
+    });
+    return response.send(pdf);
+  } catch (error) {
+    console.error('Preview staff certificate error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể xem trước chứng nhận.',
+    });
+  }
+});
+
 // Lấy chứng chỉ từ cơ sở dữ liệu; cán bộ chỉ xem sự kiện thuộc đơn vị mình.
 app.get('/api/staff/certificates', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (request, response) => {
   const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
@@ -3898,7 +4358,11 @@ app.get('/api/staff/certificates', requireAuth, requireRole('Quản trị viên'
               COALESCE(nd.Hoten, cn.Masv) AS studentName,
               cn.Masukien AS eventId, sk.Tensukien AS eventName,
               cn.Ngaycap AS issuedAt, cn.Noidung AS content,
-              cn.Trangthaichungnhan AS status
+              CASE
+                WHEN LOWER(TRIM(COALESCE(cn.Trangthaichungnhan, ''))) = 'đã cấp'
+                  AND cn.Ngaycap IS NOT NULL THEN 'Đã cấp'
+                ELSE 'Chưa cấp'
+              END AS status
        FROM chungnhan cn
        JOIN sukien sk ON sk.Masukien = cn.Masukien
        LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
@@ -4438,13 +4902,21 @@ ensureAttendanceLocationColumns()
     await ensureAttendanceDeviceClaimsTable();
     await ensureEventAttendanceTable();
     await ensureEventAttendanceSessionsTable();
+    await ensureEventAttendancePeriodsTable();
     await synchronizeEventStatuses();
+    await recordExpiredClassAbsences();
     const statusSyncTimer = setInterval(() => {
       synchronizeEventStatuses().catch((error) => {
         console.error('Event status sync failed:', error.message);
       });
     }, 60_000);
     statusSyncTimer.unref();
+    const classAbsenceTimer = setInterval(() => {
+      recordExpiredClassAbsences().catch((error) => {
+        console.error('Class absence recording failed:', error.message);
+      });
+    }, 60_000);
+    classAbsenceTimer.unref();
     app.listen(port, '0.0.0.0', () => {
       console.log(`API listening on http://0.0.0.0:${port}`);
       console.log(`LAN URL: http://<IP_CUA_MAY_TINH>:${port}`);

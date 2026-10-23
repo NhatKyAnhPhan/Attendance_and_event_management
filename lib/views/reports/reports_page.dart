@@ -31,6 +31,7 @@ class _ReportsPageState extends State<ReportsPage> {
         present: _number(summary['present']),
         late: _number(summary['late']),
         absent: _number(summary['absent']),
+        excused: _number(summary['excused']),
         dailyItems: controller.dailyItems.where((item) {
           final query = _query.trim().toLowerCase();
           return query.isEmpty ||
@@ -80,8 +81,8 @@ class _ReportsPageState extends State<ReportsPage> {
       final present = _number(summary['present']);
       final late = _number(summary['late']);
       final absent = _number(summary['absent']);
+      final excused = _number(summary['excused']);
       final total = _number(summary['total']);
-      final classifiedTotal = present + late + absent;
       final query = _query.trim().toLowerCase();
       final filteredItems = controller.dailyItems.where((item) {
         return query.isEmpty ||
@@ -153,7 +154,7 @@ class _ReportsPageState extends State<ReportsPage> {
             LayoutBuilder(
               builder: (context, constraints) => GridView.count(
                 crossAxisCount: constraints.maxWidth >= 800
-                    ? 4
+                    ? 5
                     : constraints.maxWidth >= 520
                     ? 2
                     : 1,
@@ -174,7 +175,7 @@ class _ReportsPageState extends State<ReportsPage> {
                     color: colors.success,
                   ),
                   _SummaryTile(
-                    title: 'Muộn',
+                    title: 'Đi muộn',
                     value: _percentage(late, total),
                     color: colors.warning,
                   ),
@@ -182,6 +183,11 @@ class _ReportsPageState extends State<ReportsPage> {
                     title: 'Vắng',
                     value: _percentage(absent, total),
                     color: colors.danger,
+                  ),
+                  _SummaryTile(
+                    title: 'Vắng có phép',
+                    value: _percentage(excused, total),
+                    color: colors.primary,
                   ),
                 ],
               ),
@@ -197,7 +203,7 @@ class _ReportsPageState extends State<ReportsPage> {
                   color: colors.success,
                 ),
                 StatisticsChartDatum(
-                  label: 'Muộn',
+                  label: 'Đi muộn',
                   value: late,
                   color: colors.warning,
                 ),
@@ -206,12 +212,11 @@ class _ReportsPageState extends State<ReportsPage> {
                   value: absent,
                   color: colors.danger,
                 ),
-                if (total > classifiedTotal)
-                  StatisticsChartDatum(
-                    label: 'Khác / chưa phân loại',
-                    value: total - classifiedTotal,
-                    color: colors.mutedForeground,
-                  ),
+                StatisticsChartDatum(
+                  label: 'Vắng có phép',
+                  value: excused,
+                  color: colors.primary,
+                ),
               ],
             ),
             const SizedBox(height: 24),
@@ -263,7 +268,7 @@ class _ReportsPageState extends State<ReportsPage> {
                         .toList(),
                   ),
                   StatisticsChartSeries(
-                    label: 'Muộn',
+                    label: 'Đi muộn',
                     color: colors.warning,
                     values: filteredItems
                         .map((item) => _number(item['late']))
@@ -274,6 +279,13 @@ class _ReportsPageState extends State<ReportsPage> {
                     color: colors.danger,
                     values: filteredItems
                         .map((item) => _number(item['absent']))
+                        .toList(),
+                  ),
+                  StatisticsChartSeries(
+                    label: 'Vắng có phép',
+                    color: colors.primary,
+                    values: filteredItems
+                        .map((item) => _number(item['excused']))
                         .toList(),
                   ),
                 ],
@@ -375,7 +387,7 @@ class _DailyRow extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           _CountLabel(
-            label: 'Muộn',
+            label: 'Đi muộn',
             value: item['late'],
             color: colors.warning,
           ),
@@ -384,6 +396,12 @@ class _DailyRow extends StatelessWidget {
             label: 'Vắng',
             value: item['absent'],
             color: colors.danger,
+          ),
+          const SizedBox(width: 12),
+          _CountLabel(
+            label: 'Vắng có phép',
+            value: item['excused'],
+            color: colors.primary,
           ),
         ],
       ),

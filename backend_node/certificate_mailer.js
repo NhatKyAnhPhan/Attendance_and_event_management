@@ -49,6 +49,7 @@ async function createCertificatePdf({
   certificateId,
   issuedAt,
   verificationUrl,
+  isSample = false,
 }) {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Không tìm thấy mẫu chứng nhận: ${templatePath}`);
@@ -90,10 +91,10 @@ async function createCertificatePdf({
   });
 
   document.save();
-  document.fillColor('#ffffff').rect(385, 273, 150, 17).fill();
+  document.fillColor('#ffffff').rect(340, 271, 260, 22).fill();
   document.restore();
   document.fontSize(12).text(`MSSV: ${studentId}`, 250, 274, {
-    width: 342,
+    width: 440,
     height: 17,
     align: 'center',
     lineBreak: false,
@@ -122,17 +123,17 @@ async function createCertificatePdf({
   const eventDate = startDate === endDate ? startDate : `${startDate} - ${endDate}`;
 
   document.save();
-  document.fillColor('#ffffff').rect(342, 366, 300, 39).fill();
+  document.fillColor('#ffffff').rect(304, 360, 350, 45).fill();
   document.restore();
   document.fontSize(11).fillColor('#10274d');
-  document.text(`Thời gian tổ chức: ${eventDate}`, 348, 369, {
-    width: 285,
+  document.text(`Thời gian tổ chức: ${eventDate}`, 310, 369, {
+    width: 340,
     height: 14,
     lineBreak: false,
     ellipsis: true,
   });
-  document.text(`Địa điểm: ${location}`, 348, 387, {
-    width: 285,
+  document.text(`Địa điểm: ${location}`, 310, 387, {
+    width: 340,
     height: 14,
     lineBreak: false,
     ellipsis: true,
@@ -157,6 +158,9 @@ async function createCertificatePdf({
   });
   document.image(verificationQr, 270, 472, { width: 66, height: 66 });
 
+  document.save();
+  document.fillColor('#ffffff').rect(500, 444, 295, 22).fill();
+  document.restore();
   document.fontSize(10).text(
     `TP. Hồ Chí Minh, ngày ${new Intl.DateTimeFormat('vi-VN', {
       day: '2-digit',
@@ -168,6 +172,20 @@ async function createCertificatePdf({
     448,
     { width: 260, align: 'right', lineBreak: false, ellipsis: true },
   );
+
+  if (isSample) {
+    document
+      .save()
+      .rotate(-24, { origin: [pageWidth / 2, pageHeight / 2] })
+      .fontSize(42)
+      .fillColor('#b91c1c', 0.2)
+      .text('BẢN MẪU KIỂM THỬ', 60, pageHeight / 2 - 20, {
+        width: pageWidth - 120,
+        align: 'center',
+        lineBreak: false,
+      })
+      .restore();
+  }
 
   document.end();
   return pdfBuffer;

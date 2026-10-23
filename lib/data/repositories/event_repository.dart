@@ -133,6 +133,7 @@ class EventRepository {
     required String description,
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
+    required List<Map<String, dynamic>> attendancePeriods,
   }) async {
     await _client.post(
       '/api/organizer/events',
@@ -146,6 +147,7 @@ class EventRepository {
         'description': description,
         'benefits': benefits,
         'rules': rules,
+        'attendancePeriods': attendancePeriods,
       },
     );
   }
@@ -162,6 +164,7 @@ class EventRepository {
     required String description,
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
+    required List<Map<String, dynamic>> attendancePeriods,
   }) async {
     await _client.put(
       '/api/organizer/events/$id',
@@ -175,6 +178,7 @@ class EventRepository {
         'description': description,
         'benefits': benefits,
         'rules': rules,
+        'attendancePeriods': attendancePeriods,
       },
     );
   }
@@ -192,10 +196,15 @@ class EventRepository {
     String eventId, {
     required double latitude,
     required double longitude,
+    String? periodId,
   }) async {
     final body = await _client.post(
       ApiEndpoints.eventAttendanceQr(eventId),
-      data: {'latitude': latitude, 'longitude': longitude},
+      data: {
+        'latitude': latitude,
+        'longitude': longitude,
+        'periodId': ?periodId,
+      },
     );
     final qr = body['qr']?.toString();
     if (qr == null || qr.isEmpty) {

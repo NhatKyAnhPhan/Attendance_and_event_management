@@ -9,8 +9,15 @@ void main() {
       present: 8,
       late: 2,
       absent: 2,
+      excused: 1,
       dailyItems: [
-        {'date': '2026-10-22', 'present': 3, 'late': 1, 'absent': 0},
+        {
+          'date': '2026-10-22',
+          'present': 3,
+          'late': 1,
+          'absent': 0,
+          'excused': 1,
+        },
       ],
     );
 
@@ -18,7 +25,7 @@ void main() {
     final summary = workbook.tables['Tong quan']!;
     final daily = workbook.tables['Chi tiet theo ngay']!;
 
-    expect(summary.rows, hasLength(6));
+    expect(summary.rows, hasLength(7));
     expect(
       summary.rows[1][0]?.value,
       isA<TextCellValue>().having(
@@ -31,8 +38,9 @@ void main() {
     expect(summary.rows[2][1]?.value, const IntCellValue(8));
     expect(summary.rows[3][1]?.value, const IntCellValue(2));
     expect(summary.rows[4][1]?.value, const IntCellValue(2));
+    expect(summary.rows[5][1]?.value, const IntCellValue(1));
     expect(
-      summary.rows[5][1]?.value,
+      summary.rows[6][1]?.value,
       isA<TextCellValue>().having(
         (cell) => cell.value.toString(),
         'scope',
@@ -49,5 +57,6 @@ void main() {
       ),
     );
     expect(daily.rows[1][1]?.value, const IntCellValue(3));
+    expect(daily.rows[1][4]?.value, const IntCellValue(1));
   });
 }

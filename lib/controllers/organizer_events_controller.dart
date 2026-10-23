@@ -97,6 +97,7 @@ class OrganizerEventsController extends GetxController {
     required String description,
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
+    required List<Map<String, dynamic>> attendancePeriods,
   }) async {
     await _repository.createOrganizerEvent(
       name: name,
@@ -108,6 +109,7 @@ class OrganizerEventsController extends GetxController {
       description: description,
       benefits: benefits,
       rules: rules,
+      attendancePeriods: attendancePeriods,
     );
     await load();
   }
@@ -124,6 +126,7 @@ class OrganizerEventsController extends GetxController {
     required String description,
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
+    required List<Map<String, dynamic>> attendancePeriods,
   }) async {
     await _repository.updateOrganizerEvent(
       id: id,
@@ -136,6 +139,7 @@ class OrganizerEventsController extends GetxController {
       description: description,
       benefits: benefits,
       rules: rules,
+      attendancePeriods: attendancePeriods,
     );
     await load();
   }
@@ -155,11 +159,13 @@ class OrganizerEventsController extends GetxController {
     String eventId, {
     required double latitude,
     required double longitude,
+    String? periodId,
   }) {
     return _repository.createEventAttendanceQr(
       eventId,
       latitude: latitude,
       longitude: longitude,
+      periodId: periodId,
     );
   }
 

@@ -953,6 +953,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
       [classId, className].where((value) => value.isNotEmpty).join(' · '),
     );
     add('Buổi học', details['sessionName'] ?? details['classSessionId']);
+    add('Khung điểm danh', details['periodName']);
     add('Giảng viên', details['lecturerName'] ?? details['organizerName']);
     add('Phòng / địa điểm', details['room'] ?? details['location']);
     final checkedInAt = DateTime.tryParse(

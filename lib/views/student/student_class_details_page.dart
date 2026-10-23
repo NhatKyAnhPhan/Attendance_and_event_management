@@ -203,6 +203,29 @@ class _StudentClassDetailsPageState extends State<StudentClassDetailsPage> {
         ),
         const SizedBox(height: 14),
         _DetailSection(
+          title: 'Kết quả điểm danh từng buổi',
+          colors: colors,
+          children: detail.attendanceSessions.isEmpty
+              ? [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      'Chưa có buổi điểm danh nào.',
+                      style: AppTextStyles.bodySm(colors.mutedForeground),
+                    ),
+                  ),
+                ]
+              : detail.attendanceSessions
+                    .map(
+                      (session) => _AttendanceSessionRow(
+                        session: session,
+                        colors: colors,
+                      ),
+                    )
+                    .toList(),
+        ),
+        const SizedBox(height: 14),
+        _DetailSection(
           title: 'Danh sách sinh viên (${detail.students.length})',
           colors: colors,
           children: detail.students.isEmpty
@@ -271,6 +294,75 @@ class _StudentClassDetailsPageState extends State<StudentClassDetailsPage> {
                     .toList(),
         ),
       ],
+    );
+  }
+}
+
+class _AttendanceSessionRow extends StatelessWidget {
+  final StudentClassAttendance session;
+  final AppColors colors;
+
+  const _AttendanceSessionRow({required this.session, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = switch (session.status) {
+      'Có mặt' => colors.success,
+      'Đi trễ' => colors.warning,
+      'Vắng mặt' => colors.danger,
+      _ => colors.primary,
+    };
+    final details = [
+      if (session.startTime.isNotEmpty) session.startTime,
+      if (session.checkedInAt.isNotEmpty)
+        'Điểm danh lúc ${session.checkedInAt}',
+      if (session.method.isNotEmpty) 'Hình thức ${session.method}',
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.fact_check_outlined, size: 20, color: colors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  session.name.isEmpty ? 'Buổi học' : session.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.displayXs(colors.foreground),
+                ),
+                if (details.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    details.join(' · '),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.bodyXs(colors.mutedForeground),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              session.status,
+              style: AppTextStyles.bodyXs(statusColor)
+                  .copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

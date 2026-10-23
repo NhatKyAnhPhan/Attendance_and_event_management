@@ -39,5 +39,7 @@ class ApiEndpoints {
   static String studentCertificatePdf(String certificateId) =>
       '$studentCertificates/${Uri.encodeComponent(certificateId)}/pdf';
   static const staffCertificates = '/api/staff/certificates';
+  static String staffCertificatePdf(String certificateId) =>
+      '$staffCertificates/${Uri.encodeComponent(certificateId)}/pdf';
   static const staffFeedback = '/api/staff/feedback';
 }

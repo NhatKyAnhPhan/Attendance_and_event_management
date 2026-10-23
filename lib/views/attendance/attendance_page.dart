@@ -17,10 +17,7 @@ import 'qr_generator_page.dart';
 class AttendancePage extends StatefulWidget {
   final bool initialShowEventAttendance;
 
-  const AttendancePage({
-    super.key,
-    this.initialShowEventAttendance = false,
-  });
+  const AttendancePage({super.key, this.initialShowEventAttendance = false});
 
   @override
   State<AttendancePage> createState() => _AttendancePageState();
@@ -28,6 +25,7 @@ class AttendancePage extends StatefulWidget {
 
 class _AttendancePageState extends State<AttendancePage> {
   String _query = '';
+  String? _selectedClassId;
   late bool _showEventAttendance;
   final GlobalKey<EventAttendanceSectionState> _eventAttendanceKey =
       GlobalKey<EventAttendanceSectionState>();
@@ -43,8 +41,16 @@ class _AttendancePageState extends State<AttendancePage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final c = AppColors.of(isDark);
+    final auth = Get.find<AuthController>();
+    final role = auth.role.value;
+    final sourceRole = auth.currentUser.value?['role']?.toString() ?? '';
+    final isEmployee =
+        role == Role.organizer &&
+        (sourceRole.isEmpty || RoleX.isEmployee(sourceRole));
+    if (isEmployee) {
+      return EventAttendanceSection(key: _eventAttendanceKey);
+    }
     final controller = Get.put(AttendanceController());
-    final role = Get.find<AuthController>().role.value;
     final canCreateSession = role == Role.admin || role == Role.lecturer;
     final canViewEventAttendance = role == Role.admin || role == Role.organizer;
 
@@ -54,16 +60,24 @@ class _AttendancePageState extends State<AttendancePage> {
         return query.isEmpty ||
             session.values.join(' ').toLowerCase().contains(query);
       }).toList();
-      final classSummaries = _aggregateByClass(sessions);
-      final present = sessions.fold<int>(
+      final summarySessions = _selectedClassId == null
+          ? sessions
+          : sessions
+                .where(
+                  (session) =>
+                      session['classId']?.toString() == _selectedClassId,
+                )
+                .toList();
+      final classSummaries = _aggregateByClass(summarySessions);
+      final present = summarySessions.fold<int>(
         0,
         (total, item) => total + _count(item['present']),
       );
-      final late = sessions.fold<int>(
+      final late = summarySessions.fold<int>(
         0,
         (total, item) => total + _count(item['late']),
       );
-      final absent = sessions.fold<int>(
+      final absent = summarySessions.fold<int>(
         0,
         (total, item) => total + _count(item['absent']),
       );
@@ -71,6 +85,14 @@ class _AttendancePageState extends State<AttendancePage> {
       final attendanceRate = resultCount == 0
           ? 0
           : (present * 100 / resultCount).round();
+      final selectedClassName = summarySessions.isEmpty
+          ? null
+          : summarySessions.first['className']?.toString().trim();
+      final summaryTitle = _selectedClassId == null
+          ? 'Tổng hợp tất cả lớp'
+          : selectedClassName?.isNotEmpty == true
+          ? selectedClassName!
+          : 'Lớp $_selectedClassId';
 
       return RefreshIndicator(
         onRefresh: () => _showEventAttendance
@@ -143,16 +165,20 @@ class _AttendancePageState extends State<AttendancePage> {
                     c,
                     controller,
                     sessions,
+                    selectedClassId: _selectedClassId,
+                    onSelectClass: (classId) =>
+                        setState(() => _selectedClassId = classId),
                     scroll: desktop,
                   );
                   final overview = _buildAttendanceOverview(
                     c,
-                    sessions,
+                    summarySessions,
                     classSummaries,
                     present,
                     late,
                     absent,
                     attendanceRate,
+                    summaryTitle,
                   );
                   if (!desktop) {
                     return Column(
@@ -189,6 +215,8 @@ class _AttendancePageState extends State<AttendancePage> {
     AppColors colors,
     AttendanceController controller,
     List<Map<String, dynamic>> sessions, {
+    required String? selectedClassId,
+    required ValueChanged<String?> onSelectClass,
     required bool scroll,
   }) {
     final panelHeight = (MediaQuery.sizeOf(context).height - 210).clamp(
@@ -219,6 +247,15 @@ class _AttendancePageState extends State<AttendancePage> {
             (session) => _SessionCard(
               session: session,
               c: colors,
+              selected:
+                  session['classId']?.toString() == selectedClassId &&
+                  selectedClassId != null,
+              onSelect: () {
+                final classId = session['classId']?.toString();
+                if (classId != null && classId.isNotEmpty) {
+                  onSelectClass(classId);
+                }
+              },
               onOpenRoster: () => Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => AttendanceRosterPage(
@@ -234,9 +271,28 @@ class _AttendancePageState extends State<AttendancePage> {
           .toList();
       content = scroll
           ? Scrollbar(
-              child: ListView(padding: EdgeInsets.zero, children: cards),
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _SessionsPanelHeader(
+                    colors: colors,
+                    isSummary: selectedClassId == null,
+                    onShowSummary: () => onSelectClass(null),
+                  ),
+                  ...cards,
+                ],
+              ),
             )
-          : Column(children: cards);
+          : Column(
+              children: [
+                _SessionsPanelHeader(
+                  colors: colors,
+                  isSummary: selectedClassId == null,
+                  onShowSummary: () => onSelectClass(null),
+                ),
+                ...cards,
+              ],
+            );
     }
     return Container(
       height: scroll ? panelHeight : null,
@@ -265,9 +321,20 @@ class _AttendancePageState extends State<AttendancePage> {
     int late,
     int absent,
     int attendanceRate,
+    String title,
   ) {
     return Column(
       children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              title,
+              style: AppTextStyles.displaySm(colors.foreground),
+            ),
+          ),
+        ),
         LayoutBuilder(
           builder: (context, constraints) => GridView.count(
             crossAxisCount: constraints.maxWidth >= 560 ? 3 : 1,
@@ -290,7 +357,7 @@ class _AttendancePageState extends State<AttendancePage> {
                 bg: const Color(0xFFDCFCE7),
               ),
               _SummaryCard(
-                title: 'Chưa điểm danh',
+                title: 'Vắng mặt',
                 value: '$absent',
                 color: colors.warning,
                 bg: const Color(0xFFFEF3C7),
@@ -325,6 +392,7 @@ class _AttendancePageState extends State<AttendancePage> {
           StatisticsBarChart(
             title: 'Kết quả theo mã học phần',
             colors: colors,
+            verticalCategories: true,
             categories: classSummaries
                 .map((item) => item['classId'].toString())
                 .toList(),
@@ -382,11 +450,15 @@ class _AttendancePageState extends State<AttendancePage> {
 class _SessionCard extends StatelessWidget {
   final Map<String, dynamic> session;
   final AppColors c;
+  final bool selected;
+  final VoidCallback onSelect;
   final VoidCallback onOpenRoster;
 
   const _SessionCard({
     required this.session,
     required this.c,
+    required this.selected,
+    required this.onSelect,
     required this.onOpenRoster,
   });
 
@@ -404,91 +476,133 @@ class _SessionCard extends StatelessWidget {
       session['method']?.toString() ?? '',
     ].where((value) => value.isNotEmpty).join(' · ');
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: c.card,
-        border: Border.all(color: c.border),
+    return Material(
+      color: selected ? c.secondary : c.card,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onSelect,
         borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.035),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            border: Border.all(color: selected ? c.primary : c.border),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.035),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: c.secondary,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.qr_code_2_outlined,
-                  size: 20,
-                  color: c.primary,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: c.secondary,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.qr_code_2_outlined,
+                      size: 20,
+                      color: c.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          session['className']?.toString().isNotEmpty == true
+                              ? session['className'].toString()
+                              : session['sessionName']?.toString() ??
+                                    'Buổi học',
+                          style: AppTextStyles.displaySm(c.foreground),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: AppTextStyles.bodySm(c.mutedForeground),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AppBadge(label: status, status: badgeStatus),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  _MiniStat(
+                    label: 'Có mặt',
+                    value: '${_AttendancePageState._count(session['present'])}',
+                    color: c.success,
+                  ),
+                  _MiniStat(
+                    label: 'Muộn',
+                    value: '${_AttendancePageState._count(session['late'])}',
+                    color: c.warning,
+                  ),
+                  _MiniStat(
+                    label: 'Vắng',
+                    value: '${_AttendancePageState._count(session['absent'])}',
+                    color: c.danger,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton.icon(
+                  onPressed: onOpenRoster,
+                  icon: const Icon(Icons.groups_outlined),
+                  label: const Text('Danh sách sinh viên'),
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      session['className']?.toString().isNotEmpty == true
-                          ? session['className'].toString()
-                          : session['sessionName']?.toString() ?? 'Buổi học',
-                      style: AppTextStyles.displaySm(c.foreground),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: AppTextStyles.bodySm(c.mutedForeground),
-                    ),
-                  ],
-                ),
-              ),
-              AppBadge(label: status, status: badgeStatus),
             ],
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              _MiniStat(
-                label: 'Có mặt',
-                value: '${_AttendancePageState._count(session['present'])}',
-                color: c.success,
-              ),
-              _MiniStat(
-                label: 'Muộn',
-                value: '${_AttendancePageState._count(session['late'])}',
-                color: c.warning,
-              ),
-              _MiniStat(
-                label: 'Vắng',
-                value: '${_AttendancePageState._count(session['absent'])}',
-                color: c.danger,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: OutlinedButton.icon(
-              onPressed: onOpenRoster,
-              icon: const Icon(Icons.groups_outlined),
-              label: const Text('Danh sách sinh viên'),
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionsPanelHeader extends StatelessWidget {
+  const _SessionsPanelHeader({
+    required this.colors,
+    required this.isSummary,
+    required this.onShowSummary,
+  });
+
+  final AppColors colors;
+  final bool isSummary;
+  final VoidCallback onShowSummary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Phiên điểm danh theo lớp',
+              style: AppTextStyles.displaySm(colors.foreground),
             ),
+          ),
+          TextButton.icon(
+            onPressed: isSummary ? null : onShowSummary,
+            icon: const Icon(Icons.analytics_outlined),
+            label: const Text('Xem tổng hợp'),
           ),
         ],
       ),

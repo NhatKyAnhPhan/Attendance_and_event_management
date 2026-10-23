@@ -46,11 +46,47 @@ class _EventBenefitDraft {
   }
 }
 
+class _AttendancePeriodDraft {
+  _AttendancePeriodDraft({
+    String name = '',
+    required this.startTime,
+    required this.endTime,
+  }) : nameController = TextEditingController(text: name);
+
+  final TextEditingController nameController;
+  DateTime startTime;
+  DateTime endTime;
+
+  Map<String, dynamic> toJson() => {
+    'name': nameController.text.trim(),
+    'startTime': startTime.toIso8601String(),
+    'endTime': endTime.toIso8601String(),
+  };
+
+  void dispose() => nameController.dispose();
+}
+
 class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
   bool _sendingCertificates = false;
+  DateTimeRange? _dateRange;
   final Set<String> _importingEventIds = {};
+
+  Future<void> _selectDateRange() async {
+    final now = DateTime.now();
+    final selected = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(now.year + 10),
+      initialDateRange: _dateRange ?? DateTimeRange(start: now, end: now),
+      helpText: 'Chọn khoảng thời gian diễn ra sự kiện',
+      saveText: 'ÁP DỤNG',
+    );
+    if (selected != null && mounted) {
+      setState(() => _dateRange = selected);
+    }
+  }
 
   // Hiển thị danh sách sự kiện cùng các thao tác theo vai trò.
   @override
@@ -68,6 +104,27 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       final query = _query.trim().toLowerCase();
       final filteredItems = controller.items.where((event) {
         if (event.isArchived != _showArchived) return false;
+        final dateRange = _dateRange;
+        if (dateRange != null) {
+          final rangeStart = DateTime(
+            dateRange.start.year,
+            dateRange.start.month,
+            dateRange.start.day,
+          );
+          final rangeEnd = DateTime(
+            dateRange.end.year,
+            dateRange.end.month,
+            dateRange.end.day,
+            23,
+            59,
+            59,
+            999,
+          );
+          if (event.endTime.isBefore(rangeStart) ||
+              event.startTime.isAfter(rangeEnd)) {
+            return false;
+          }
+        }
         return [
           event.id,
           event.name,
@@ -160,6 +217,30 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               colors: colors,
               hintText: 'Tìm tên sự kiện, địa điểm, trạng thái...',
               onChanged: (value) => setState(() => _query = value),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _selectDateRange,
+                  icon: const Icon(Icons.date_range_outlined),
+                  label: Text(
+                    _dateRange == null
+                        ? 'Lọc theo ngày'
+                        : '${DateFormat('dd/MM/yyyy').format(_dateRange!.start)}'
+                              ' - ${DateFormat('dd/MM/yyyy').format(_dateRange!.end)}',
+                  ),
+                ),
+                if (_dateRange != null)
+                  IconButton(
+                    tooltip: 'Xóa bộ lọc ngày',
+                    onPressed: () => setState(() => _dateRange = null),
+                    icon: const Icon(Icons.close),
+                  ),
+              ],
             ),
             const SizedBox(height: 16),
             if (controller.error.value.isNotEmpty)
@@ -668,7 +749,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               label: Text(
                 _importingEventIds.contains(event.id)
                     ? 'Đang nhập...'
-                    : 'Nhập Excel',
+                    : 'Thêm sinh viên',
               ),
             ),
           if (Get.find<AuthController>().canManageEvents &&
@@ -874,21 +955,85 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     OrganizerEventSummary event,
   ) async {
     try {
+      final details = await controller.getEventDetails(event.id);
+      if (!context.mounted) return;
+      final periods = (details['attendancePeriods'] as List? ?? const [])
+          .whereType<Map>()
+          .map((period) => Map<String, dynamic>.from(period))
+          .where((period) {
+            final endTime = DateTime.tryParse(
+              period['endTime']?.toString() ?? '',
+            );
+            return endTime != null && endTime.isAfter(DateTime.now());
+          })
+          .toList();
+      String? periodId;
+      String? periodName;
+      DateTime? periodEndTime;
+      if (details['attendancePeriods'] is List &&
+          (details['attendancePeriods'] as List).isNotEmpty) {
+        if (periods.isEmpty) {
+          throw Exception('Tất cả khung điểm danh của sự kiện đã kết thúc.');
+        }
+        final selectedPeriod = await showDialog<Map<String, dynamic>>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Chọn khung điểm danh'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: periods.map((period) {
+                  final startTime = DateTime.parse(
+                    period['startTime'].toString(),
+                  );
+                  final endTime = DateTime.parse(period['endTime'].toString());
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(period['name'].toString()),
+                    subtitle: Text(
+                      '${DateFormat('dd/MM HH:mm').format(startTime)} - '
+                      '${DateFormat('dd/MM HH:mm').format(endTime)}',
+                    ),
+                    onTap: () => Navigator.pop(dialogContext, period),
+                  );
+                }).toList(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Hủy'),
+              ),
+            ],
+          ),
+        );
+        if (selectedPeriod == null || !context.mounted) return;
+        periodId = selectedPeriod['id']?.toString();
+        periodName = selectedPeriod['name']?.toString();
+        periodEndTime = DateTime.parse(selectedPeriod['endTime'].toString());
+      }
       final position = await _getCurrentPosition();
       final result = await controller.createAttendanceQr(
         event.id,
         latitude: position.latitude,
         longitude: position.longitude,
+        periodId: periodId,
       );
       final qr = result['qr'].toString();
       final radiusMeters = (result['radiusMeters'] as num).toInt();
       final sessionId = result['sessionId'].toString();
       final sessionNumber = (result['sessionNumber'] as num).toInt();
+      periodName ??= result['periodName']?.toString();
+      periodEndTime ??= event.endTime;
       if (!context.mounted) return;
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('Phiên điểm danh $sessionNumber'),
+          title: Text(
+            periodName == null
+                ? 'Phiên điểm danh $sessionNumber'
+                : '$periodName · Phiên $sessionNumber',
+          ),
           content: SizedBox(
             width: 300,
             child: Column(
@@ -897,17 +1042,29 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                 Text(event.name, textAlign: TextAlign.center),
                 const SizedBox(height: 12),
                 QrImageView(data: qr, size: 250),
-                const Text(
-                  'Mỗi sinh viên được ghi nhận riêng trong phiên này. '
-                  'Có thể mở phiên mới để điểm danh lần tiếp theo. '
-                  'Ẩn mã QR không đóng phiên.',
+                Text(
+                  periodName == null
+                      ? 'Mỗi sinh viên được ghi nhận riêng trong phiên này. '
+                            'QR có hiệu lực trong thời gian sự kiện. '
+                            'Ẩn mã QR không đóng phiên.'
+                      : 'Mỗi sinh viên được ghi nhận riêng trong phiên này. '
+                            'QR chỉ hợp lệ trong khung giờ đã chọn. '
+                            'Ẩn mã QR không đóng phiên.',
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Mã QR có hiệu lực đến ${DateFormat('dd/MM/yyyy HH:mm').format(event.endTime)}.',
+                  'Mã QR hết hiệu lực lúc ${DateFormat('dd/MM/yyyy HH:mm').format(periodEndTime!)}.',
                   textAlign: TextAlign.center,
                 ),
+                if (periodName != null) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Khoảng nghỉ giữa các khung, ví dụ giờ nghỉ trưa, không '
+                    'được tính là thời gian điểm danh.',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Text('Phạm vi điểm danh: $radiusMeters m.'),
                 if (DateTime.now().isBefore(event.startTime)) ...[
@@ -1229,6 +1386,17 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         event?.startTime ?? DateTime.now().add(const Duration(days: 1));
     DateTime endTime =
         event?.endTime ?? DateTime.now().add(const Duration(days: 1, hours: 2));
+    final attendancePeriods =
+        (currentDetails['attendancePeriods'] as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (period) => _AttendancePeriodDraft(
+                name: period['name']?.toString() ?? '',
+                startTime: DateTime.parse(period['startTime'].toString()),
+                endTime: DateTime.parse(period['endTime'].toString()),
+              ),
+            )
+            .toList();
 
     await showDialog<void>(
       context: context,
@@ -1375,6 +1543,154 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                                 ],
                               );
                             },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _eventFormSection(
+                        colors,
+                        Icons.schedule_outlined,
+                        'Khung điểm danh',
+                        [
+                          Text(
+                            'Tạo các khoảng giờ cần điểm danh. Thời gian nằm '
+                            'giữa hai khung (ví dụ nghỉ trưa) sẽ không nhận '
+                            'điểm danh. Nếu không thêm khung, QR hoạt động '
+                            'trong toàn thời gian sự kiện.',
+                            style: AppTextStyles.bodySm(colors.mutedForeground),
+                          ),
+                          const SizedBox(height: 12),
+                          ...attendancePeriods.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final period = entry.value;
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: colors.muted.withValues(alpha: 0.45),
+                                border: Border.all(color: colors.border),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextFormField(
+                                          controller: period.nameController,
+                                          maxLength: 60,
+                                          decoration: _eventInputDecoration(
+                                            'Tên khung, ví dụ: Buổi sáng',
+                                          ),
+                                          validator: (value) =>
+                                              attendancePeriods.contains(
+                                                    period,
+                                                  ) &&
+                                                  (value == null ||
+                                                      value.trim().isEmpty)
+                                              ? 'Nhập tên khung điểm danh'
+                                              : null,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Xóa khung điểm danh',
+                                        onPressed: () => setState(() {
+                                          attendancePeriods
+                                              .removeAt(index)
+                                              .dispose();
+                                        }),
+                                        icon: const Icon(Icons.delete_outline),
+                                      ),
+                                    ],
+                                  ),
+                                  LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final twoColumns =
+                                          constraints.maxWidth >= 500;
+                                      final itemWidth = twoColumns
+                                          ? (constraints.maxWidth - 12) / 2
+                                          : constraints.maxWidth;
+                                      return Wrap(
+                                        spacing: 12,
+                                        children: [
+                                          SizedBox(
+                                            width: itemWidth,
+                                            child: _eventDateTile(
+                                              colors,
+                                              'Bắt đầu khung',
+                                              DateFormat('dd/MM/yyyy HH:mm')
+                                                  .format(period.startTime),
+                                              () async {
+                                                final selected =
+                                                    await _pickDateTime(
+                                                      context,
+                                                      period.startTime,
+                                                    );
+                                                if (selected != null &&
+                                                    context.mounted) {
+                                                  setState(
+                                                    () => period
+                                                      ..startTime = selected,
+                                                  );
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: itemWidth,
+                                            child: _eventDateTile(
+                                              colors,
+                                              'Kết thúc khung',
+                                              DateFormat('dd/MM/yyyy HH:mm')
+                                                  .format(period.endTime),
+                                              () async {
+                                                final selected =
+                                                    await _pickDateTime(
+                                                      context,
+                                                      period.endTime,
+                                                    );
+                                                if (selected != null &&
+                                                    context.mounted) {
+                                                  setState(
+                                                    () =>
+                                                        period
+                                                          ..endTime = selected,
+                                                  );
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: () => setState(() {
+                                final defaultStart = startTime;
+                                final defaultEnd =
+                                    endTime.isBefore(
+                                      startTime.add(const Duration(hours: 2)),
+                                    )
+                                    ? endTime
+                                    : startTime.add(const Duration(hours: 2));
+                                attendancePeriods.add(
+                                  _AttendancePeriodDraft(
+                                    name:
+                                        'Buổi ${attendancePeriods.length + 1}',
+                                    startTime: defaultStart,
+                                    endTime: defaultEnd,
+                                  ),
+                                );
+                              }),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Thêm khung điểm danh'),
+                            ),
                           ),
                         ],
                       ),
@@ -1555,10 +1871,19 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                     endTime,
                     isEditing,
                   );
-                  if (!formKey.currentState!.validate() || timeError != null) {
-                    if (context.mounted && timeError != null) {
-                      ScaffoldMessenger.of(context)
-                          .showSnackBar(SnackBar(content: Text(timeError)));
+                  final attendancePeriodError = _attendancePeriodError(
+                    attendancePeriods,
+                    startTime,
+                    endTime,
+                  );
+                  if (!formKey.currentState!.validate() ||
+                      timeError != null ||
+                      attendancePeriodError != null) {
+                    final validationError = timeError ?? attendancePeriodError;
+                    if (context.mounted && validationError != null) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text(validationError)));
                     }
                     return;
                   }
@@ -1575,6 +1900,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         .map((rule) => rule.trim())
                         .where((rule) => rule.isNotEmpty)
                         .toList();
+                    final eventAttendancePeriods = attendancePeriods
+                        .map((period) => period.toJson())
+                        .toList();
                     if (isEditing) {
                       await controller.updateEvent(
                         id: event.id,
@@ -1587,6 +1915,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         description: descriptionController.text.trim(),
                         benefits: eventBenefits,
                         rules: eventRules,
+                        attendancePeriods: eventAttendancePeriods,
                       );
                     } else {
                       await controller.createEvent(
@@ -1599,6 +1928,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         description: descriptionController.text.trim(),
                         benefits: eventBenefits,
                         rules: eventRules,
+                        attendancePeriods: eventAttendancePeriods,
                       );
                     }
                   } catch (exception) {
@@ -1624,6 +1954,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     for (final benefit in benefits) {
       benefit.dispose();
     }
+    for (final period in attendancePeriods) {
+      period.dispose();
+    }
     locationController.dispose();
     capacityController.dispose();
     organizerController.dispose();
@@ -1647,6 +1980,33 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     }
     if (isEditing && !endTime.isAfter(now)) {
       return 'Không thể chỉnh sửa sự kiện đã kết thúc.';
+    }
+    return null;
+  }
+
+  static String? _attendancePeriodError(
+    List<_AttendancePeriodDraft> periods,
+    DateTime eventStart,
+    DateTime eventEnd,
+  ) {
+    if (periods.length > 12) {
+      return 'Mỗi sự kiện có thể có tối đa 12 khung điểm danh.';
+    }
+    final ordered = [...periods]
+      ..sort((left, right) => left.startTime.compareTo(right.startTime));
+    for (var index = 0; index < ordered.length; index++) {
+      final period = ordered[index];
+      if (period.nameController.text.trim().isEmpty) {
+        return 'Mỗi khung điểm danh cần có tên.';
+      }
+      if (!period.endTime.isAfter(period.startTime) ||
+          period.startTime.isBefore(eventStart) ||
+          period.endTime.isAfter(eventEnd)) {
+        return 'Khung điểm danh phải nằm trong thời gian sự kiện và có giờ kết thúc sau giờ bắt đầu.';
+      }
+      if (index > 0 && period.startTime.isBefore(ordered[index - 1].endTime)) {
+        return 'Các khung điểm danh không được chồng lấn nhau.';
+      }
     }
     return null;
   }

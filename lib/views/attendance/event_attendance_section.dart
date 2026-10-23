@@ -1,11 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 
+import '../../controllers/auth_controller.dart';
+import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/api/api_client.dart';
+import '../../widgets/statistics_charts.dart';
+import 'student_attendance_detail_page.dart';
 
 class EventAttendanceSection extends StatefulWidget {
   const EventAttendanceSection({super.key});
@@ -23,6 +28,7 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
   bool _requestInProgress = false;
   String? _error;
   String _query = '';
+  String? _selectedEventId;
 
   @override
   void initState() {
@@ -91,6 +97,30 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
       return query.isEmpty || searchable.contains(query);
     }).toList();
 
+    final selectedEvent = _selectedEventId == null
+        ? null
+        : _events.cast<Map<String, dynamic>?>().firstWhere(
+            (event) => event?['id']?.toString() == _selectedEventId,
+            orElse: () => null,
+          );
+    final summaryEvents = selectedEvent == null ? events : [selectedEvent];
+    final registeredCount = summaryEvents.fold<int>(
+      0,
+      (total, event) => total + _count(event['registeredCount']),
+    );
+    final checkedInCount = summaryEvents.fold<int>(
+      0,
+      (total, event) => total + _count(event['checkedInCount']),
+    );
+    final absentCount = summaryEvents.fold<int>(
+      0,
+      (total, event) => total + _count(event['absentCount']),
+    );
+    final pendingCount = summaryEvents.fold<int>(
+      0,
+      (total, event) => total + _count(event['pendingCount']),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -110,7 +140,7 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
           ],
         ),
         Text(
-          'Chọn sự kiện để xem danh sách đăng ký và trạng thái điểm danh.',
+          'Chọn sự kiện bên trái để xem kết quả riêng hoặc xem tổng hợp.',
           style: AppTextStyles.bodySm(colors.mutedForeground),
         ),
         const SizedBox(height: 12),
@@ -153,32 +183,206 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
             const LinearProgressIndicator(),
           ],
           const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 900;
+              final eventList = _buildEventList(
+                events,
+                colors,
+                selectedEvent?['id']?.toString(),
+              );
+              final overview = _buildEventOverview(
+                colors,
+                summaryEvents,
+                registeredCount,
+                checkedInCount,
+                absentCount,
+                pendingCount,
+                selectedEvent,
+              );
+              if (!isWide) {
+                return Column(
+                  children: [eventList, const SizedBox(height: 16), overview],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 44, child: eventList),
+                  const SizedBox(width: 16),
+                  Expanded(flex: 56, child: overview),
+                ],
+              );
+            },
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildEventList(
+    List<Map<String, dynamic>> events,
+    AppColors colors,
+    String? selectedEventId,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.card,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Danh sách sự kiện',
+                  style: AppTextStyles.displaySm(colors.foreground),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: selectedEventId == null
+                    ? null
+                    : () => setState(() => _selectedEventId = null),
+                icon: const Icon(Icons.analytics_outlined),
+                label: const Text('Xem tổng hợp'),
+              ),
+            ],
+          ),
           ...events.map(
             (event) => _EventAttendanceCard(
               event: event,
               colors: colors,
-              onTap: () => Navigator.of(context).push(
+              selected: event['id']?.toString() == selectedEventId,
+              onTap: () =>
+                  setState(() => _selectedEventId = event['id']?.toString()),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEventOverview(
+    AppColors colors,
+    List<Map<String, dynamic>> events,
+    int registeredCount,
+    int checkedInCount,
+    int absentCount,
+    int pendingCount,
+    Map<String, dynamic>? selectedEvent,
+  ) {
+    final title = selectedEvent?['name']?.toString().trim().isNotEmpty == true
+        ? selectedEvent!['name'].toString()
+        : 'Tổng hợp tất cả sự kiện';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(title, style: AppTextStyles.displaySm(colors.foreground)),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) => GridView.count(
+            crossAxisCount: constraints.maxWidth >= 760
+                ? 4
+                : constraints.maxWidth >= 400
+                ? 2
+                : 1,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            mainAxisExtent: 88,
+            children: [
+              _EventSummaryCard(
+                title: selectedEvent == null ? 'Sự kiện' : 'Đăng ký',
+                value: selectedEvent == null
+                    ? '${events.length}'
+                    : '$registeredCount',
+                color: colors.primary,
+                background: colors.secondary,
+              ),
+              _EventSummaryCard(
+                title: 'Đã điểm danh',
+                value: '$checkedInCount',
+                color: colors.success,
+                background: const Color(0xFFDCFCE7),
+              ),
+              _EventSummaryCard(
+                title: 'Vắng mặt',
+                value: '$absentCount',
+                color: colors.danger,
+                background: const Color(0xFFFEE2E2),
+              ),
+              _EventSummaryCard(
+                title: 'Chờ điểm danh',
+                value: '$pendingCount',
+                color: colors.warning,
+                background: const Color(0xFFFEF3C7),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        StatisticsDonutChart(
+          title: 'Phân bổ điểm danh',
+          colors: colors,
+          data: [
+            StatisticsChartDatum(
+              label: 'Đã điểm danh',
+              value: checkedInCount,
+              color: colors.success,
+            ),
+            StatisticsChartDatum(
+              label: 'Vắng mặt',
+              value: absentCount,
+              color: colors.danger,
+            ),
+            StatisticsChartDatum(
+              label: 'Chờ điểm danh',
+              value: pendingCount,
+              color: colors.warning,
+            ),
+          ],
+        ),
+        if (selectedEvent != null) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => _EventAttendanceRosterPage(event: event),
+                  builder: (_) =>
+                      _EventAttendanceRosterPage(event: selectedEvent),
                 ),
               ),
+              icon: const Icon(Icons.groups_outlined),
+              label: const Text('Danh sách sinh viên'),
             ),
           ),
         ],
       ],
     );
   }
+
+  static int _count(dynamic value) =>
+      int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 class _EventAttendanceCard extends StatelessWidget {
   const _EventAttendanceCard({
     required this.event,
     required this.colors,
+    required this.selected,
     required this.onTap,
   });
 
   final Map<String, dynamic> event;
   final AppColors colors;
+  final bool selected;
   final VoidCallback onTap;
 
   @override
@@ -194,8 +398,12 @@ class _EventAttendanceCard extends StatelessWidget {
     final checkedInCount = _count(event['checkedInCount']);
 
     return Card(
-      color: colors.card,
+      color: selected ? colors.secondary : colors.card,
       margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppColors.radius),
+        side: BorderSide(color: selected ? colors.primary : colors.border),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppColors.radius),
         onTap: onTap,
@@ -216,7 +424,10 @@ class _EventAttendanceCard extends StatelessWidget {
                       style: AppTextStyles.displaySm(colors.foreground),
                     ),
                   ),
-                  const Icon(Icons.chevron_right),
+                  Icon(
+                    selected ? Icons.check_circle : Icons.chevron_right,
+                    color: selected ? colors.primary : null,
+                  ),
                 ],
               ),
               const SizedBox(height: 6),
@@ -238,6 +449,11 @@ class _EventAttendanceCard extends StatelessWidget {
                     label: 'Đã điểm danh',
                     count: checkedInCount,
                     color: colors.success,
+                  ),
+                  _CountPill(
+                    label: 'Vắng mặt',
+                    count: _count(event['absentCount']),
+                    color: colors.danger,
                   ),
                 ],
               ),
@@ -263,6 +479,7 @@ class _EventAttendanceRosterPageState
     extends State<_EventAttendanceRosterPage> {
   final ApiClient _client = ApiClient();
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _pageScrollController = ScrollController();
   Timer? _refreshTimer;
   List<Map<String, dynamic>> _students = [];
   bool _loading = true;
@@ -286,6 +503,7 @@ class _EventAttendanceRosterPageState
   void dispose() {
     _refreshTimer?.cancel();
     _searchController.dispose();
+    _pageScrollController.dispose();
     super.dispose();
   }
 
@@ -336,7 +554,6 @@ class _EventAttendanceRosterPageState
       final searchable = [
         student['studentName'],
         student['studentId'],
-        student['email'],
       ].join(' ').toLowerCase();
       return query.isEmpty || searchable.contains(query);
     }).toList();
@@ -346,6 +563,8 @@ class _EventAttendanceRosterPageState
               .startsWith('Đã điểm danh'),
         )
         .length;
+    final canViewStudentDetails =
+        Get.find<AuthController>().role.value != Role.student;
     final eventName = widget.event['name']?.toString() ?? 'Sự kiện';
 
     return Scaffold(
@@ -362,93 +581,157 @@ class _EventAttendanceRosterPageState
       ),
       body: RefreshIndicator(
         onRefresh: _loadStudents,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-              '${_students.length} sinh viên đăng ký · $checkedIn đã điểm danh',
-              style: AppTextStyles.bodySm(colors.mutedForeground),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _searchController,
-              onChanged: (value) => setState(() => _query = value),
-              decoration: InputDecoration(
-                hintText: 'Tìm tên hoặc mã sinh viên',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _query.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: 'Xóa nội dung tìm kiếm',
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _query = '');
-                        },
-                        icon: const Icon(Icons.close),
-                      ),
-                border: const OutlineInputBorder(),
+        child: Scrollbar(
+          controller: _pageScrollController,
+          thumbVisibility: true,
+          interactive: true,
+          child: ListView(
+            controller: _pageScrollController,
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                '${_students.length} sinh viên đăng ký · $checkedIn đã điểm danh · '
+                '${_countStatus(_students, 'Vắng mặt')} vắng mặt',
+                style: AppTextStyles.bodySm(colors.mutedForeground),
               ),
-            ),
-            if (_loading && _students.isEmpty) ...[
-              const SizedBox(height: 24),
-              const Center(child: CircularProgressIndicator()),
-            ] else if (_error != null) ...[
-              const SizedBox(height: 16),
-              _MessageCard(message: _error!, colors: colors, isError: true),
-            ] else if (students.isEmpty) ...[
-              const SizedBox(height: 16),
-              _MessageCard(
-                message: _students.isEmpty
-                    ? 'Sự kiện chưa có sinh viên đăng ký.'
-                    : 'Không tìm thấy sinh viên phù hợp.',
-                colors: colors,
-              ),
-            ] else ...[
-              if (_loading) ...[
-                const SizedBox(height: 8),
-                const LinearProgressIndicator(),
-              ],
               const SizedBox(height: 12),
-              ...students.map((student) {
-                final name = student['studentName']?.toString().trim() ?? '';
-                final studentId = student['studentId']?.toString() ?? '';
-                final checkedAt = _parseDate(student['checkedInAt']);
-                final attendanceStatus =
-                    student['attendanceStatus']?.toString() ?? 'Chưa điểm danh';
-                final isCheckedIn = attendanceStatus.startsWith('Đã điểm danh');
-                final subtitle = [
-                  studentId,
-                  attendanceStatus,
-                  if (checkedAt != null)
-                    'Điểm danh lúc ${DateFormat('dd/MM/yyyy HH:mm').format(checkedAt.toLocal())}',
-                ].where((item) => item.isNotEmpty).join(' · ');
+              TextField(
+                controller: _searchController,
+                onChanged: (value) => setState(() => _query = value),
+                decoration: InputDecoration(
+                  hintText: 'Tìm tên hoặc mã sinh viên',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Xóa nội dung tìm kiếm',
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              if (_loading && _students.isEmpty) ...[
+                const SizedBox(height: 24),
+                const Center(child: CircularProgressIndicator()),
+              ] else if (_error != null) ...[
+                const SizedBox(height: 16),
+                _MessageCard(message: _error!, colors: colors, isError: true),
+              ] else if (students.isEmpty) ...[
+                const SizedBox(height: 16),
+                _MessageCard(
+                  message: _students.isEmpty
+                      ? 'Sự kiện chưa có sinh viên đăng ký.'
+                      : 'Không tìm thấy sinh viên phù hợp.',
+                  colors: colors,
+                ),
+              ] else ...[
+                if (_loading) ...[
+                  const SizedBox(height: 8),
+                  const LinearProgressIndicator(),
+                ],
+                const SizedBox(height: 12),
+                ...students.map((student) {
+                  final name = student['studentName']?.toString().trim() ?? '';
+                  final studentId = student['studentId']?.toString() ?? '';
+                  final checkedAt = _parseDate(student['checkedInAt']);
+                  final attendanceStatus =
+                      student['attendanceStatus']?.toString() ??
+                      'Chưa điểm danh';
+                  final isCheckedIn = attendanceStatus.startsWith(
+                    'Đã điểm danh',
+                  );
+                  final subtitle = [
+                    studentId,
+                    attendanceStatus,
+                    if (checkedAt != null)
+                      'Điểm danh lúc ${DateFormat('dd/MM/yyyy HH:mm').format(checkedAt.toLocal())}',
+                  ].where((item) => item.isNotEmpty).join(' · ');
 
-                return Card(
-                  color: colors.card,
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      child: Text(
-                        name.isEmpty
-                            ? '?'
-                            : name.characters.first.toUpperCase(),
+                  return Card(
+                    color: colors.card,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        child: Text(
+                          name.isEmpty
+                              ? '?'
+                              : name.characters.first.toUpperCase(),
+                        ),
+                      ),
+                      title: Text(name.isEmpty ? 'Sinh viên' : name),
+                      subtitle: Text(subtitle),
+                      onTap: canViewStudentDetails
+                          ? () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => StudentAttendanceDetailPage(
+                                  student: student,
+                                  contextTitle: eventName,
+                                ),
+                              ),
+                            )
+                          : null,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isCheckedIn ? Icons.check_circle : Icons.schedule,
+                            color: isCheckedIn
+                                ? colors.success
+                                : colors.mutedForeground,
+                          ),
+                          if (canViewStudentDetails)
+                            Icon(Icons.chevron_right, color: colors.primary),
+                        ],
                       ),
                     ),
-                    title: Text(name.isEmpty ? 'Sinh viên' : name),
-                    subtitle: Text(subtitle),
-                    trailing: Icon(
-                      isCheckedIn ? Icons.check_circle : Icons.schedule,
-                      color: isCheckedIn
-                          ? colors.success
-                          : colors.mutedForeground,
-                    ),
-                  ),
-                );
-              }),
+                  );
+                }),
+              ],
             ],
-          ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _EventSummaryCard extends StatelessWidget {
+  const _EventSummaryCard({
+    required this.title,
+    required this.value,
+    required this.color,
+    required this.background,
+  });
+
+  final String title;
+  final String value;
+  final Color color;
+  final Color background;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(title, style: AppTextStyles.bodySm(color)),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: AppTextStyles.displayLg(color).copyWith(fontSize: 22),
+          ),
+        ],
       ),
     );
   }
@@ -516,3 +799,7 @@ DateTime? _parseDate(dynamic value) {
 }
 
 int _count(dynamic value) => int.tryParse(value?.toString() ?? '') ?? 0;
+
+int _countStatus(List<Map<String, dynamic>> students, String status) => students
+    .where((student) => student['attendanceStatus']?.toString() == status)
+    .length;

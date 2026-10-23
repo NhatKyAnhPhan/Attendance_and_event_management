@@ -18,6 +18,7 @@ class StudentClassDetail {
   final String departmentId;
   final String departmentName;
   final List<StudentClassSchedule> schedules;
+  final List<StudentClassAttendance> attendanceSessions;
   final List<StudentRosterEntry> students;
 
   const StudentClassDetail({
@@ -38,6 +39,7 @@ class StudentClassDetail {
     required this.departmentId,
     required this.departmentName,
     required this.schedules,
+    required this.attendanceSessions,
     required this.students,
   });
 
@@ -48,10 +50,13 @@ class StudentClassDetail {
     }
     final data = Map<String, dynamic>.from(classInfo);
     final schedules = json['schedules'];
+    final attendanceSessions = json['attendanceSessions'];
     final students = json['students'];
-    if (schedules is! List || students is! List) {
+    if (schedules is! List ||
+        attendanceSessions is! List ||
+        students is! List) {
       throw const FormatException(
-        'Thiếu lịch học hoặc danh sách sinh viên của lớp.',
+        'Thiếu lịch học, kết quả điểm danh hoặc danh sách sinh viên của lớp.',
       );
     }
     return StudentClassDetail(
@@ -79,12 +84,19 @@ class StudentClassDetail {
             ),
           )
           .toList(),
+      attendanceSessions: attendanceSessions
+          .whereType<Map>()
+          .map(
+            (session) => StudentClassAttendance.fromJson(
+              Map<String, dynamic>.from(session),
+            ),
+          )
+          .toList(),
       students: students
           .whereType<Map>()
           .map(
-            (student) => StudentRosterEntry.fromJson(
-              Map<String, dynamic>.from(student),
-            ),
+            (student) =>
+                StudentRosterEntry.fromJson(Map<String, dynamic>.from(student)),
           )
           .toList(),
     );
@@ -92,6 +104,34 @@ class StudentClassDetail {
 
   static int _parseCount(dynamic value) =>
       num.tryParse(value?.toString() ?? '')?.round() ?? 0;
+}
+
+class StudentClassAttendance {
+  final String id;
+  final String name;
+  final String startTime;
+  final String checkedInAt;
+  final String status;
+  final String method;
+
+  const StudentClassAttendance({
+    required this.id,
+    required this.name,
+    required this.startTime,
+    required this.checkedInAt,
+    required this.status,
+    required this.method,
+  });
+
+  factory StudentClassAttendance.fromJson(Map<String, dynamic> json) =>
+      StudentClassAttendance(
+        id: json['id']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        startTime: json['startTime']?.toString() ?? '',
+        checkedInAt: json['checkedInAt']?.toString() ?? '',
+        status: json['status']?.toString() ?? 'Chưa điểm danh',
+        method: json['method']?.toString() ?? '',
+      );
 }
 
 class StudentClassSchedule {

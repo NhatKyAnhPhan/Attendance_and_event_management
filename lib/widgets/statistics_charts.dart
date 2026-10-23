@@ -133,6 +133,7 @@ class StatisticsBarChart extends StatelessWidget {
     required this.categories,
     required this.series,
     required this.colors,
+    this.verticalCategories = false,
   });
 
   /// Tiêu đề biểu đồ.
@@ -147,6 +148,9 @@ class StatisticsBarChart extends StatelessWidget {
   /// Bảng màu của giao diện hiện tại.
   final AppColors colors;
 
+  /// Hiển thị danh mục theo chiều dọc, phù hợp với danh sách dài.
+  final bool verticalCategories;
+
   /// Vẽ nguyên trạng giá trị số và cho phép cuộn khi có nhiều danh mục.
   @override
   Widget build(BuildContext context) {
@@ -155,6 +159,15 @@ class StatisticsBarChart extends StatelessWidget {
         .expand((item) => item.values)
         .fold<int>(0, math.max);
     if (maxValue == 0) return const SizedBox.shrink();
+    if (verticalCategories) {
+      return _VerticalCategoryBarChart(
+        title: title,
+        categories: categories,
+        series: series,
+        colors: colors,
+        maxValue: maxValue,
+      );
+    }
 
     return _ChartFrame(
       title: title,
@@ -388,6 +401,139 @@ class _SeriesLegend extends StatelessWidget {
         const SizedBox(width: 6),
         Text(item.label, style: AppTextStyles.bodyXs(colors.mutedForeground)),
       ],
+    );
+  }
+}
+
+class _VerticalCategoryBarChart extends StatefulWidget {
+  const _VerticalCategoryBarChart({
+    required this.title,
+    required this.categories,
+    required this.series,
+    required this.colors,
+    required this.maxValue,
+  });
+
+  final String title;
+  final List<String> categories;
+  final List<StatisticsChartSeries> series;
+  final AppColors colors;
+  final int maxValue;
+
+  @override
+  State<_VerticalCategoryBarChart> createState() =>
+      _VerticalCategoryBarChartState();
+}
+
+class _VerticalCategoryBarChartState extends State<_VerticalCategoryBarChart> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    final chartHeight = math.min(widget.categories.length * 62.0, 372.0);
+
+    return _ChartFrame(
+      title: widget.title,
+      colors: colors,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.series.length > 1) ...[
+            Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: widget.series
+                  .map((item) => _SeriesLegend(item: item, colors: colors))
+                  .toList(),
+            ),
+            const SizedBox(height: 12),
+          ],
+          SizedBox(
+            height: chartHeight,
+            child: Scrollbar(
+              controller: _scrollController,
+              thumbVisibility: true,
+              interactive: true,
+              child: ListView.separated(
+                controller: _scrollController,
+                padding: const EdgeInsets.only(right: 12),
+                itemCount: widget.categories.length,
+                separatorBuilder: (_, _) =>
+                    Divider(height: 1, color: colors.border),
+                itemBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 96,
+                        child: Text(
+                          widget.categories[index],
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.bodyXs(colors.mutedForeground),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: widget.series.map((item) {
+                            final value = index < item.values.length
+                                ? item.values[index]
+                                : 0;
+                            final color =
+                                item.pointColors != null &&
+                                    index < item.pointColors!.length
+                                ? item.pointColors![index]
+                                : item.color;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: LinearProgressIndicator(
+                                        value: value / widget.maxValue,
+                                        minHeight: 7,
+                                        backgroundColor: colors.border,
+                                        color: color,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: 24,
+                                    child: Text(
+                                      '$value',
+                                      textAlign: TextAlign.end,
+                                      style: AppTextStyles.bodyXs(
+                                        colors.mutedForeground,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

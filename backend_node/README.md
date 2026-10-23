@@ -20,6 +20,11 @@ certificate are skipped. If no checked-in students remain eligible, the API
 reports that no certificate can be issued. Failed email addresses are reported
 so the organizer can correct the account and retry.
 
+The staff certificate list displays only **Đã cấp** and **Chưa cấp**. Staff
+can preview an issued certificate as a PDF from the list; the preview endpoint
+only serves certificates for events within the staff member's unit (admins can
+preview all certificates).
+
 Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` and, when required
 by the provider, `SMTP_USER` / `SMTP_PASSWORD` in `backend_node/.env`. Do not
 commit actual SMTP credentials. Set `PUBLIC_API_BASE_URL` to the externally

@@ -609,6 +609,15 @@ class _EventCard extends StatelessWidget {
                       label: 'Chưa đăng ký',
                       status: BadgeStatus.pending,
                     ),
+              if (event.registered && event.attendanceStatus.isNotEmpty)
+                AppBadge(
+                  label: event.attendanceStatus,
+                  status: switch (event.attendanceStatus) {
+                    'Có mặt' => BadgeStatus.present,
+                    'Vắng mặt' => BadgeStatus.absent,
+                    _ => BadgeStatus.pending,
+                  },
+                ),
               if (event.eventStatus.isNotEmpty)
                 AppBadge(
                   label: event.eventStatus,

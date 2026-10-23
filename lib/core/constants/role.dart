@@ -2,6 +2,15 @@
 enum Role { admin, lecturer, organizer, student }
 
 extension RoleX on Role {
+  /// Nhận diện đúng nhân viên từ vai trò gốc do API trả về.
+  static bool isEmployee(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized == 'nhân viên' ||
+        normalized == 'công nhân viên' ||
+        normalized == 'employee' ||
+        normalized == 'staff';
+  }
+
   /// Kiểm tra vai trò gốc có được phép quản lý sự kiện không.
   static bool canManageEvents(String value) {
     final normalized = value.trim().toLowerCase();
