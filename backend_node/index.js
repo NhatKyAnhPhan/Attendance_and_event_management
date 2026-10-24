@@ -1,6 +1,8 @@
 require('dotenv').config();
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -13,6 +15,10 @@ const { createPasswordResetHandlers } = require('./password_reset_handler');
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const jwtSecret = process.env.JWT_SECRET || 'change-this-development-secret';
+const dbSslCaPath = process.env.DB_SSL_CA?.trim();
+const dbSsl = dbSslCaPath
+  ? { ca: fs.readFileSync(path.resolve(__dirname, dbSslCaPath)) }
+  : undefined;
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || '127.0.0.1',
@@ -23,6 +29,7 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   charset: 'utf8mb4',
+  ssl: dbSsl,
 });
 
 function createCertificatePdfForRequest(request, certificate) {
@@ -64,7 +71,7 @@ END`;
 
 async function synchronizeEventStatuses() {
   await pool.query(
-    `UPDATE sukien sk
+    `UPDATE SuKien sk
      SET Trangthaisukien = ${eventStatusSql}
      WHERE Trangthaisukien <> 'Đã đóng'
        AND NOT (Trangthaisukien <=> ${eventStatusSql})`,
@@ -74,14 +81,14 @@ async function synchronizeEventStatuses() {
 async function recordExpiredClassAbsences() {
   const [sessions] = await pool.execute(
     `SELECT Mabuoidiemdanh AS id
-     FROM buoidiemdanh bpd
+     FROM BuoiDiemDanh bpd
      WHERE (bpd.Trangthaidiemdanh <> 'Đang mở'
         OR bpd.Thoigiandong <= NOW())
        AND EXISTS (
          SELECT 1
-         FROM buoi b
-         INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
-         LEFT JOIN ketquadiemdanh kd
+         FROM Buoi b
+         INNER JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop
+         LEFT JOIN KetQuaDiemDanh kd
            ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
           AND kd.Masv = tvl.Masv
          WHERE b.Mabuoi = bpd.Mabuoi
@@ -95,7 +102,7 @@ async function recordExpiredClassAbsences() {
       await connection.beginTransaction();
       const [[lockedSession]] = await connection.execute(
         `SELECT Mabuoidiemdanh AS id
-         FROM buoidiemdanh
+         FROM BuoiDiemDanh
          WHERE Mabuoidiemdanh = ?
            AND (Trangthaidiemdanh <> 'Đang mở' OR Thoigiandong <= NOW())
          FOR UPDATE`,
@@ -106,15 +113,15 @@ async function recordExpiredClassAbsences() {
         continue;
       }
       await connection.execute(
-        `INSERT INTO ketquadiemdanh
+        `INSERT INTO KetQuaDiemDanh
          (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Mabuoidiemdanh, Masv)
          SELECT CONCAT('RS', UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 20))),
                 COALESCE(bpd.Thoigiandong, NOW()),
                 'Vắng mặt', bpd.Mabuoidiemdanh, tvl.Masv
-         FROM buoidiemdanh bpd
-         INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-         INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
-         LEFT JOIN ketquadiemdanh kd
+         FROM BuoiDiemDanh bpd
+         INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+         INNER JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop
+         LEFT JOIN KetQuaDiemDanh kd
            ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
           AND kd.Masv = tvl.Masv
          WHERE bpd.Mabuoidiemdanh = ?
@@ -233,22 +240,22 @@ function validateEventContent(body) {
 
 async function replaceEventContent(connection, eventId, content) {
   await connection.execute(
-    'UPDATE sukien SET Mota = ? WHERE Masukien = ?',
+    'UPDATE SuKien SET Mota = ? WHERE Masukien = ?',
     [content.description, eventId],
   );
-  await connection.execute('DELETE FROM quyenloi WHERE Masukien = ?', [eventId]);
-  await connection.execute('DELETE FROM noiquy WHERE Masukien = ?', [eventId]);
+  await connection.execute('DELETE FROM QuyenLoi WHERE Masukien = ?', [eventId]);
+  await connection.execute('DELETE FROM NoiQuy WHERE Masukien = ?', [eventId]);
 
   for (const benefit of content.benefits) {
     await connection.execute(
-      `INSERT INTO quyenloi (Maquyenloi, Masukien, Loaiquyenloi, Sodiem, Noidung)
+      `INSERT INTO QuyenLoi (Maquyenloi, Masukien, Loaiquyenloi, Sodiem, Noidung)
        VALUES (?, ?, ?, ?, ?)`,
       [generateRecordId('QL'), eventId, benefit.type, benefit.points, benefit.content],
     );
   }
   for (const [index, rule] of content.rules.entries()) {
     await connection.execute(
-      `INSERT INTO noiquy (Manoiquy, Masukien, Thutu, Noidung)
+      `INSERT INTO NoiQuy (Manoiquy, Masukien, Thutu, Noidung)
        VALUES (?, ?, ?, ?)`,
       [generateRecordId('NQ'), eventId, index + 1, rule],
     );
@@ -291,7 +298,7 @@ async function ensureAttendanceLocationColumns() {
     ['radius_meters', 'INT NOT NULL DEFAULT 150'],
   ]) {
     try {
-      await pool.query(`ALTER TABLE \`buoidiemdanh\` ADD COLUMN \`${column}\` ${definition}`);
+      await pool.query(`ALTER TABLE \`BuoiDiemDanh\` ADD COLUMN \`${column}\` ${definition}`);
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') throw error;
     }
@@ -303,10 +310,19 @@ async function ensureAttendanceDeviceClaimsTable() {
     `CREATE TABLE IF NOT EXISTS attendance_device_claims (
        device_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
        attendance_date DATE NOT NULL,
-       student_id VARCHAR(64) NOT NULL,
-       attendance_session_id VARCHAR(64) NOT NULL,
+       student_id VARCHAR(30) NOT NULL,
+       attendance_session_id VARCHAR(30) NOT NULL,
        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-       PRIMARY KEY (device_id, attendance_session_id)
+       PRIMARY KEY (device_id, attendance_session_id),
+       INDEX idx_attendance_device_claims_student (student_id),
+       INDEX idx_attendance_device_claims_session (attendance_session_id),
+       CONSTRAINT fk_attendance_device_claims_student
+         FOREIGN KEY (student_id) REFERENCES SinhVien (MaSV)
+         ON UPDATE CASCADE ON DELETE CASCADE,
+       CONSTRAINT fk_attendance_device_claims_session
+         FOREIGN KEY (attendance_session_id)
+         REFERENCES BuoiDiemDanh (MabuoiDiemdanh)
+         ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
 
@@ -329,7 +345,7 @@ async function ensureAttendanceDeviceClaimsTable() {
 async function ensurePasswordResetChallengesTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS password_reset_challenges (
-       user_id VARCHAR(64) NOT NULL,
+       user_id VARCHAR(30) NOT NULL,
        email VARCHAR(150) NOT NULL,
        code_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
        reset_token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
@@ -337,7 +353,10 @@ async function ensurePasswordResetChallengesTable() {
        requested_at DATETIME NOT NULL,
        attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
        PRIMARY KEY (user_id),
-       INDEX idx_password_reset_challenges_email (email)
+       INDEX idx_password_reset_challenges_email (email),
+       CONSTRAINT fk_password_reset_challenges_user
+         FOREIGN KEY (user_id) REFERENCES NguoiDung (MaND)
+         ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
 }
@@ -346,13 +365,16 @@ async function ensureEventAttendancePeriodsTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS event_attendance_periods (
        period_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-       event_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+       event_id VARCHAR(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
        name VARCHAR(60) NOT NULL,
        starts_at DATETIME NOT NULL,
        ends_at DATETIME NOT NULL,
        display_order INT NOT NULL DEFAULT 0,
        PRIMARY KEY (period_id),
-       INDEX idx_event_attendance_periods_event (event_id)
+       INDEX idx_event_attendance_periods_event (event_id),
+       CONSTRAINT fk_event_attendance_periods_event
+         FOREIGN KEY (event_id) REFERENCES SuKien (MaSuKien)
+         ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
 }
@@ -393,12 +415,17 @@ function areEventAttendancePeriodsEqual(existing, proposed) {
 async function ensureEventAttendanceTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS event_attendance (
-       event_id VARCHAR(64) NOT NULL,
-       student_id VARCHAR(64) NOT NULL,
+       event_id VARCHAR(30) NOT NULL,
+       student_id VARCHAR(30) NOT NULL,
        device_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
        checked_in_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
        PRIMARY KEY (event_id, student_id),
-       UNIQUE KEY unique_event_attendance_device (event_id, device_id)
+       CONSTRAINT fk_event_attendance_event
+         FOREIGN KEY (event_id) REFERENCES SuKien (MaSuKien)
+         ON UPDATE CASCADE ON DELETE CASCADE,
+       CONSTRAINT fk_event_attendance_student
+         FOREIGN KEY (student_id) REFERENCES SinhVien (MaSV)
+         ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
   const [indexes] = await pool.query('SHOW INDEX FROM event_attendance');
@@ -421,7 +448,7 @@ async function ensureEventAttendanceSessionsTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS event_attendance_sessions (
        session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-       event_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+       event_id VARCHAR(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
          NOT NULL,
        latitude DOUBLE NOT NULL,
        longitude DOUBLE NOT NULL,
@@ -432,10 +459,22 @@ async function ensureEventAttendanceSessionsTable() {
        period_start DATETIME NULL,
        period_end DATETIME NULL,
        closed_at DATETIME NULL,
-       created_by VARCHAR(64) NOT NULL,
+       created_by VARCHAR(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
        opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
        PRIMARY KEY (session_id),
-       INDEX idx_event_attendance_sessions_event (event_id)
+       UNIQUE KEY uq_event_attendance_sessions_session_event (session_id, event_id),
+       INDEX idx_event_attendance_sessions_event (event_id),
+       INDEX idx_event_attendance_sessions_period (period_id),
+       INDEX idx_event_attendance_sessions_created_by (created_by),
+       CONSTRAINT fk_event_attendance_sessions_event
+         FOREIGN KEY (event_id) REFERENCES SuKien (MaSuKien)
+         ON UPDATE CASCADE ON DELETE CASCADE,
+       CONSTRAINT fk_event_attendance_sessions_period
+         FOREIGN KEY (period_id) REFERENCES event_attendance_periods (period_id)
+         ON UPDATE CASCADE ON DELETE SET NULL,
+       CONSTRAINT fk_event_attendance_sessions_created_by
+         FOREIGN KEY (created_by) REFERENCES NguoiDung (MaND)
+         ON UPDATE CASCADE ON DELETE SET NULL
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
   const [columns] = await pool.query('SHOW COLUMNS FROM event_attendance_sessions');
@@ -498,38 +537,89 @@ async function ensureEventAttendanceSessionsTable() {
   if (alterParts.length > 0) {
     await pool.query(`ALTER TABLE event_attendance_sessions ${alterParts.join(', ')}`);
   }
-  await pool.query(
-    `ALTER TABLE event_attendance_sessions
-     MODIFY session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL`,
-  );
+  const sessionIdColumn = columns.find((column) => column.Field === 'session_id');
+  if (
+    sessionIdColumn
+    && (
+      String(sessionIdColumn.Type).toLowerCase() !== 'char(36)'
+      || sessionIdColumn.Null !== 'NO'
+      || sessionIdColumn.Collation !== 'ascii_bin'
+    )
+  ) {
+    await pool.query(
+      `ALTER TABLE event_attendance_sessions
+       MODIFY session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL`,
+    );
+  }
+  const eventIdColumn = columns.find((column) => column.Field === 'event_id');
+  if (
+    eventIdColumn
+    && (
+      String(eventIdColumn.Type).toLowerCase() !== 'varchar(30)'
+      || eventIdColumn.Collation !== 'utf8mb4_unicode_ci'
+    )
+  ) {
+    await pool.query(
+      `ALTER TABLE event_attendance_sessions
+       MODIFY event_id VARCHAR(30) CHARACTER SET utf8mb4
+         COLLATE utf8mb4_unicode_ci NOT NULL`,
+    );
+  }
+  const uniqueIndexes = new Map();
+  for (const index of indexes) {
+    if (Number(index.Non_unique) !== 0) continue;
+    const indexColumns = uniqueIndexes.get(index.Key_name) || [];
+    indexColumns[index.Seq_in_index - 1] = index.Column_name;
+    uniqueIndexes.set(index.Key_name, indexColumns);
+  }
+  if (
+    ![...uniqueIndexes.values()].some(
+      (indexColumns) => indexColumns.join(',') === 'session_id,event_id',
+    )
+  ) {
+    await pool.query(
+      `ALTER TABLE event_attendance_sessions
+       ADD UNIQUE KEY uq_event_attendance_sessions_session_event
+         (session_id, event_id)`,
+    );
+  }
   await pool.query(
     `CREATE TABLE IF NOT EXISTS event_attendance_records (
-       event_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+       event_id VARCHAR(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
        session_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-       student_id VARCHAR(64) NOT NULL,
+       student_id VARCHAR(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
        device_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
        method VARCHAR(16) NOT NULL DEFAULT 'QR',
        checked_in_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
        PRIMARY KEY (session_id, student_id),
        UNIQUE KEY unique_event_session_device (session_id, device_id),
-       INDEX idx_event_attendance_records_event (event_id)
+       INDEX idx_event_attendance_records_event (event_id),
+       INDEX idx_event_attendance_records_student (student_id),
+       INDEX idx_event_attendance_records_session_event (session_id, event_id),
+       CONSTRAINT fk_event_attendance_records_session
+         FOREIGN KEY (session_id, event_id)
+         REFERENCES event_attendance_sessions (session_id, event_id)
+         ON UPDATE CASCADE ON DELETE CASCADE,
+       CONSTRAINT fk_event_attendance_records_student
+         FOREIGN KEY (student_id) REFERENCES SinhVien (MaSV)
+         ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
   const collationMappings = [
     {
-      sourceTable: 'sukien',
+      sourceTable: 'SuKien',
       sourceColumn: 'MaSuKien',
       table: 'event_attendance_sessions',
       column: 'event_id',
     },
     {
-      sourceTable: 'sukien',
+      sourceTable: 'SuKien',
       sourceColumn: 'MaSuKien',
       table: 'event_attendance_records',
       column: 'event_id',
     },
     {
-      sourceTable: 'sinhvien',
+      sourceTable: 'SinhVien',
       sourceColumn: 'MaSV',
       table: 'event_attendance_records',
       column: 'student_id',
@@ -566,7 +656,7 @@ async function ensureEventAttendanceSessionsTable() {
     if (column.collation !== collation) {
       await pool.query(
         `ALTER TABLE ${mapping.table}
-         MODIFY ${mapping.column} VARCHAR(64) CHARACTER SET utf8mb4
+         MODIFY ${mapping.column} VARCHAR(30) CHARACTER SET utf8mb4
            COLLATE ${collation} NOT NULL`,
       );
     }
@@ -633,7 +723,7 @@ function isAdminAuth(auth) {
 async function managesUnit(executor, auth, unitId) {
   if (isAdminAuth(auth)) return true;
   const [[unit]] = await executor.execute(
-    'SELECT 1 AS ok FROM donvi WHERE Madv = ? AND Manv = ? LIMIT 1',
+    'SELECT 1 AS ok FROM DonVi WHERE Madv = ? AND Manv = ? LIMIT 1',
     [unitId, auth.sub],
   );
   return Boolean(unit);
@@ -676,7 +766,7 @@ app.post('/api/auth/login', async (request, response) => {
     const [rows] = await pool.execute(
             `SELECT Mand AS id, Hoten AS name, Email AS email, Matkhau AS password,
               Vaitro AS role, Trangthaind AS status
-             FROM nguoidung
+             FROM NguoiDung
              WHERE Mand = ? OR Email = ?
        LIMIT 1`,
       [identifier, identifier],
@@ -723,11 +813,11 @@ app.get('/api/me', requireAuth, async (request, response) => {
                     nd.GioiTinh AS gender, nd.QueQuan AS hometown,
                     nd.Trangthaind AS status,
                     sv.Lop AS className, sv.Chuyennganh AS major,
-              gv.Bomon AS subjectDepartment, cnv.Chucvu AS position
-             FROM nguoidung nd
-             LEFT JOIN sinhvien sv ON sv.Masv = nd.Mand
-             LEFT JOIN giangvien gv ON gv.Magv = nd.Mand
-              LEFT JOIN congnhanvien cnv ON cnv.Manv = nd.Mand
+              gv.BoMon AS subjectDepartment, cnv.Chucvu AS position
+             FROM NguoiDung nd
+             LEFT JOIN SinhVien sv ON sv.Masv = nd.Mand
+             LEFT JOIN GiangVien gv ON gv.Magv = nd.Mand
+              LEFT JOIN CongNhanVien cnv ON cnv.Manv = nd.Mand
              WHERE nd.Mand = ?
        LIMIT 1`,
       [request.auth.sub],
@@ -786,9 +876,9 @@ app.get('/api/notifications', requireAuth, async (request, response) => {
         "b.Malop AS classId, COALESCE(b.Noidung, '') AS content,",
         "bpd.Phuongthuc AS method, bpd.Thoigianmo AS createdAt,",
         "bpd.Thoigiandong AS closesAt",
-        "FROM buoidiemdanh bpd",
-        "INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi",
-        "INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop",
+        "FROM BuoiDiemDanh bpd",
+        "INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi",
+        "INNER JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop",
         "WHERE tvl.Masv = ?",
         "AND bpd.Trangthaidiemdanh = 'Đang mở'",
         "AND bpd.Thoigiandong > NOW()",
@@ -823,12 +913,12 @@ app.get('/api/classes', requireAuth, async (request, response) => {
                   )
                   ORDER BY lh.ThuTrongTuan, lh.GioBatDau SEPARATOR ' · '
                 )
-                FROM lichhocphan lh WHERE lh.Malop = lhp.Malop
+                FROM LichHocPhan lh WHERE lh.Malop = lhp.Malop
               ), '') AS schedule,
               COALESCE((
                 SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
                   ORDER BY lh.PhongHoc SEPARATOR ', ')
-                FROM lichhocphan lh WHERE lh.Malop = lhp.Malop
+                FROM LichHocPhan lh WHERE lh.Malop = lhp.Malop
               ), '') AS room,
               COALESCE((
                 SELECT GROUP_CONCAT(
@@ -839,7 +929,7 @@ app.get('/api/classes', requireAuth, async (request, response) => {
                   )
                   ORDER BY lh.GioBatDau SEPARATOR ' | '
                 )
-                FROM lichhocphan lh
+                FROM LichHocPhan lh
                 WHERE lh.Malop = lhp.Malop
                   AND lh.ThuTrongTuan = WEEKDAY(CURDATE()) + 1
                   AND (lh.NgayBatDau IS NULL OR lh.NgayBatDau <= CURDATE())
@@ -858,24 +948,24 @@ app.get('/api/classes', requireAuth, async (request, response) => {
                    ELSE ROUND(100 * COALESCE(attendance.present, 0)
                     / (attendance.present + attendance.late + attendance.absent))
               END AS rate
-       FROM lophocphan lhp
-       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-       LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
-       LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
+       FROM LopHocPhan lhp
+       LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN NguoiDung nd ON nd.Mand = gv.Magv
+       LEFT JOIN ThanhVienLop tvl ON tvl.Malop = lhp.Malop
             LEFT JOIN (
               SELECT b.Malop, kd.Masv,
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent,
                 COUNT(DISTINCT bpd.Mabuoidiemdanh) AS sessions
-              FROM ketquadiemdanh kd
-              INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
-              INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
+              FROM KetQuaDiemDanh kd
+              INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+              INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
               GROUP BY b.Malop, kd.Masv
             ) attendance ON attendance.Malop = lhp.Malop
                    AND attendance.Masv = ?
        WHERE EXISTS (
-         SELECT 1 FROM thanhvienlop mine
+         SELECT 1 FROM ThanhVienLop mine
          WHERE mine.Malop = lhp.Malop
            AND mine.Masv = ?
        )
@@ -908,7 +998,7 @@ app.post('/api/classes/join', requireAuth, requireRole('Sinh viên', 'student'),
     const [[classInfo]] = await connection.execute(
       `SELECT Malop, Trangthailop AS status, Soluongtoida AS capacity,
               (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
-       FROM lophocphan WHERE Malop = ? FOR UPDATE`,
+       FROM LopHocPhan WHERE Malop = ? FOR UPDATE`,
       [classCode],
     );
     if (!classInfo) {
@@ -921,7 +1011,7 @@ app.post('/api/classes/join', requireAuth, requireRole('Sinh viên', 'student'),
     }
 
     const [[membership]] = await connection.execute(
-      'SELECT 1 AS isMember FROM thanhvienlop WHERE Malop = ? AND Masv = ? LIMIT 1',
+      'SELECT 1 AS isMember FROM ThanhVienLop WHERE Malop = ? AND Masv = ? LIMIT 1',
       [classInfo.Malop, request.auth.sub],
     );
     if (membership) {
@@ -930,7 +1020,7 @@ app.post('/api/classes/join', requireAuth, requireRole('Sinh viên', 'student'),
     }
 
     const [[count]] = await connection.execute(
-      'SELECT COUNT(*) AS total FROM thanhvienlop WHERE Malop = ?',
+      'SELECT COUNT(*) AS total FROM ThanhVienLop WHERE Malop = ?',
       [classInfo.Malop],
     );
     if (Number(count.total) >= Number(classInfo.capacity)) {
@@ -939,7 +1029,7 @@ app.post('/api/classes/join', requireAuth, requireRole('Sinh viên', 'student'),
     }
 
     await connection.execute(
-      `INSERT INTO thanhvienlop (Malop, Masv, NgayThamGia, TrangThaiThanhVien)
+      `INSERT INTO ThanhVienLop (Malop, Masv, NgayThamGia, TrangThaiThanhVien)
        VALUES (?, ?, CURRENT_DATE, 'Đang tham gia')`,
       [classInfo.Malop, request.auth.sub],
     );
@@ -975,16 +1065,16 @@ app.get(
                 COALESCE(lh.PhongHoc, '') AS room,
                 DATE_FORMAT(lh.NgayBatDau, '%Y-%m-%d') AS startsOn,
                 DATE_FORMAT(lh.NgayKetThuc, '%Y-%m-%d') AS endsOn
-         FROM lophocphan lhp
-         LEFT JOIN monhoc mh ON mh.Mamon = lhp.Mamon
-         LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-         LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
-         LEFT JOIN lichhocphan lh ON lh.Malop = lhp.Malop
+         FROM LopHocPhan lhp
+         LEFT JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
+         LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
+         LEFT JOIN NguoiDung nd ON nd.Mand = gv.Magv
+         LEFT JOIN LichHocPhan lh ON lh.Malop = lhp.Malop
          WHERE COALESCE(lhp.Trangthailop, '') <> 'Đã đóng'
            AND ${
              isStudent
                ? `EXISTS (
-                    SELECT 1 FROM thanhvienlop tvl
+                    SELECT 1 FROM ThanhVienLop tvl
                     WHERE tvl.Malop = lhp.Malop AND tvl.Masv = ?
                   )`
                : 'lhp.Magv = ?'
@@ -1038,16 +1128,16 @@ app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', '
               lhp.Mamon AS subjectId, mh.Tenmon AS subjectName,
               lhp.Madv AS departmentId, COALESCE(dv.Tendv, '') AS departmentName,
               COALESCE(nd.Hoten, '') AS lecturerName,
-              (SELECT COUNT(*) FROM thanhvienlop tvl
+              (SELECT COUNT(*) FROM ThanhVienLop tvl
                WHERE tvl.Malop = lhp.Malop) AS studentCount
-       FROM lophocphan lhp
-       INNER JOIN monhoc mh ON mh.Mamon = lhp.Mamon
-       LEFT JOIN donvi dv ON dv.Madv = lhp.Madv
-       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-       LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
+       FROM LopHocPhan lhp
+       INNER JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
+       LEFT JOIN DonVi dv ON dv.Madv = lhp.Madv
+       LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN NguoiDung nd ON nd.Mand = gv.Magv
        WHERE lhp.Malop = ?
          AND EXISTS (
-           SELECT 1 FROM thanhvienlop mine
+           SELECT 1 FROM ThanhVienLop mine
            WHERE mine.Malop = lhp.Malop AND mine.Masv = ?
          )
        LIMIT 1`,
@@ -1065,7 +1155,7 @@ app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', '
               PhongHoc AS room,
               DATE_FORMAT(NgayBatDau, '%d/%m/%Y') AS startsOn,
               DATE_FORMAT(NgayKetThuc, '%d/%m/%Y') AS endsOn
-       FROM lichhocphan
+       FROM LichHocPhan
        WHERE Malop = ?
        ORDER BY ThuTrongTuan, GioBatDau`,
       [request.params.classId],
@@ -1075,8 +1165,8 @@ app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', '
               COALESCE(nd.Hoten, tvl.Masv) AS studentName,
               COALESCE(tvl.TrangThaiThanhVien, '') AS status,
               DATE_FORMAT(tvl.NgayThamGia, '%d/%m/%Y') AS dateLabel
-       FROM thanhvienlop tvl
-       LEFT JOIN nguoidung nd ON nd.Mand = tvl.Masv
+       FROM ThanhVienLop tvl
+       LEFT JOIN NguoiDung nd ON nd.Mand = tvl.Masv
        WHERE tvl.Malop = ?
        ORDER BY nd.Hoten, tvl.Masv`,
       [request.params.classId],
@@ -1095,9 +1185,9 @@ app.get('/api/classes/:classId/detail', requireAuth, requireRole('Sinh viên', '
                 END
               ) AS status,
               COALESCE(bpd.Phuongthuc, '') AS method
-       FROM buoidiemdanh bpd
-       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       LEFT JOIN ketquadiemdanh kd
+       FROM BuoiDiemDanh bpd
+       INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN KetQuaDiemDanh kd
          ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
         AND kd.Masv = ?
        WHERE b.Malop = ?
@@ -1142,10 +1232,10 @@ app.get('/api/events', requireAuth, async (request, response) => {
                   OR NOW() >= sk.Thoigianketthuc THEN 'Vắng mặt'
                 ELSE 'Chưa điểm danh'
               END AS attendanceStatus
-       FROM sukien sk
-       LEFT JOIN donvi dv ON dv.Madv = sk.Madv
-       LEFT JOIN dangkysukien dkAll ON dkAll.Masukien = sk.Masukien
-       LEFT JOIN dangkysukien dkMine
+       FROM SuKien sk
+       LEFT JOIN DonVi dv ON dv.Madv = sk.Madv
+       LEFT JOIN DangKySuKien dkAll ON dkAll.Masukien = sk.Masukien
+       LEFT JOIN DangKySuKien dkMine
          ON dkMine.Masukien = sk.Masukien
         AND dkMine.Masv = ?
        GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, dv.Tendv,
@@ -1173,13 +1263,13 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
         "sk.Thoigianbatdau AS startTime, sk.Thoigianketthuc AS endTime,",
         "COALESCE(sk.Soluongtoida, 0) AS capacity,",
         "dv.Tendv AS organizerName,",
-        "(SELECT COUNT(*) FROM dangkysukien allRegs",
+        "(SELECT COUNT(*) FROM DangKySuKien allRegs",
         "WHERE allRegs.Masukien = sk.Masukien) AS registeredCount,",
-        "(SELECT COUNT(*) FROM dangkysukien myRegistration",
+        "(SELECT COUNT(*) FROM DangKySuKien myRegistration",
         "WHERE myRegistration.Masukien = sk.Masukien AND myRegistration.Masv = ?) AS isRegistered,",
-        "(SELECT myRegistration.Ngaydangky FROM dangkysukien myRegistration",
+        "(SELECT myRegistration.Ngaydangky FROM DangKySuKien myRegistration",
         "WHERE myRegistration.Masukien = sk.Masukien AND myRegistration.Masv = ? LIMIT 1) AS registeredAt",
-        "FROM sukien sk INNER JOIN donvi dv ON dv.Madv = sk.Madv",
+        "FROM SuKien sk INNER JOIN DonVi dv ON dv.Madv = sk.Madv",
         "WHERE sk.Masukien = ? LIMIT 1",
       ].join(' '),
       [request.auth.sub, request.auth.sub, request.params.eventId],
@@ -1191,7 +1281,7 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
       [benefits] = await pool.execute(
       [
         "SELECT Loaiquyenloi AS type, Sodiem AS points, Noidung AS content",
-        "FROM quyenloi WHERE Masukien = ? ORDER BY Maquyenloi",
+        "FROM QuyenLoi WHERE Masukien = ? ORDER BY Maquyenloi",
       ].join(' '),
       [event.id],
       );
@@ -1203,7 +1293,7 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
       [rules] = await pool.execute(
       [
         "SELECT Thutu AS sortOrder, Noidung AS text",
-        "FROM noiquy WHERE Masukien = ? ORDER BY Thutu",
+        "FROM NoiQuy WHERE Masukien = ? ORDER BY Thutu",
       ].join(' '),
       [event.id],
       );
@@ -1238,9 +1328,9 @@ app.get('/api/student/my-feedback', requireAuth, requireRole('Sinh viên', 'stud
               COALESCE(sk.Tensukien, lhp.Tenlop, '') AS targetName,
               ph.Masukien AS eventId, ph.Malop AS classId,
               ph.Noidung AS content, ph.Thoigiangui AS createdAt
-       FROM phanhoi ph
-       LEFT JOIN sukien sk ON sk.Masukien = ph.Masukien
-       LEFT JOIN lophocphan lhp ON lhp.Malop = ph.Malop
+       FROM PhanHoi ph
+       LEFT JOIN SuKien sk ON sk.Masukien = ph.Masukien
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = ph.Malop
        WHERE ph.Masv = ?
        ORDER BY ph.Thoigiangui DESC, ph.Maphanhoi DESC`,
       [request.auth.sub],
@@ -1256,9 +1346,9 @@ app.get('/api/student/my-feedback', requireAuth, requireRole('Sinh viên', 'stud
               dg.Masukien AS eventId, dg.Malop AS classId,
               dg.Sosao AS rating, COALESCE(dg.Noidung, '') AS content,
               dg.Thoigiandanhgia AS createdAt
-       FROM danhgia dg
-       LEFT JOIN sukien sk ON sk.Masukien = dg.Masukien
-       LEFT JOIN lophocphan lhp ON lhp.Malop = dg.Malop
+       FROM DanhGia dg
+       LEFT JOIN SuKien sk ON sk.Masukien = dg.Masukien
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = dg.Malop
        WHERE dg.Masv = ?
        ORDER BY dg.Thoigiandanhgia DESC, dg.Madanhgia DESC`,
       [request.auth.sub],
@@ -1277,24 +1367,24 @@ app.get('/api/events/:eventId/feedback', requireAuth, async (request, response) 
     const [[summary]] = await pool.execute(
       `SELECT COALESCE(AVG(SoSao), 0) AS averageRating,
               COUNT(*) AS ratingCount
-       FROM danhgia WHERE Masukien = ?`,
+       FROM DanhGia WHERE Masukien = ?`,
       [request.params.eventId],
     );
     const [items] = await pool.execute(
       `SELECT dg.SoSao AS rating,
               COALESCE(NULLIF(dg.Noidung, ''), ph.Noidung, '') AS comment,
               COALESCE(dg.Thoigiandanhgia, ph.Thoigiangui) AS createdAt
-       FROM phanhoi ph
-       LEFT JOIN danhgia dg
+       FROM PhanHoi ph
+       LEFT JOIN DanhGia dg
          ON dg.Masv = ph.Masv AND dg.Masukien = ph.Masukien
        WHERE ph.Masukien = ?
        UNION ALL
        SELECT dg.SoSao AS rating, COALESCE(dg.Noidung, '') AS comment,
               dg.Thoigiandanhgia AS createdAt
-       FROM danhgia dg
+       FROM DanhGia dg
        WHERE dg.Masukien = ?
          AND NOT EXISTS (
-           SELECT 1 FROM phanhoi ph
+           SELECT 1 FROM PhanHoi ph
            WHERE ph.Masv = dg.Masv AND ph.Masukien = dg.Masukien
          )
        ORDER BY createdAt DESC`,
@@ -1333,7 +1423,7 @@ app.post('/api/events/:eventId/feedback', requireAuth, async (request, response)
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[event]] = await connection.execute(
-      `SELECT Masukien AS id FROM sukien
+      `SELECT Masukien AS id FROM SuKien
        WHERE Masukien = ? AND (Thoigianketthuc <= NOW() OR Trangthaisukien = 'Đã đóng')
        FOR UPDATE`,
       [request.params.eventId],
@@ -1345,7 +1435,7 @@ app.post('/api/events/:eventId/feedback', requireAuth, async (request, response)
       });
     }
     const [[registration]] = await connection.execute(
-      `SELECT Masv FROM dangkysukien
+      `SELECT Masv FROM DangKySuKien
        WHERE Masukien = ? AND Masv = ?
          AND Trangthaidangky NOT IN ('Đã hủy', 'Từ chối')
        LIMIT 1`,
@@ -1361,7 +1451,7 @@ app.post('/api/events/:eventId/feedback', requireAuth, async (request, response)
     const normalizedComment = hasComment ? comment.trim() : '';
     if (hasRating) {
       await connection.execute(
-        `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Masukien)
+        `INSERT INTO DanhGia (Madanhgia, Sosao, Noidung, Masv, Masukien)
          VALUES (?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
@@ -1371,7 +1461,7 @@ app.post('/api/events/:eventId/feedback', requireAuth, async (request, response)
     }
     if (normalizedComment) {
       await connection.execute(
-        `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Masukien)
+        `INSERT INTO PhanHoi (Maphanhoi, Noidung, Masv, Masukien)
          VALUES (?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
@@ -1392,7 +1482,7 @@ app.post('/api/events/:eventId/feedback', requireAuth, async (request, response)
 app.get('/api/classes/:classId/feedback', requireAuth, async (request, response) => {
   try {
     const [[classInfo]] = await pool.execute(
-      'SELECT Malop FROM lophocphan WHERE Malop = ? LIMIT 1',
+      'SELECT Malop FROM LopHocPhan WHERE Malop = ? LIMIT 1',
       [request.params.classId],
     );
     if (!classInfo) {
@@ -1401,24 +1491,24 @@ app.get('/api/classes/:classId/feedback', requireAuth, async (request, response)
     const [[summary]] = await pool.execute(
       `SELECT COALESCE(AVG(SoSao), 0) AS averageRating,
               COUNT(*) AS ratingCount
-       FROM danhgia WHERE Malop = ?`,
+       FROM DanhGia WHERE Malop = ?`,
       [request.params.classId],
     );
     const [items] = await pool.execute(
       `SELECT dg.SoSao AS rating,
               COALESCE(NULLIF(dg.Noidung, ''), ph.Noidung, '') AS comment,
               COALESCE(dg.Thoigiandanhgia, ph.Thoigiangui) AS createdAt
-       FROM phanhoi ph
-       LEFT JOIN danhgia dg
+       FROM PhanHoi ph
+       LEFT JOIN DanhGia dg
          ON dg.Masv = ph.Masv AND dg.Malop = ph.Malop
        WHERE ph.Malop = ?
        UNION ALL
        SELECT dg.SoSao AS rating, COALESCE(dg.Noidung, '') AS comment,
               dg.Thoigiandanhgia AS createdAt
-       FROM danhgia dg
+       FROM DanhGia dg
        WHERE dg.Malop = ?
          AND NOT EXISTS (
-           SELECT 1 FROM phanhoi ph
+           SELECT 1 FROM PhanHoi ph
            WHERE ph.Masv = dg.Masv AND ph.Malop = dg.Malop
          )
        ORDER BY createdAt DESC`,
@@ -1457,7 +1547,7 @@ app.post('/api/classes/:classId/feedback', requireAuth, async (request, response
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[classInfo]] = await connection.execute(
-      'SELECT Malop AS id FROM lophocphan WHERE Malop = ? FOR UPDATE',
+      'SELECT Malop AS id FROM LopHocPhan WHERE Malop = ? FOR UPDATE',
       [request.params.classId],
     );
     if (!classInfo) {
@@ -1465,7 +1555,7 @@ app.post('/api/classes/:classId/feedback', requireAuth, async (request, response
       return response.status(404).json({ message: 'Không tìm thấy lớp.' });
     }
     const [[membership]] = await connection.execute(
-      `SELECT Masv FROM thanhvienlop
+      `SELECT Masv FROM ThanhVienLop
        WHERE Malop = ? AND Masv = ? AND TrangThaiThanhVien <> 'Đã rút'
        LIMIT 1`,
       [classInfo.id, request.auth.sub],
@@ -1480,7 +1570,7 @@ app.post('/api/classes/:classId/feedback', requireAuth, async (request, response
     const normalizedComment = hasComment ? comment.trim() : '';
     if (hasRating) {
       await connection.execute(
-        `INSERT INTO danhgia (Madanhgia, Sosao, Noidung, Masv, Malop)
+        `INSERT INTO DanhGia (Madanhgia, Sosao, Noidung, Masv, Malop)
          VALUES (?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            Sosao = VALUES(Sosao), Noidung = VALUES(Noidung),
@@ -1490,7 +1580,7 @@ app.post('/api/classes/:classId/feedback', requireAuth, async (request, response
     }
     if (normalizedComment) {
       await connection.execute(
-        `INSERT INTO phanhoi (Maphanhoi, Noidung, Masv, Malop)
+        `INSERT INTO PhanHoi (Maphanhoi, Noidung, Masv, Malop)
          VALUES (?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            Noidung = VALUES(Noidung), Thoigiangui = CURRENT_TIMESTAMP`,
@@ -1517,7 +1607,7 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
     const [[event]] = await connection.execute(
       `SELECT Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
               Soluongtoida AS capacity, Trangthaisukien AS status
-       FROM sukien WHERE Masukien = ? FOR UPDATE`,
+       FROM SuKien WHERE Masukien = ? FOR UPDATE`,
       [request.params.eventId],
     );
     if (!event) {
@@ -1535,7 +1625,7 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
       return response.status(409).json({ message: 'Sự kiện đã kết thúc, không thể đăng ký.' });
     }
     const [[registrationCount]] = await connection.execute(
-      'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masukien = ?',
+      'SELECT COUNT(*) AS total FROM DangKySuKien WHERE Masukien = ?',
       [request.params.eventId],
     );
     if (Number(registrationCount.total) >= Number(event.capacity)) {
@@ -1545,8 +1635,8 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
 
     const [eventConflicts] = await connection.execute(
       `SELECT sk.Tensukien AS name
-       FROM dangkysukien dk
-       INNER JOIN sukien sk ON sk.Masukien = dk.Masukien
+       FROM DangKySuKien dk
+       INNER JOIN SuKien sk ON sk.Masukien = dk.Masukien
        WHERE dk.Masv = ? AND dk.Masukien <> ?
          AND dk.Trangthaidangky NOT IN ('Từ chối', 'Đã hủy', 'Hủy')
          AND sk.Thoigianbatdau < ? AND sk.Thoigianketthuc > ?
@@ -1563,9 +1653,9 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
 
     const [classConflicts] = await connection.execute(
       `SELECT lhp.Tenlop AS name, b.Noidung AS content
-       FROM thanhvienlop tvl
-       INNER JOIN buoi b ON b.Malop = tvl.Malop
-       INNER JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       FROM ThanhVienLop tvl
+       INNER JOIN Buoi b ON b.Malop = tvl.Malop
+       INNER JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
        WHERE tvl.Masv = ?
          AND b.Thoigianbatdau < ? AND b.Thoigianketthuc > ?
        LIMIT 1`,
@@ -1581,7 +1671,7 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
     }
 
     await connection.execute(
-      `INSERT INTO dangkysukien
+      `INSERT INTO DangKySuKien
        (Masukien, Masv, Ngaydangky, Trangthaidangky)
        VALUES (?, ?, NOW(), 'Chờ duyệt')`,
       [request.params.eventId, request.auth.sub],
@@ -1608,7 +1698,7 @@ app.delete('/api/events/:eventId/register', requireAuth, async (request, respons
   try {
     const [[event]] = await pool.execute(
       `SELECT CASE WHEN Thoigianketthuc <= NOW() THEN 1 ELSE 0 END AS ended
-       FROM sukien WHERE Masukien = ? LIMIT 1`,
+       FROM SuKien WHERE Masukien = ? LIMIT 1`,
       [request.params.eventId],
     );
     if (!event) {
@@ -1620,11 +1710,11 @@ app.delete('/api/events/:eventId/register', requireAuth, async (request, respons
       });
     }
     const [result] = await pool.execute(
-      `DELETE FROM dangkysukien
+      `DELETE FROM DangKySuKien
        WHERE Masukien = ? AND Masv = ?
          AND Ngaydangky >= DATE_SUB(NOW(), INTERVAL 1 DAY)
          AND EXISTS (
-           SELECT 1 FROM sukien sk
+           SELECT 1 FROM SuKien sk
            WHERE sk.Masukien = ? AND sk.Thoigianketthuc > NOW()
          )`,
       [request.params.eventId, request.auth.sub, request.params.eventId],
@@ -1636,8 +1726,8 @@ app.delete('/api/events/:eventId/register', requireAuth, async (request, respons
     const [[registration]] = await pool.execute(
       `SELECT dk.Ngaydangky AS registeredAt,
               CASE WHEN sk.Thoigianketthuc <= NOW() THEN 1 ELSE 0 END AS ended
-       FROM dangkysukien dk
-       INNER JOIN sukien sk ON sk.Masukien = dk.Masukien
+       FROM DangKySuKien dk
+       INNER JOIN SuKien sk ON sk.Masukien = dk.Masukien
        WHERE dk.Masukien = ? AND dk.Masv = ? LIMIT 1`,
       [request.params.eventId, request.auth.sub],
     );
@@ -1663,10 +1753,10 @@ app.get('/api/public/stats', async (_request, response) => {
   try {
     const [[counts]] = await pool.query(
       `SELECT
-         (SELECT COUNT(*) FROM sinhvien) AS students,
-         (SELECT COUNT(*) FROM giangvien) AS lecturers,
-         (SELECT COUNT(*) FROM lophocphan) AS classes,
-         (SELECT COUNT(*) FROM sukien) AS events`,
+         (SELECT COUNT(*) FROM SinhVien) AS students,
+         (SELECT COUNT(*) FROM GiangVien) AS lecturers,
+         (SELECT COUNT(*) FROM LopHocPhan) AS classes,
+         (SELECT COUNT(*) FROM SuKien) AS events`,
     );
     return response.json({
       students: Number(counts.students || 0),
@@ -1689,24 +1779,24 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
 
     if (['quản trị viên', 'admin'].includes(currentRole)) {
       const [[users]] = await pool.query(
-        'SELECT COUNT(*) AS total FROM nguoidung',
+        'SELECT COUNT(*) AS total FROM NguoiDung',
       );
       const [[students]] = await pool.query(
-        'SELECT COUNT(*) AS total FROM sinhvien',
+        'SELECT COUNT(*) AS total FROM SinhVien',
       );
       const [[classes]] = await pool.query(
-        'SELECT COUNT(*) AS total FROM lophocphan',
+        'SELECT COUNT(*) AS total FROM LopHocPhan',
       );
       const [[events]] = await pool.query(
-        'SELECT COUNT(*) AS total FROM sukien',
+        'SELECT COUNT(*) AS total FROM SuKien',
       );
       const [[sessions]] = await pool.query(
-        'SELECT COUNT(*) AS total FROM buoidiemdanh',
+        'SELECT COUNT(*) AS total FROM BuoiDiemDanh',
       );
       const [[attendance]] = await pool.query(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present
-         FROM ketquadiemdanh`,
+         FROM KetQuaDiemDanh`,
       );
       const rate = Number(attendance.total || 0) === 0
         ? 0
@@ -1727,17 +1817,17 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
       const [[events]] = await pool.execute(
         `SELECT COUNT(DISTINCT sk.Masukien) AS total,
                 COUNT(DISTINCT dk.Masv, dk.Masukien) AS registrations
-         FROM donvi dv
-         LEFT JOIN sukien sk ON sk.Madv = dv.Madv
-         LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
+         FROM DonVi dv
+         LEFT JOIN SuKien sk ON sk.Madv = dv.Madv
+         LEFT JOIN DangKySuKien dk ON dk.Masukien = sk.Masukien
          WHERE dv.Manv = ?`,
         [userId],
       );
       const [[certificates]] = await pool.execute(
         `SELECT COUNT(*) AS total
-         FROM chungnhan cn
-         INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
-         INNER JOIN donvi dv ON dv.Madv = sk.Madv
+         FROM ChungNhan cn
+         INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
+         INNER JOIN DonVi dv ON dv.Madv = sk.Madv
          WHERE dv.Manv = ?`,
         [userId],
       );
@@ -1755,9 +1845,9 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
         `SELECT COUNT(DISTINCT lhp.Malop) AS classes,
                 COUNT(DISTINCT tvl.Masv) AS students,
                 COUNT(DISTINCT b.Mabuoi) AS sessions
-         FROM lophocphan lhp
-         LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
-         LEFT JOIN buoi b ON b.Malop = lhp.Malop
+         FROM LopHocPhan lhp
+         LEFT JOIN ThanhVienLop tvl ON tvl.Malop = lhp.Malop
+         LEFT JOIN Buoi b ON b.Malop = lhp.Malop
          WHERE lhp.Magv = ?`,
         [userId],
       );
@@ -1766,10 +1856,10 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
-         FROM ketquadiemdanh kd
-         INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
-         INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-         INNER JOIN lophocphan lhp ON lhp.Malop = b.Malop
+         FROM KetQuaDiemDanh kd
+         INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+         INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+         INNER JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
          WHERE lhp.Magv = ?`,
         [userId],
       );
@@ -1787,11 +1877,11 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
     }
 
     const [[classes]] = await pool.execute(
-      'SELECT COUNT(*) AS total FROM thanhvienlop WHERE Masv = ?',
+      'SELECT COUNT(*) AS total FROM ThanhVienLop WHERE Masv = ?',
       [userId],
     );
     const [[events]] = await pool.execute(
-      'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masv = ?',
+      'SELECT COUNT(*) AS total FROM DangKySuKien WHERE Masv = ?',
       [userId],
     );
     const [[attendance]] = await pool.execute(
@@ -1799,7 +1889,7 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
          SUM(CASE WHEN Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
          SUM(CASE WHEN Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
          SUM(CASE WHEN Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
-      FROM ketquadiemdanh WHERE Masv = ?`,
+      FROM KetQuaDiemDanh WHERE Masv = ?`,
           [userId],
     );
     return response.json({
@@ -1871,7 +1961,7 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
               eas.longitude AS longitude,
               eas.radius_meters AS radiusMeters,
               eas.opened_at AS openedAt
-       FROM sukien sk
+       FROM SuKien sk
        JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
        WHERE sk.Masukien = ?
          AND (? IS NULL OR eas.session_id = ?)
@@ -1907,7 +1997,7 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
 
     const [[registration]] = await connection.execute(
       `SELECT Trangthaidangky AS status
-       FROM dangkysukien
+       FROM DangKySuKien
        WHERE Masukien = ? AND Masv = ?
        LIMIT 1
        FOR UPDATE`,
@@ -1952,11 +2042,11 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
                    OR (previous.opened_at = session.opened_at
                      AND previous.session_id <= session.session_id))) AS sessionNumber
        FROM event_attendance_records ea
-       INNER JOIN sukien sk ON sk.Masukien = ea.event_id
+       INNER JOIN SuKien sk ON sk.Masukien = ea.event_id
        INNER JOIN event_attendance_sessions session
          ON session.session_id = ea.session_id
-       LEFT JOIN donvi dv ON dv.Madv = sk.Madv
-       INNER JOIN nguoidung nd ON nd.Mand = ea.student_id
+       LEFT JOIN DonVi dv ON dv.Madv = sk.Madv
+       INNER JOIN NguoiDung nd ON nd.Mand = ea.student_id
        WHERE ea.event_id = ? AND ea.session_id = ? AND ea.student_id = ?
        LIMIT 1`,
       [event.id, event.sessionId, request.auth.sub],
@@ -2001,7 +2091,7 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
 
   try {
     const [[student]] = await pool.execute(
-      'SELECT Masv AS id FROM sinhvien WHERE Masv = ? LIMIT 1',
+      'SELECT Masv AS id FROM SinhVien WHERE Masv = ? LIMIT 1',
       [request.auth.sub],
     );
     if (!student) {
@@ -2041,10 +2131,10 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
                 END AS isOpen,
                 eas.closed_at AS sessionClosedAt,
                 eas.expires_at AS sessionExpiresAt
-         FROM sukien sk
+         FROM SuKien sk
          JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
-         LEFT JOIN donvi dv ON dv.Madv = sk.Madv
-         JOIN nguoidung nd ON nd.Mand = ?
+         LEFT JOIN DonVi dv ON dv.Madv = sk.Madv
+         JOIN NguoiDung nd ON nd.Mand = ?
          WHERE sk.Masukien = ?
            AND (? IS NULL OR eas.session_id = ?)
            AND eas.closed_at IS NULL
@@ -2067,7 +2157,7 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
       }
       const [[registration]] = await pool.execute(
         `SELECT Trangthaidangky AS status
-         FROM dangkysukien
+         FROM DangKySuKien
          WHERE Masukien = ? AND Masv = ?
          LIMIT 1`,
         [preview.eventId, request.auth.sub],
@@ -2176,9 +2266,9 @@ async function findManagedAttendanceSession(sessionId, auth) {
             bpd.Trangthaidiemdanh AS status,
             bpd.Thoigiandong AS closedAt,
             (bpd.Thoigiandong > NOW()) AS notExpired
-     FROM buoidiemdanh bpd
-     INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-     LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+     FROM BuoiDiemDanh bpd
+     INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+     LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
      WHERE bpd.Mabuoidiemdanh = ?
        AND (
          ? IN ('Quản trị viên', 'admin')
@@ -2186,7 +2276,7 @@ async function findManagedAttendanceSession(sessionId, auth) {
          OR (
            ? IN ('Cán bộ', 'organizer')
            AND EXISTS (
-             SELECT 1 FROM donvi dv
+             SELECT 1 FROM DonVi dv
              WHERE dv.Madv = lhp.Madv AND dv.Manv = ?
            )
          )
@@ -2213,9 +2303,9 @@ app.get('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên
               COALESCE(mh.Tenmon, '') AS subjectName,
               b.Thoigianbatdau AS startTime,
               b.Thoigianketthuc AS endTime
-             FROM buoi b
-             LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-             LEFT JOIN monhoc mh ON mh.Mamon = lhp.Mamon
+             FROM Buoi b
+             LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+             LEFT JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
              WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
              ORDER BY b.Thoigianbatdau DESC`,
       [request.auth.role, request.auth.sub],
@@ -2241,17 +2331,17 @@ app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị
               SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
-       FROM buoidiemdanh bpd
-       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-       LEFT JOIN ketquadiemdanh kd ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
+       FROM BuoiDiemDanh bpd
+       INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN KetQuaDiemDanh kd ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
        WHERE (
          ? IN ('Quản trị viên', 'admin')
          OR (? IN ('Giảng viên', 'lecturer') AND lhp.Magv = ?)
          OR (
            ? IN ('Cán bộ', 'organizer')
            AND EXISTS (
-             SELECT 1 FROM donvi dv
+             SELECT 1 FROM DonVi dv
              WHERE dv.Madv = lhp.Madv AND dv.Manv = ?
            )
          )
@@ -2301,12 +2391,12 @@ app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requi
               kd.Maketqua AS attendanceId,
               kd.Trangthaiketqua AS attendanceStatus,
               kd.Thoigiandiemdanh AS checkedInAt
-       FROM buoidiemdanh bpd
-       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       INNER JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
-       LEFT JOIN nguoidung nd ON nd.Mand = tvl.Masv
-       LEFT JOIN sinhvien sv ON sv.Masv = tvl.Masv
-       LEFT JOIN ketquadiemdanh kd
+       FROM BuoiDiemDanh bpd
+       INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       INNER JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop
+       LEFT JOIN NguoiDung nd ON nd.Mand = tvl.Masv
+       LEFT JOIN SinhVien sv ON sv.Masv = tvl.Masv
+       LEFT JOIN KetQuaDiemDanh kd
          ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
         AND kd.Masv = tvl.Masv
        WHERE bpd.Mabuoidiemdanh = ?
@@ -2362,9 +2452,9 @@ app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requir
 
     const [[student]] = await pool.execute(
       `SELECT tvl.Masv AS id
-       FROM thanhvienlop tvl
-       INNER JOIN buoi b ON b.Malop = tvl.Malop
-       INNER JOIN buoidiemdanh bpd ON bpd.Mabuoi = b.Mabuoi
+       FROM ThanhVienLop tvl
+       INNER JOIN Buoi b ON b.Malop = tvl.Malop
+       INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoi = b.Mabuoi
        WHERE bpd.Mabuoidiemdanh = ? AND tvl.Masv = ?
        LIMIT 1`,
       [request.params.sessionId, request.params.studentId],
@@ -2379,7 +2469,7 @@ app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requir
     await connection.beginTransaction();
     const [[existing]] = await connection.execute(
       `SELECT Maketqua AS id
-       FROM ketquadiemdanh
+       FROM KetQuaDiemDanh
        WHERE Mabuoidiemdanh = ? AND Masv = ?
        LIMIT 1
        FOR UPDATE`,
@@ -2388,14 +2478,14 @@ app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requir
 
     if (existing) {
       await connection.execute(
-        `UPDATE ketquadiemdanh
+        `UPDATE KetQuaDiemDanh
          SET Thoigiandiemdanh = NOW(), Trangthaiketqua = ?
          WHERE Maketqua = ?`,
         [attendanceStatus, existing.id],
       );
     } else {
       await connection.execute(
-        `INSERT INTO ketquadiemdanh
+        `INSERT INTO KetQuaDiemDanh
          (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Mabuoidiemdanh, Masv)
          VALUES (?, NOW(), ?, ?, ?)`,
         [
@@ -2434,10 +2524,10 @@ app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên'
               SUM(CASE WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng có phép' THEN 1 ELSE 0 END) AS excused
-       FROM ketquadiemdanh kd
-       INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
-       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       FROM KetQuaDiemDanh kd
+       INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+       INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
        WHERE kd.Trangthaiketqua IN ('Có mặt', 'Đi trễ', 'Đi muộn', 'Vắng mặt', 'Vắng có phép')
          AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)`,
       scope,
@@ -2448,10 +2538,10 @@ app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên'
               SUM(CASE WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent,
               SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng có phép' THEN 1 ELSE 0 END) AS excused
-       FROM ketquadiemdanh kd
-       INNER JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
-       INNER JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
+       FROM KetQuaDiemDanh kd
+       INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+       INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
        WHERE kd.Thoigiandiemdanh >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
          AND kd.Trangthaiketqua IN ('Có mặt', 'Đi trễ', 'Đi muộn', 'Vắng mặt', 'Vắng có phép')
          AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
@@ -2495,9 +2585,9 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
                   WHEN tvl.Trangthaithanhvien = 'Đang tham gia' THEN tvl.Masv
                 END
               ) AS studentCount
-       FROM buoi b
-       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-       LEFT JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
+       FROM Buoi b
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop
        WHERE b.Mabuoi = ?
          AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
        GROUP BY b.Mabuoi, b.Malop, lhp.Trangthailop,
@@ -2517,7 +2607,7 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
     const closedAt = new Date(openedAt.getTime() + duration * 60 * 1000);
     const id = makeId('AT');
     await pool.execute(
-      `INSERT INTO buoidiemdanh
+      `INSERT INTO BuoiDiemDanh
         (Mabuoidiemdanh, Thoigianmo, Thoigiandong, Phuongthuc, Trangthaidiemdanh,
          Mabuoi, latitude, longitude, radius_meters)
          VALUES (?, ?, ?, ?, 'Đang mở', ?, ?, ?, ?)`,
@@ -2573,7 +2663,7 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
 
   try {
     const [[student]] = await pool.execute(
-      'SELECT Masv AS id FROM sinhvien WHERE Masv = ? LIMIT 1',
+      'SELECT Masv AS id FROM SinhVien WHERE Masv = ? LIMIT 1',
       [request.auth.sub],
     );
     if (!student) {
@@ -2587,7 +2677,7 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
     const [[session]] = await pool.execute(
             `SELECT bpd.Mabuoidiemdanh AS id, bpd.Trangthaidiemdanh AS status,
               bpd.Thoigiandong AS closedAt, bpd.Phuongthuc AS method
-             FROM buoidiemdanh bpd WHERE bpd.Mabuoidiemdanh = ? LIMIT 1`,
+             FROM BuoiDiemDanh bpd WHERE bpd.Mabuoidiemdanh = ? LIMIT 1`,
       [payload.sessionId],
     );
     if (!session || session.status !== 'Đang mở' || new Date(session.closedAt) < new Date()) {
@@ -2607,9 +2697,9 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
 
     const [[membership]] = await pool.execute(
       `SELECT 1 AS enrolled
-       FROM buoidiemdanh bpd
-       JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
+       FROM BuoiDiemDanh bpd
+       JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop
        WHERE bpd.Mabuoidiemdanh = ? AND tvl.Masv = ?
        LIMIT 1`,
       [session.id, request.auth.sub],
@@ -2621,7 +2711,7 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
     }
 
     const [[existing]] = await pool.execute(
-      `SELECT Maketqua AS id FROM ketquadiemdanh
+      `SELECT Maketqua AS id FROM KetQuaDiemDanh
        WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1`,
       [session.id, request.auth.sub],
     );
@@ -2638,7 +2728,7 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
                 COALESCE((
                   SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
                     ORDER BY lh.PhongHoc SEPARATOR ', ')
-                  FROM lichhocphan lh
+                  FROM LichHocPhan lh
                   WHERE lh.Malop = b.Malop
                     AND lh.ThuTrongTuan = WEEKDAY(b.Thoigianbatdau) + 1
                     AND (lh.NgayBatDau IS NULL
@@ -2650,12 +2740,12 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
                 ), '') AS room,
                 ? AS studentId, COALESCE(attendee.Hoten, '') AS studentName,
                 'Chờ xác nhận' AS status, 'QR' AS method
-         FROM buoidiemdanh bpd
-         JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-         LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-         LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-         LEFT JOIN nguoidung lecturer ON lecturer.Mand = gv.Magv
-         LEFT JOIN nguoidung attendee ON attendee.Mand = ?
+         FROM BuoiDiemDanh bpd
+         JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+         LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+         LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
+         LEFT JOIN NguoiDung lecturer ON lecturer.Mand = gv.Magv
+         LEFT JOIN NguoiDung attendee ON attendee.Mand = ?
          WHERE bpd.Mabuoidiemdanh = ?
          LIMIT 1`,
         [request.auth.sub, request.auth.sub, session.id],
@@ -2678,7 +2768,7 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
         [deviceId, request.auth.sub, session.id],
       );
       await connection.execute(
-        `INSERT INTO ketquadiemdanh
+        `INSERT INTO KetQuaDiemDanh
          (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Vitri, Mabuoidiemdanh, Masv)
          VALUES (?, NOW(), 'Có mặt', ?, ?, ?)`,
         [makeId('RS'), JSON.stringify(coordinates), session.id, request.auth.sub],
@@ -2705,7 +2795,7 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
               COALESCE((
                 SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
                   ORDER BY lh.PhongHoc SEPARATOR ', ')
-                FROM lichhocphan lh
+                FROM LichHocPhan lh
                 WHERE lh.Malop = b.Malop
                   AND lh.ThuTrongTuan = WEEKDAY(b.Thoigianbatdau) + 1
                   AND (lh.NgayBatDau IS NULL
@@ -2719,13 +2809,13 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
               kd.Trangthaiketqua AS status,
               kd.Masv AS studentId, COALESCE(attendee.Hoten, '') AS studentName,
               'QR' AS method
-       FROM ketquadiemdanh kd
-       JOIN buoidiemdanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
-       JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-       LEFT JOIN nguoidung lecturer ON lecturer.Mand = gv.Magv
-       LEFT JOIN nguoidung attendee ON attendee.Mand = kd.Masv
+       FROM KetQuaDiemDanh kd
+       JOIN BuoiDiemDanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+       JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN NguoiDung lecturer ON lecturer.Mand = gv.Magv
+       LEFT JOIN NguoiDung attendee ON attendee.Mand = kd.Masv
        WHERE kd.Mabuoidiemdanh = ? AND kd.Masv = ?
        LIMIT 1`,
       [session.id, request.auth.sub],
@@ -2758,16 +2848,16 @@ app.get('/api/attendance/face-options', requireAuth, async (request, response) =
               COALESCE(b.Noidung, '') AS sessionName,
               b.Thoigianbatdau AS startTime,
               bpd.Thoigiandong AS endTime
-       FROM buoidiemdanh bpd
-       JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       JOIN thanhvienlop tvl ON tvl.Malop = b.Malop AND tvl.Masv = ?
-       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-       LEFT JOIN monhoc mh ON mh.Mamon = lhp.Mamon
+       FROM BuoiDiemDanh bpd
+       JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop AND tvl.Masv = ?
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
        WHERE bpd.Trangthaidiemdanh = 'Đang mở'
          AND bpd.Phuongthuc IN ('Face', 'Both')
          AND bpd.Thoigiandong > NOW()
          AND NOT EXISTS (
-           SELECT 1 FROM ketquadiemdanh kd
+           SELECT 1 FROM KetQuaDiemDanh kd
            WHERE kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
              AND kd.Masv = tvl.Masv
          )
@@ -2790,10 +2880,10 @@ app.get('/api/attendance/face-options', requireAuth, async (request, response) =
               ) AS sessionName,
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime
-       FROM sukien sk
+       FROM SuKien sk
        JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
-       JOIN dangkysukien dk ON dk.Masukien = sk.Masukien AND dk.Masv = ?
-       LEFT JOIN donvi dv ON dv.Madv = sk.Madv
+       JOIN DangKySuKien dk ON dk.Masukien = sk.Masukien AND dk.Masv = ?
+       LEFT JOIN DonVi dv ON dv.Madv = sk.Madv
        WHERE eas.expires_at > NOW()
          AND eas.closed_at IS NULL
          AND NOW() >= sk.Thoigianbatdau
@@ -2872,7 +2962,7 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
               COALESCE((
                 SELECT GROUP_CONCAT(DISTINCT lh.PhongHoc
                   ORDER BY lh.PhongHoc SEPARATOR ', ')
-                FROM lichhocphan lh
+                FROM LichHocPhan lh
                 WHERE lh.Malop = b.Malop
                   AND lh.ThuTrongTuan = WEEKDAY(b.Thoigianbatdau) + 1
                   AND (lh.NgayBatDau IS NULL
@@ -2883,13 +2973,13 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
                   AND lh.GioKetThuc >= TIME(b.Thoigianbatdau)
               ), '') AS room,
               COALESCE(attendee.Hoten, '') AS studentName
-       FROM buoidiemdanh bpd
-       JOIN buoi b ON b.Mabuoi = bpd.Mabuoi
-       JOIN thanhvienlop tvl ON tvl.Malop = b.Malop
-       LEFT JOIN lophocphan lhp ON lhp.Malop = b.Malop
-       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-       LEFT JOIN nguoidung lecturer ON lecturer.Mand = gv.Magv
-       LEFT JOIN nguoidung attendee ON attendee.Mand = tvl.Masv
+       FROM BuoiDiemDanh bpd
+       JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+       JOIN ThanhVienLop tvl ON tvl.Malop = b.Malop
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN NguoiDung lecturer ON lecturer.Mand = gv.Magv
+       LEFT JOIN NguoiDung attendee ON attendee.Mand = tvl.Masv
        WHERE bpd.Mabuoidiemdanh = ?
          AND tvl.Masv = ? AND bpd.Trangthaidiemdanh = 'Đang mở'
          AND bpd.Thoigiandong > NOW()
@@ -2904,7 +2994,7 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     }
     if (previewOnly) {
       const [[existing]] = await pool.execute(
-        `SELECT 1 AS id FROM ketquadiemdanh
+        `SELECT 1 AS id FROM KetQuaDiemDanh
          WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1`,
         [session.id, request.auth.sub],
       );
@@ -2950,7 +3040,7 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     }
 
     const [[existing]] = await pool.execute(
-      `SELECT 1 AS id FROM ketquadiemdanh
+      `SELECT 1 AS id FROM KetQuaDiemDanh
        WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1`,
       [session.id, request.auth.sub],
     );
@@ -2966,7 +3056,7 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
         [deviceId, request.auth.sub, session.id],
       );
       await connection.execute(
-        `INSERT INTO ketquadiemdanh
+        `INSERT INTO KetQuaDiemDanh
          (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Vitri, Mabuoidiemdanh, Masv)
          VALUES (?, NOW(), 'Có mặt', ?, ?, ?)`,
         [
@@ -2992,7 +3082,7 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     const [[result]] = await pool.execute(
       `SELECT Thoigiandiemdanh AS checkedInAt,
               Trangthaiketqua AS status
-       FROM ketquadiemdanh
+       FROM KetQuaDiemDanh
        WHERE Mabuoidiemdanh = ? AND Masv = ?
        LIMIT 1`,
       [session.id, request.auth.sub],
@@ -3046,11 +3136,11 @@ async function checkInEventFace(
                      AND previous.session_id <= eas.session_id))) AS sessionNumber,
               nd.Mand AS studentId,
               COALESCE(nd.Hoten, nd.Mand) AS studentName
-       FROM sukien sk
+       FROM SuKien sk
        JOIN event_attendance_sessions eas ON eas.event_id = sk.Masukien
-       JOIN dangkysukien dk ON dk.Masukien = sk.Masukien AND dk.Masv = ?
-       JOIN nguoidung nd ON nd.Mand = dk.Masv
-       LEFT JOIN donvi dv ON dv.Madv = sk.Madv
+       JOIN DangKySuKien dk ON dk.Masukien = sk.Masukien AND dk.Masv = ?
+       JOIN NguoiDung nd ON nd.Mand = dk.Masv
+       LEFT JOIN DonVi dv ON dv.Madv = sk.Madv
        WHERE eas.session_id = ?
          AND eas.expires_at > NOW()
          AND eas.closed_at IS NULL
@@ -3104,7 +3194,7 @@ async function checkInEventFace(
       const [[activeSession]] = await connection.execute(
         `SELECT eas.session_id AS sessionId
          FROM event_attendance_sessions eas
-         JOIN sukien sk ON sk.Masukien = eas.event_id
+         JOIN SuKien sk ON sk.Masukien = eas.event_id
          WHERE eas.session_id = ? AND eas.expires_at > NOW()
            AND eas.closed_at IS NULL
            AND NOW() >= sk.Thoigianbatdau
@@ -3121,7 +3211,7 @@ async function checkInEventFace(
       }
       const [[registration]] = await connection.execute(
         `SELECT 1 AS registered
-         FROM dangkysukien
+         FROM DangKySuKien
          WHERE Masukien = ? AND Masv = ?
            AND LOWER(TRIM(COALESCE(Trangthaidangky, ''))) NOT IN ('từ chối', 'đã hủy', 'hủy')
          LIMIT 1 FOR UPDATE`,
@@ -3190,7 +3280,7 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
               COALESCE(sk.Soluongtoida, 0) AS capacity,
               COUNT(dk.Masv) AS registeredCount,
               (SELECT COUNT(*)
-               FROM dangkysukien dkPresent
+               FROM DangKySuKien dkPresent
                WHERE dkPresent.Masukien = sk.Masukien
                  AND (
                    EXISTS (
@@ -3205,7 +3295,7 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
                    )
                  )) AS checkedInCount,
               (SELECT COUNT(*)
-               FROM dangkysukien dkAbsent
+               FROM DangKySuKien dkAbsent
                WHERE dkAbsent.Masukien = sk.Masukien
                  AND (
                    sk.Trangthaisukien = 'Đã đóng'
@@ -3222,7 +3312,7 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
                      AND ear.student_id = dkAbsent.Masv
                  )) AS absentCount,
               (SELECT COUNT(*)
-               FROM dangkysukien dkPending
+               FROM DangKySuKien dkPending
                WHERE dkPending.Masukien = sk.Masukien
                  AND sk.Trangthaisukien <> 'Đã đóng'
                  AND NOW() < sk.Thoigianketthuc
@@ -3236,10 +3326,10 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
                    WHERE ear.event_id = sk.Masukien
                      AND ear.student_id = dkPending.Masv
                  )) AS pendingCount
-       FROM sukien sk
-       LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
+       FROM SuKien sk
+       LEFT JOIN DangKySuKien dk ON dk.Masukien = sk.Masukien
        WHERE ? = 1 OR EXISTS (
-         SELECT 1 FROM donvi dv WHERE dv.Madv = sk.Madv AND dv.Manv = ?
+         SELECT 1 FROM DonVi dv WHERE dv.Madv = sk.Madv AND dv.Manv = ?
        )
       GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, sk.Diadiem,
                sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien,
@@ -3275,10 +3365,10 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
               sk.Thoigianketthuc AS endTime,
               sk.Trangthaisukien AS status,
               EXISTS (
-                SELECT 1 FROM donvi dv
+                SELECT 1 FROM DonVi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
               ) AS isOrganizer
-       FROM sukien sk
+       FROM SuKien sk
        WHERE sk.Masukien = ?
        LIMIT 1`,
       [request.auth.sub, request.params.eventId],
@@ -3396,11 +3486,11 @@ app.post('/api/organizer/events/:eventId/attendance/sessions/:sessionId/close', 
     const [[session]] = await pool.execute(
       `SELECT eas.session_id AS sessionId,
               EXISTS (
-                SELECT 1 FROM donvi dv
+                SELECT 1 FROM DonVi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
               ) AS isOrganizer
        FROM event_attendance_sessions eas
-       JOIN sukien sk ON sk.Masukien = eas.event_id
+       JOIN SuKien sk ON sk.Masukien = eas.event_id
        WHERE eas.event_id = ? AND eas.session_id = ?
        LIMIT 1`,
       [request.auth.sub, request.params.eventId, request.params.sessionId],
@@ -3447,10 +3537,10 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
               sk.Thoigianketthuc AS endTime,
               sk.Trangthaisukien AS status,
               EXISTS (
-                SELECT 1 FROM donvi dv
+                SELECT 1 FROM DonVi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
               ) AS isOrganizer
-       FROM sukien sk
+       FROM SuKien sk
        WHERE sk.Masukien = ?
        LIMIT 1`,
       [request.auth.sub, request.params.eventId],
@@ -3492,10 +3582,10 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
            )
          GROUP BY ear.event_id, ear.student_id
        ) checked_in
-       LEFT JOIN nguoidung nd ON nd.Mand = checked_in.student_id
+       LEFT JOIN NguoiDung nd ON nd.Mand = checked_in.student_id
        WHERE NOT EXISTS (
          SELECT 1
-         FROM chungnhan issued
+         FROM ChungNhan issued
          WHERE issued.Masv = checked_in.student_id
            AND issued.Masukien = checked_in.event_id
            AND issued.Trangthaichungnhan = 'Đã cấp'
@@ -3561,7 +3651,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         const [existingCertificates] = await connection.execute(
           `SELECT Machungnhan AS id, Ngaycap AS issuedAt,
                   Trangthaichungnhan AS status
-           FROM chungnhan
+           FROM ChungNhan
            WHERE Masv = ? AND Masukien = ?
            ORDER BY Ngaycap DESC, Machungnhan DESC
            FOR UPDATE`,
@@ -3598,7 +3688,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           const year = new Date().getFullYear();
           certificateId = `GCN-${year}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
           await connection.execute(
-            `INSERT INTO chungnhan
+            `INSERT INTO ChungNhan
               (Machungnhan, Masv, Masukien, Ngaycap, Noidung, Trangthaichungnhan)
              VALUES (?, ?, ?, NOW(), ?, 'Đang gửi')`,
             [
@@ -3610,7 +3700,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           );
         } else {
           await connection.execute(
-            `UPDATE chungnhan
+            `UPDATE ChungNhan
              SET Trangthaichungnhan = 'Đang gửi'
              WHERE Machungnhan = ?`,
             [certificateId],
@@ -3643,7 +3733,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           }],
         });
         await connection.execute(
-          `UPDATE chungnhan
+          `UPDATE ChungNhan
            SET Trangthaichungnhan = 'Đã cấp', Ngaycap = NOW()
            WHERE Machungnhan = ?`,
           [certificateId],
@@ -3692,10 +3782,10 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
       `SELECT sk.Masukien AS id,
               sk.Thoigianketthuc AS endTime,
               EXISTS (
-                SELECT 1 FROM donvi dv
+                SELECT 1 FROM DonVi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
               ) AS isOrganizer
-       FROM sukien sk
+       FROM SuKien sk
        WHERE sk.Masukien = ?
        LIMIT 1`,
       [request.auth.sub, request.params.eventId],
@@ -3733,9 +3823,9 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Qu�
               END AS attendanceStatus,
               COALESCE(records.checkedInAt, ea.checked_in_at) AS checkedInAt,
               DATE_FORMAT(dk.Ngaydangky, '%d/%m/%Y') AS dateLabel
-       FROM dangkysukien dk
-       LEFT JOIN nguoidung nd ON nd.Mand = dk.Masv
-       LEFT JOIN sinhvien sv ON sv.Masv = dk.Masv
+       FROM DangKySuKien dk
+       LEFT JOIN NguoiDung nd ON nd.Mand = dk.Masv
+       LEFT JOIN SinhVien sv ON sv.Masv = dk.Masv
        LEFT JOIN event_attendance ea
          ON ea.event_id = dk.Masukien AND ea.student_id = dk.Masv
        LEFT JOIN (
@@ -3786,7 +3876,7 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
     const [[event]] = await connection.execute(
       `SELECT Masukien, Madv AS organizerId, Thoigianketthuc AS endTime,
               Soluongtoida AS capacity, Trangthaisukien AS status
-       FROM sukien WHERE Masukien = ? FOR UPDATE`,
+       FROM SuKien WHERE Masukien = ? FOR UPDATE`,
       [request.params.eventId],
     );
     if (!event) {
@@ -3806,7 +3896,7 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
 
     const placeholders = normalizedIds.map(() => '?').join(', ');
     const [students] = await connection.execute(
-      `SELECT Masv FROM sinhvien WHERE Masv IN (${placeholders})`,
+      `SELECT Masv FROM SinhVien WHERE Masv IN (${placeholders})`,
       normalizedIds,
     );
     const studentsByKey = new Map(
@@ -3823,7 +3913,7 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
     if (validIds.length > 0) {
       const validPlaceholders = validIds.map(() => '?').join(', ');
       const [registrations] = await connection.execute(
-        `SELECT Masv FROM dangkysukien
+        `SELECT Masv FROM DangKySuKien
          WHERE Masukien = ? AND Masv IN (${validPlaceholders})`,
         [event.Masukien, ...validIds],
       );
@@ -3833,7 +3923,7 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
     }
     const newIds = validIds.filter((id) => !alreadyRegisteredIds.has(id));
     const [[registrationCount]] = await connection.execute(
-      'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masukien = ?',
+      'SELECT COUNT(*) AS total FROM DangKySuKien WHERE Masukien = ?',
       [event.Masukien],
     );
     const remainingCapacity = Number(event.capacity) - Number(registrationCount.total);
@@ -3848,7 +3938,7 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
       const batch = newIds.slice(offset, offset + 250);
       const values = batch.map(() => '(?, ?, NOW(), ?)').join(', ');
       await connection.execute(
-        `INSERT INTO dangkysukien
+        `INSERT INTO DangKySuKien
          (Masukien, Masv, Ngaydangky, Trangthaidangky)
          VALUES ${values}`,
         batch.flatMap((studentId) => [event.Masukien, studentId, 'Đã duyệt']),
@@ -3875,7 +3965,7 @@ app.get('/api/organizer/units', requireAuth, requireRole(...eventManagerRoles), 
   try {
     const [rows] = await pool.execute(
       `SELECT Madv AS id, Tendv AS name
-       FROM donvi
+       FROM DonVi
        WHERE ? = 1 OR Manv = ?
        ORDER BY Tendv`,
       [isAdminAuth(request.auth) ? 1 : 0, request.auth.sub],
@@ -3929,7 +4019,7 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
       try {
         await connection.beginTransaction();
         await connection.execute(
-          `INSERT INTO sukien
+          `INSERT INTO SuKien
            (Masukien, Tensukien, Madv, Mota, Thoigianbatdau,
             Thoigianketthuc, Diadiem, Soluongtoida, Trangthaisukien)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra')`,
@@ -4015,7 +4105,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
                 Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
                 Trangthaisukien AS status,
                 (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
-         FROM sukien WHERE Masukien = ? FOR UPDATE`,
+         FROM SuKien WHERE Masukien = ? FOR UPDATE`,
         [request.params.eventId],
       );
       if (!existing) {
@@ -4046,7 +4136,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         });
       }
       const [[registrationCount]] = await connection.execute(
-        'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masukien = ?',
+        'SELECT COUNT(*) AS total FROM DangKySuKien WHERE Masukien = ?',
         [request.params.eventId],
       );
       const hasRegistrations = Number(registrationCount.total) > 0;
@@ -4066,7 +4156,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         });
       }
       const [result] = await connection.execute(
-        `UPDATE sukien
+        `UPDATE SuKien
          SET Tensukien = ?, Madv = ?,
            Thoigianbatdau = ?, Thoigianketthuc = ?,
            Diadiem = ?, Soluongtoida = ?
@@ -4125,7 +4215,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
 app.post('/api/organizer/events/:eventId/close', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   try {
     const [[target]] = await pool.execute(
-      'SELECT Madv AS organizerId FROM sukien WHERE Masukien = ? LIMIT 1',
+      'SELECT Madv AS organizerId FROM SuKien WHERE Masukien = ? LIMIT 1',
       [request.params.eventId],
     );
     if (!target) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
@@ -4133,13 +4223,13 @@ app.post('/api/organizer/events/:eventId/close', requireAuth, requireRole(...eve
       return response.status(403).json({ message: 'Bạn không phụ trách sự kiện này.' });
     }
     const [result] = await pool.execute(
-      `UPDATE sukien SET Trangthaisukien = 'Đã đóng'
+      `UPDATE SuKien SET Trangthaisukien = 'Đã đóng'
        WHERE Masukien = ? AND COALESCE(Trangthaisukien, '') <> 'Đã đóng'`,
       [request.params.eventId],
     );
     if (result.affectedRows === 0) {
       const [[event]] = await pool.execute(
-        'SELECT Masukien FROM sukien WHERE Masukien = ? LIMIT 1',
+        'SELECT Masukien FROM SuKien WHERE Masukien = ? LIMIT 1',
         [request.params.eventId],
       );
       if (!event) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
@@ -4159,7 +4249,7 @@ app.delete('/api/organizer/events/:eventId', requireAuth, requireRole(...eventMa
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[event]] = await connection.execute(
-      'SELECT Masukien, Madv AS organizerId FROM sukien WHERE Masukien = ? FOR UPDATE',
+      'SELECT Masukien, Madv AS organizerId FROM SuKien WHERE Masukien = ? FOR UPDATE',
       [request.params.eventId],
     );
     if (!event) {
@@ -4171,7 +4261,7 @@ app.delete('/api/organizer/events/:eventId', requireAuth, requireRole(...eventMa
       return response.status(403).json({ message: 'Bạn không phụ trách sự kiện này.' });
     }
     const [[registrationCount]] = await connection.execute(
-      'SELECT COUNT(*) AS total FROM dangkysukien WHERE Masukien = ?',
+      'SELECT COUNT(*) AS total FROM DangKySuKien WHERE Masukien = ?',
       [request.params.eventId],
     );
     if (Number(registrationCount.total) > 0) {
@@ -4191,7 +4281,7 @@ app.delete('/api/organizer/events/:eventId', requireAuth, requireRole(...eventMa
       });
     }
     await connection.execute(
-      'DELETE FROM sukien WHERE Masukien = ?',
+      'DELETE FROM SuKien WHERE Masukien = ?',
       [request.params.eventId],
     );
     await connection.commit();
@@ -4214,9 +4304,9 @@ app.get('/api/certificates/:certificateId', async (request, response) => {
               COALESCE(nd.Hoten, cn.Masv) AS studentName,
               cn.Masv AS studentId, sk.Tensukien AS eventName,
               cn.Ngaycap AS issuedAt, cn.Trangthaichungnhan AS status
-       FROM chungnhan cn
-       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
-       LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
+       FROM ChungNhan cn
+       INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
+       LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
        WHERE cn.Machungnhan = ?
        LIMIT 1`,
       [request.params.certificateId],
@@ -4243,8 +4333,8 @@ app.get('/api/student/certificates', requireAuth, requireRole('Sinh viên', 'stu
               sk.Thoigianketthuc AS endTime,
               sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
               cn.Noidung AS content, cn.Trangthaichungnhan AS status
-       FROM chungnhan cn
-       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
+       FROM ChungNhan cn
+       INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
        WHERE cn.Masv = ? AND cn.Trangthaichungnhan = 'Đã cấp'
        ORDER BY cn.Ngaycap DESC, cn.Machungnhan DESC`,
       [request.auth.sub],
@@ -4269,9 +4359,9 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
               sk.Thoigianketthuc AS endTime,
               sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
               cn.Noidung AS content
-       FROM chungnhan cn
-       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
-       LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
+       FROM ChungNhan cn
+       INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
+       LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
        WHERE cn.Machungnhan = ?
          AND cn.Masv = ?
          AND cn.Trangthaichungnhan = 'Đã cấp'
@@ -4313,14 +4403,14 @@ app.get('/api/staff/certificates/:certificateId/pdf', requireAuth, requireRole('
               sk.Thoigianketthuc AS endTime,
               sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
               cn.Noidung AS content
-       FROM chungnhan cn
-       INNER JOIN sukien sk ON sk.Masukien = cn.Masukien
-       LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
+       FROM ChungNhan cn
+       INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
+       LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
        WHERE cn.Machungnhan = ?
          AND cn.Trangthaichungnhan = 'Đã cấp'
          AND cn.Ngaycap IS NOT NULL
          AND (? = 1 OR EXISTS (
-           SELECT 1 FROM donvi dv
+           SELECT 1 FROM DonVi dv
            WHERE dv.Madv = sk.Madv AND dv.Manv = ?
          ))
        LIMIT 1`,
@@ -4363,11 +4453,11 @@ app.get('/api/staff/certificates', requireAuth, requireRole('Quản trị viên'
                   AND cn.Ngaycap IS NOT NULL THEN 'Đã cấp'
                 ELSE 'Chưa cấp'
               END AS status
-       FROM chungnhan cn
-       JOIN sukien sk ON sk.Masukien = cn.Masukien
-       LEFT JOIN nguoidung nd ON nd.Mand = cn.Masv
+       FROM ChungNhan cn
+       JOIN SuKien sk ON sk.Masukien = cn.Masukien
+       LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
        WHERE (? = 1 OR EXISTS (
-         SELECT 1 FROM donvi dv
+         SELECT 1 FROM DonVi dv
          WHERE dv.Madv = sk.Madv AND dv.Manv = ?
        ))
        ORDER BY cn.Ngaycap DESC, cn.Machungnhan DESC`,
@@ -4391,12 +4481,12 @@ app.get('/api/staff/feedback', requireAuth, requireRole('Quản trị viên', 'a
               ph.Masukien AS eventId, COALESCE(sk.Tensukien, '') AS eventName,
               ph.Malop AS classId, COALESCE(lhp.Tenlop, '') AS className,
               NULL AS rating
-       FROM phanhoi ph
-       LEFT JOIN nguoidung nd ON nd.Mand = ph.Masv
-       LEFT JOIN sukien sk ON sk.Masukien = ph.Masukien
-       LEFT JOIN lophocphan lhp ON lhp.Malop = ph.Malop
+       FROM PhanHoi ph
+       LEFT JOIN NguoiDung nd ON nd.Mand = ph.Masv
+       LEFT JOIN SuKien sk ON sk.Masukien = ph.Masukien
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = ph.Malop
        WHERE (? = 1 OR (ph.Masukien IS NOT NULL AND EXISTS (
-         SELECT 1 FROM donvi dv
+         SELECT 1 FROM DonVi dv
          WHERE dv.Madv = sk.Madv AND dv.Manv = ?
        )))
        UNION ALL
@@ -4407,12 +4497,12 @@ app.get('/api/staff/feedback', requireAuth, requireRole('Quản trị viên', 'a
               dg.Masukien AS eventId, COALESCE(sk.Tensukien, '') AS eventName,
               dg.Malop AS classId, COALESCE(lhp.Tenlop, '') AS className,
               dg.Sosao AS rating
-       FROM danhgia dg
-       LEFT JOIN nguoidung nd ON nd.Mand = dg.Masv
-       LEFT JOIN sukien sk ON sk.Masukien = dg.Masukien
-       LEFT JOIN lophocphan lhp ON lhp.Malop = dg.Malop
+       FROM DanhGia dg
+       LEFT JOIN NguoiDung nd ON nd.Mand = dg.Masv
+       LEFT JOIN SuKien sk ON sk.Masukien = dg.Masukien
+       LEFT JOIN LopHocPhan lhp ON lhp.Malop = dg.Malop
        WHERE (? = 1 OR (dg.Masukien IS NOT NULL AND EXISTS (
-         SELECT 1 FROM donvi dv
+         SELECT 1 FROM DonVi dv
          WHERE dv.Madv = sk.Madv AND dv.Manv = ?
        )))
        ORDER BY sentAt DESC, id DESC`,
@@ -4432,7 +4522,7 @@ app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admi
             `SELECT nd.Mand AS id, nd.Hoten AS name,
               nd.Email AS email, nd.Vaitro AS role,
               nd.Trangthaind AS status
-             FROM nguoidung nd ORDER BY nd.Hoten`,
+             FROM NguoiDung nd ORDER BY nd.Hoten`,
     );
     return response.json({ items: rows });
   } catch (error) {
@@ -4457,12 +4547,12 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
               lhp.Trangthailop AS status,
               COALESCE(nd.Hoten, '') AS lecturerName,
               COUNT(tvl.Masv) AS studentCount
-       FROM lophocphan lhp
-       INNER JOIN monhoc mh ON mh.Mamon = lhp.Mamon
-       INNER JOIN bomon bm ON bm.Mabomon = mh.Mabomon
-       LEFT JOIN giangvien gv ON gv.Magv = lhp.Magv
-       LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
-       LEFT JOIN thanhvienlop tvl ON tvl.Malop = lhp.Malop
+       FROM LopHocPhan lhp
+       INNER JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
+       INNER JOIN BoMon bm ON bm.Mabomon = mh.Mabomon
+       LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
+       LEFT JOIN NguoiDung nd ON nd.Mand = gv.Magv
+       LEFT JOIN ThanhVienLop tvl ON tvl.Malop = lhp.Malop
        GROUP BY lhp.Malop, lhp.Tenlop, lhp.Magv, lhp.Madv, mh.Mabomon,
                 bm.Tenbomon, bm.Maloptat, lhp.Makhoa, lhp.Mamon, mh.Mamon,
                 mh.Tenmon, lhp.Tinchi, lhp.Soluongtoida,
@@ -4480,7 +4570,7 @@ app.get('/api/admin/classes/:classId/students', requireAuth, requireRole('Quản
   const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
   try {
     const [[classInfo]] = await pool.execute(
-      'SELECT Malop AS id, Magv AS lecturerId FROM lophocphan WHERE Malop = ? LIMIT 1',
+      'SELECT Malop AS id, Magv AS lecturerId FROM LopHocPhan WHERE Malop = ? LIMIT 1',
       [request.params.classId],
     );
     if (!classInfo) {
@@ -4498,8 +4588,8 @@ app.get('/api/admin/classes/:classId/students', requireAuth, requireRole('Quản
               COALESCE(nd.Email, '') AS email,
               COALESCE(tvl.TrangThaiThanhVien, '') AS status,
               DATE_FORMAT(tvl.NgayThamGia, '%d/%m/%Y') AS dateLabel
-       FROM thanhvienlop tvl
-       LEFT JOIN nguoidung nd ON nd.Mand = tvl.Masv
+       FROM ThanhVienLop tvl
+       LEFT JOIN NguoiDung nd ON nd.Mand = tvl.Masv
        WHERE tvl.Malop = ?
        ORDER BY nd.Hoten, tvl.Masv`,
       [request.params.classId],
@@ -4542,7 +4632,7 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
     const [[classInfo]] = await connection.execute(
       `SELECT Malop, Trangthailop AS status,
               (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
-       FROM lophocphan WHERE Malop = ? FOR UPDATE`,
+       FROM LopHocPhan WHERE Malop = ? FOR UPDATE`,
       [request.params.classId],
     );
     if (!classInfo) {
@@ -4558,7 +4648,7 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
 
     const placeholders = normalizedIds.map(() => '?').join(', ');
     const [students] = await connection.execute(
-      `SELECT Masv FROM sinhvien WHERE Masv IN (${placeholders})`,
+      `SELECT Masv FROM SinhVien WHERE Masv IN (${placeholders})`,
       normalizedIds,
     );
     const knownIds = new Set(students.map((student) => String(student.Masv).toUpperCase()));
@@ -4569,7 +4659,7 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
     if (validIds.length > 0) {
       const validPlaceholders = validIds.map(() => '?').join(', ');
       const [existingMembers] = await connection.execute(
-        `SELECT Masv FROM thanhvienlop
+        `SELECT Masv FROM ThanhVienLop
          WHERE Malop = ? AND Masv IN (${validPlaceholders})`,
         [classInfo.Malop, ...validIds],
       );
@@ -4583,7 +4673,7 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
       const batch = newIds.slice(offset, offset + 250);
       const values = batch.map(() => '(?, ?, CURRENT_DATE, ?)').join(', ');
       await connection.execute(
-        `INSERT INTO thanhvienlop (Malop, Masv, NgayThamGia, TrangThaiThanhVien)
+        `INSERT INTO ThanhVienLop (Malop, Masv, NgayThamGia, TrangThaiThanhVien)
          VALUES ${values}`,
         batch.flatMap((studentId) => [
           classInfo.Malop,
@@ -4613,7 +4703,7 @@ app.get('/api/admin/class-options', requireAuth, requireRole('Quản trị viên
     const [cohorts] = await pool.query(
       `SELECT MaKhoa AS code FROM QuyUocKhoa
        UNION
-       SELECT DISTINCT MaKhoa AS code FROM sinhvien
+       SELECT DISTINCT MaKhoa AS code FROM SinhVien
        ORDER BY code DESC`,
     );
     const [subjects] = await pool.query(
@@ -4621,8 +4711,8 @@ app.get('/api/admin/class-options', requireAuth, requireRole('Quản trị viên
               mh.Sotinchi AS credits,
               mh.Hocky AS semester, bm.Mabomon AS majorId,
               bm.Tenbomon AS majorName, bm.Madv AS departmentId
-       FROM monhoc mh
-       INNER JOIN bomon bm ON bm.Mabomon = mh.Mabomon
+       FROM MonHoc mh
+       INNER JOIN BoMon bm ON bm.Mabomon = mh.Mabomon
        ORDER BY mh.Tenmon, mh.Mamon`,
     );
     return response.json({ cohorts, subjects });
@@ -4636,8 +4726,8 @@ app.get('/api/admin/lecturers', requireAuth, requireRole('Quản trị viên', '
   try {
     const [rows] = await pool.query(
       `SELECT gv.Magv AS id, COALESCE(nd.Hoten, gv.Magv) AS name
-       FROM giangvien gv
-       LEFT JOIN nguoidung nd ON nd.Mand = gv.Magv
+       FROM GiangVien gv
+       LEFT JOIN NguoiDung nd ON nd.Mand = gv.Magv
        ORDER BY name`,
     );
     return response.json({ items: rows });
@@ -4681,8 +4771,8 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
   try {
     const [[subject]] = await pool.execute(
       `SELECT mh.Mamon, mh.Hocky, bm.Madv AS departmentId
-       FROM monhoc mh
-       INNER JOIN bomon bm ON bm.Mabomon = mh.Mabomon
+       FROM MonHoc mh
+       INNER JOIN BoMon bm ON bm.Mabomon = mh.Mabomon
        WHERE mh.Mamon = ?`,
       [normalizedSubjectId],
     );
@@ -4692,7 +4782,7 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
     const [cohorts] = await pool.execute(
       `SELECT MaKhoa FROM QuyUocKhoa WHERE MaKhoa = ?
        UNION
-       SELECT MaKhoa FROM sinhvien WHERE MaKhoa = ? LIMIT 1`,
+       SELECT MaKhoa FROM SinhVien WHERE MaKhoa = ? LIMIT 1`,
       [normalizedCohortCode, normalizedCohortCode],
     );
     if (cohorts.length === 0) {
@@ -4701,7 +4791,7 @@ app.post('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'a
     const normalizedSemester = requestedSemester || `HK${subject.Hocky}`;
 
     await pool.execute(
-      `INSERT INTO lophocphan
+      `INSERT INTO LopHocPhan
        (Malop, Magv, Madv, Mamon, Makhoa, Tenlop, Hocky, Namhoc,
         Soluongtoida, Trangthailop, Thoigianbatdau)
        VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, 'Đang học', ?)`,
@@ -4759,7 +4849,7 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
     const [[existing]] = await connection.execute(
       `SELECT Malop, Trangthailop AS status,
               (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
-       FROM lophocphan WHERE Malop = ? FOR UPDATE`,
+       FROM LopHocPhan WHERE Malop = ? FOR UPDATE`,
       [request.params.classId],
     );
     if (!existing) {
@@ -4773,7 +4863,7 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
       });
     }
     const [[memberCount]] = await connection.execute(
-      'SELECT COUNT(*) AS total FROM thanhvienlop WHERE Malop = ?',
+      'SELECT COUNT(*) AS total FROM ThanhVienLop WHERE Malop = ?',
       [request.params.classId],
     );
     if (parsedCapacity < Number(memberCount.total)) {
@@ -4783,7 +4873,7 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
       });
     }
     await connection.execute(
-      `UPDATE lophocphan
+      `UPDATE LopHocPhan
          SET Magv = ?, Tenlop = ?, Hocky = ?, Namhoc = ?, Thoigianbatdau = ?,
              Soluongtoida = ?
        WHERE Malop = ?`,
@@ -4814,13 +4904,13 @@ app.put('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị vi
 app.post('/api/admin/classes/:classId/close', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   try {
     const [result] = await pool.execute(
-      `UPDATE lophocphan SET Trangthailop = 'Đã đóng'
+      `UPDATE LopHocPhan SET Trangthailop = 'Đã đóng'
        WHERE Malop = ? AND COALESCE(Trangthailop, '') <> 'Đã đóng'`,
       [request.params.classId],
     );
     if (result.affectedRows === 0) {
       const [[classInfo]] = await pool.execute(
-        'SELECT Malop FROM lophocphan WHERE Malop = ? LIMIT 1',
+        'SELECT Malop FROM LopHocPhan WHERE Malop = ? LIMIT 1',
         [request.params.classId],
       );
       if (!classInfo) return response.status(404).json({ message: 'Không tìm thấy lớp.' });
@@ -4839,7 +4929,7 @@ app.delete('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[existing]] = await connection.execute(
-      'SELECT Malop FROM lophocphan WHERE Malop = ? FOR UPDATE',
+      'SELECT Malop FROM LopHocPhan WHERE Malop = ? FOR UPDATE',
       [request.params.classId],
     );
     if (!existing) {
@@ -4848,8 +4938,8 @@ app.delete('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị
     }
     const [[dependencies]] = await connection.execute(
       `SELECT
-         (SELECT COUNT(*) FROM thanhvienlop WHERE Malop = ?) AS members,
-         (SELECT COUNT(*) FROM buoi WHERE Malop = ?) AS sessions`,
+         (SELECT COUNT(*) FROM ThanhVienLop WHERE Malop = ?) AS members,
+         (SELECT COUNT(*) FROM Buoi WHERE Malop = ?) AS sessions`,
       [request.params.classId, request.params.classId],
     );
     if (Number(dependencies.members) > 0 || Number(dependencies.sessions) > 0) {
@@ -4859,7 +4949,7 @@ app.delete('/api/admin/classes/:classId', requireAuth, requireRole('Quản trị
       });
     }
     await connection.execute(
-      'DELETE FROM lophocphan WHERE Malop = ?',
+      'DELETE FROM LopHocPhan WHERE Malop = ?',
       [request.params.classId],
     );
     await connection.commit();
@@ -4883,8 +4973,8 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
               sk.Diadiem AS location, sk.Thoigianbatdau AS startTime,
               ${eventStatusSql} AS status,
               COUNT(dk.Masv) AS registeredCount
-             FROM sukien sk
-             LEFT JOIN dangkysukien dk ON dk.Masukien = sk.Masukien
+             FROM SuKien sk
+             LEFT JOIN DangKySuKien dk ON dk.Masukien = sk.Masukien
              GROUP BY sk.Masukien, sk.Tensukien, sk.Diadiem,
           sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien
             ORDER BY sk.Thoigianbatdau`,
