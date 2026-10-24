@@ -69,7 +69,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         data: {
           'classSessionId': _selectedClassSession,
           'method': 'Both',
-          'durationMinutes': 30,
+          'durationMinutes': 15,
           'latitude': position.latitude,
           'longitude': position.longitude,
           'accuracy': position.accuracy,
@@ -82,7 +82,8 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
       }
       setState(() {
         _qrToken = body['qr']?.toString();
-        _expiresAt = DateTime.tryParse(body['closedAt']?.toString() ?? '');
+        _expiresAt = DateTime.tryParse(body['closedAt']?.toString() ?? '')
+            ?.toLocal();
         _lecturerPosition = position;
         _radiusMeters = radiusMeters.toInt();
         _creating = false;

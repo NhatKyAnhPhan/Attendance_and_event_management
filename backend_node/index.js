@@ -2694,7 +2694,7 @@ app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên'
 
 // Kiểm tra dữ liệu, lưu phiên điểm danh và phát hành mã QR nếu cần.
 app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
-  const { classSessionId, method = 'QR', durationMinutes = 30 } = request.body || {};
+  const { classSessionId, method = 'QR', durationMinutes = 15 } = request.body || {};
   const duration = Number(durationMinutes);
   const coordinates = readCoordinates(request.body);
   const accuracyMeters = readLocationAccuracy(request.body);
@@ -4601,6 +4601,8 @@ app.get('/api/staff/certificates', requireAuth, requireRole('Quản trị viên'
       `SELECT cn.Machungnhan AS id, cn.Masv AS studentId,
               COALESCE(nd.Hoten, cn.Masv) AS studentName,
               cn.Masukien AS eventId, sk.Tensukien AS eventName,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianketthuc AS endTime, sk.Diadiem AS location,
               cn.Ngaycap AS issuedAt, cn.Noidung AS content,
               CASE
                 WHEN LOWER(TRIM(COALESCE(cn.Trangthaichungnhan, ''))) = 'đã cấp'

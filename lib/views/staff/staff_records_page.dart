@@ -280,15 +280,14 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   /// Hiển thị ô tìm kiếm cùng bộ lọc phù hợp với loại danh sách.
   Widget _buildFilters(AppColors colors, List<Map<String, dynamic>> items) {
     final isCertificates = widget.kind == StaffRecordKind.certificates;
-    final options =
-        isCertificates
-              ? const ['Đã cấp', 'Chưa cấp']
-              : items
-                    .map((item) => item['sourceType']?.toString() ?? '')
-                    .where((value) => value.isNotEmpty)
-                    .toSet()
-                    .toList()
-          ..sort();
+    final options = isCertificates
+        ? <String>['Đã cấp', 'Chưa cấp']
+        : items
+              .map((item) => item['sourceType']?.toString() ?? '')
+              .where((value) => value.isNotEmpty)
+              .toSet()
+              .toList();
+    if (!isCertificates) options.sort();
     final selected = options.contains(_filter) ? _filter : 'all';
 
     return Wrap(
@@ -493,7 +492,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
             Align(
               alignment: Alignment.centerRight,
               child: OutlinedButton.icon(
-                onPressed: () => _openCertificatePreview(item),
+                onPressed: () => _openCertificateDetails(item),
                 icon: const Icon(Icons.visibility_outlined),
                 label: const Text('Xem chứng nhận'),
               ),
@@ -504,7 +503,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
     );
   }
 
-  void _openCertificatePreview(Map<String, dynamic> item) {
+  void _openCertificateDetails(Map<String, dynamic> item) {
     final certificateId = item['id']?.toString() ?? '';
     if (certificateId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -514,7 +513,9 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
     }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _CertificatePreviewPage(certificateId: certificateId),
+        builder: (_) => _StaffCertificateDetailsPage(
+          certificate: Map<String, dynamic>.from(item),
+        ),
       ),
     );
   }
@@ -690,17 +691,18 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   }
 }
 
-class _CertificatePreviewPage extends StatefulWidget {
-  const _CertificatePreviewPage({required this.certificateId});
+class _StaffCertificateDetailsPage extends StatefulWidget {
+  const _StaffCertificateDetailsPage({required this.certificate});
 
-  final String certificateId;
+  final Map<String, dynamic> certificate;
 
   @override
-  State<_CertificatePreviewPage> createState() =>
-      _CertificatePreviewPageState();
+  State<_StaffCertificateDetailsPage> createState() =>
+      _StaffCertificateDetailsPageState();
 }
 
-class _CertificatePreviewPageState extends State<_CertificatePreviewPage> {
+class _StaffCertificateDetailsPageState
+    extends State<_StaffCertificateDetailsPage> {
   late Future<Uint8List> _pdfFuture;
 
   @override
@@ -709,9 +711,10 @@ class _CertificatePreviewPageState extends State<_CertificatePreviewPage> {
     _pdfFuture = _loadPdf();
   }
 
-  Future<Uint8List> _loadPdf() => ApiClient().getBytes(
-    ApiEndpoints.staffCertificatePdf(widget.certificateId),
-  );
+  String get _certificateId => widget.certificate['id']?.toString() ?? '';
+
+  Future<Uint8List> _loadPdf() =>
+      ApiClient().getBytes(ApiEndpoints.staffCertificatePdf(_certificateId));
 
   void _retry() {
     setState(() => _pdfFuture = _loadPdf());
@@ -722,50 +725,179 @@ class _CertificatePreviewPageState extends State<_CertificatePreviewPage> {
     final colors = AppColors.of(
       Theme.of(context).brightness == Brightness.dark,
     );
+    final studentName =
+        widget.certificate['studentName']?.toString() ??
+        widget.certificate['studentId']?.toString() ??
+        'Sinh viên';
+    final studentId = widget.certificate['studentId']?.toString() ?? '';
+    final eventName = widget.certificate['eventName']?.toString() ?? 'Sự kiện';
+    final eventId = widget.certificate['eventId']?.toString() ?? '';
+    final location = widget.certificate['location']?.toString() ?? '';
+    final content = widget.certificate['content']?.toString() ?? '';
+    final startTime = DateTime.tryParse(
+      widget.certificate['startTime']?.toString() ?? '',
+    );
+    final endTime = DateTime.tryParse(
+      widget.certificate['endTime']?.toString() ?? '',
+    );
+    final issuedAt = DateTime.tryParse(
+      widget.certificate['issuedAt']?.toString() ?? '',
+    );
+
     return Scaffold(
-      appBar: AppBar(title: Text('Chứng nhận ${widget.certificateId}')),
-      body: FutureBuilder<Uint8List>(
-        future: _pdfFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError || !snapshot.hasData) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      snapshot.error?.toString() ?? 'Không thể tải chứng nhận.',
-                      textAlign: TextAlign.center,
-                      style: AppTextStyles.bodySm(colors.mutedForeground),
+      appBar: AppBar(title: const Text('Chi tiết chứng nhận')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            color: colors.card,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: colors.border),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.workspace_premium_outlined,
+                        color: colors.primary,
+                        size: 26,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          eventName,
+                          style: AppTextStyles.displaySm(colors.foreground),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  _detailRow(colors, 'Người nhận', studentName),
+                  if (studentId.isNotEmpty)
+                    _detailRow(colors, 'Mã sinh viên', studentId),
+                  _detailRow(colors, 'Mã chứng nhận', _certificateId),
+                  if (eventId.isNotEmpty)
+                    _detailRow(colors, 'Mã sự kiện', eventId),
+                  _detailRow(
+                    colors,
+                    'Ngày cấp',
+                    issuedAt == null
+                        ? 'Chưa có thông tin'
+                        : DateFormat('dd/MM/yyyy HH:mm')
+                              .format(issuedAt.toLocal()),
+                  ),
+                  _detailRow(
+                    colors,
+                    'Trạng thái',
+                    widget.certificate['status']?.toString() ?? 'Đã cấp',
+                  ),
+                  if (startTime != null)
+                    _detailRow(
+                      colors,
+                      'Thời gian sự kiện',
+                      endTime == null
+                          ? DateFormat('dd/MM/yyyy HH:mm')
+                                .format(startTime.toLocal())
+                          : '${DateFormat('dd/MM/yyyy HH:mm').format(startTime.toLocal())} - '
+                                '${DateFormat('dd/MM/yyyy HH:mm').format(endTime.toLocal())}',
                     ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: _retry,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Thử lại'),
+                  if (location.isNotEmpty)
+                    _detailRow(colors, 'Địa điểm', location),
+                  if (content.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Nội dung',
+                      style: AppTextStyles.bodyXs(colors.mutedForeground),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      content,
+                      style: AppTextStyles.bodySm(colors.foreground),
                     ),
                   ],
-                ),
+                ],
               ),
-            );
-          }
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Mẫu chứng nhận đã cấp',
+            style: AppTextStyles.displaySm(colors.foreground),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 560,
+            child: FutureBuilder<Uint8List>(
+              future: _pdfFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError || !snapshot.hasData) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Không thể tải mẫu chứng nhận: '
+                            '${snapshot.error ?? 'Tệp rỗng.'}',
+                            textAlign: TextAlign.center,
+                            style: AppTextStyles.bodySm(colors.mutedForeground),
+                          ),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _retry,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Thử lại'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+                final pdfBytes = snapshot.data!;
+                return PdfPreview(
+                  build: (_) async => pdfBytes,
+                  maxPageWidth: 1000,
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  canDebug: false,
+                  allowPrinting: false,
+                  allowSharing: false,
+                  useActions: false,
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-          final pdfBytes = snapshot.data!;
-          return PdfPreview(
-            build: (_) async => pdfBytes,
-            maxPageWidth: 1000,
-            canChangePageFormat: false,
-            canChangeOrientation: false,
-            canDebug: false,
-            allowPrinting: false,
-            allowSharing: false,
-            useActions: false,
-          );
-        },
+  Widget _detailRow(AppColors colors, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 145,
+            child: Text(
+              label,
+              style: AppTextStyles.bodySm(colors.mutedForeground),
+            ),
+          ),
+          Expanded(
+            child: Text(value, style: AppTextStyles.bodySm(colors.foreground)),
+          ),
+        ],
       ),
     );
   }
