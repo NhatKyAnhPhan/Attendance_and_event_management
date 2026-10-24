@@ -69,9 +69,10 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         data: {
           'classSessionId': _selectedClassSession,
           'method': 'Both',
-          'durationMinutes': 15,
+          'durationMinutes': 30,
           'latitude': position.latitude,
           'longitude': position.longitude,
+          'accuracy': position.accuracy,
         },
       );
       if (!mounted) return;

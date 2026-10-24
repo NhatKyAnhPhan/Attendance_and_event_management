@@ -12,7 +12,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
   var apiBaseUrl = prefs.getString('apiBaseUrl');
-  if (apiBaseUrl == 'http://127.0.0.1:3001' ||
+  const buildApiBaseUrl = String.fromEnvironment('API_BASE_URL');
+  if (isLocalApiBaseUrl(apiBaseUrl)) {
+    apiBaseUrl = buildApiBaseUrl.trim().isNotEmpty
+        ? buildApiBaseUrl.trim()
+        : productionApiBaseUrl;
+    await prefs.setString('apiBaseUrl', apiBaseUrl);
+  } else if (apiBaseUrl == 'http://127.0.0.1:3001' ||
       apiBaseUrl == 'http://10.0.2.2:3001') {
     apiBaseUrl = apiBaseUrl!.replaceFirst(':3001', ':3000');
     await prefs.setString('apiBaseUrl', apiBaseUrl);

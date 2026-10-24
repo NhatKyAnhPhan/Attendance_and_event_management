@@ -1,62 +1,69 @@
+import 'dart:convert';
+
+import 'package:archive/archive.dart';
 import 'package:attendance_and_event_management/core/utils/attendance_report_export.dart';
 import 'package:excel/excel.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('exports summary and daily attendance rows to separate sheets', () {
+  test('exports one row per student with attendance counts', () {
     final bytes = buildAttendanceReportWorkbook(
-      total: 12,
-      present: 8,
-      late: 2,
-      absent: 2,
-      excused: 1,
-      dailyItems: [
+      className: 'Lập trình ứng dụng',
+      sessionCount: 14,
+      students: [
         {
-          'date': '2026-10-22',
-          'present': 3,
-          'late': 1,
-          'absent': 0,
+          'studentId': 'SV001',
+          'studentName': 'Nguyễn An',
+          'totalSessions': 14,
+          'present': 8,
+          'late': 2,
+          'absent': 3,
           'excused': 1,
         },
       ],
     );
-
     final workbook = Excel.decodeBytes(bytes);
-    final summary = workbook.tables['Tong quan']!;
-    final daily = workbook.tables['Chi tiet theo ngay']!;
+    expect(workbook.tables.keys, ['Danh sach sinh vien']);
+    final rows = workbook.tables['Danh sach sinh vien']!.rows;
 
-    expect(summary.rows, hasLength(7));
-    expect(
-      summary.rows[1][0]?.value,
-      isA<TextCellValue>().having(
-        (cell) => cell.value.toString(),
-        'value',
-        'Tổng kết quả',
-      ),
+    expect(rows, hasLength(5));
+    expect(rows[0][0]?.value, TextCellValue('BÁO CÁO ĐIỂM DANH'));
+    expect(rows[1][0]?.value, TextCellValue('Lớp học phần'));
+    expect(rows[1][1]?.value, TextCellValue('Lập trình ứng dụng'));
+    expect(rows[2][1]?.value, const IntCellValue(14));
+    expect(rows[3][0]?.value, TextCellValue('STT'));
+    expect(rows[4][1]?.value, TextCellValue('SV001'));
+    expect(rows[4][2]?.value, TextCellValue('Nguyễn An'));
+    expect(rows[4][3]?.value, const IntCellValue(14));
+    expect(rows[4][4]?.value, const IntCellValue(8));
+    expect(rows[4][5]?.value, const IntCellValue(2));
+    expect(rows[4][6]?.value, const IntCellValue(3));
+    expect(rows[4][7]?.value, const IntCellValue(1));
+  });
+
+  test('keeps worksheet elements in Excel-compatible order', () {
+    final bytes = buildAttendanceReportWorkbook(
+      className: 'Lập trình ứng dụng',
+      sessionCount: 14,
+      students: const [],
     );
-    expect(summary.rows[1][1]?.value, const IntCellValue(12));
-    expect(summary.rows[2][1]?.value, const IntCellValue(8));
-    expect(summary.rows[3][1]?.value, const IntCellValue(2));
-    expect(summary.rows[4][1]?.value, const IntCellValue(2));
-    expect(summary.rows[5][1]?.value, const IntCellValue(1));
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final worksheet = archive.findFile('xl/worksheets/sheet1.xml');
+
+    expect(worksheet, isNotNull);
+    final xml = utf8.decode(worksheet!.content as List<int>);
+    expect(xml, isNot(contains('<sheetFormatPr')));
     expect(
-      summary.rows[6][1]?.value,
-      isA<TextCellValue>().having(
-        (cell) => cell.value.toString(),
-        'scope',
-        contains('7 ngày gần nhất'),
-      ),
+      xml.indexOf('<dimension'),
+      lessThan(xml.indexOf('<sheetViews>')),
     );
-    expect(daily.rows, hasLength(2));
     expect(
-      daily.rows[1][0]?.value,
-      isA<TextCellValue>().having(
-        (cell) => cell.value.toString(),
-        'value',
-        '2026-10-22',
-      ),
+      xml.indexOf('<sheetViews>'),
+      lessThan(xml.indexOf('<cols>')),
     );
-    expect(daily.rows[1][1]?.value, const IntCellValue(3));
-    expect(daily.rows[1][4]?.value, const IntCellValue(1));
+    expect(
+      xml.indexOf('<cols>'),
+      lessThan(xml.indexOf('<sheetData>')),
+    );
   });
 }

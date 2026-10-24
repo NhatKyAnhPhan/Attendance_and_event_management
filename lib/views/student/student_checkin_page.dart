@@ -373,6 +373,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
           'deviceId': deviceId,
           'latitude': position.latitude,
           'longitude': position.longitude,
+          'accuracy': position.accuracy,
           if (!isEventQr) 'method': 'QR',
         },
       );
@@ -465,6 +466,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
           'deviceId': deviceId,
           'latitude': position.latitude,
           'longitude': position.longitude,
+          'accuracy': position.accuracy,
         },
       );
       if (mounted) {
@@ -1203,6 +1205,10 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
               Expanded(
                 child: OutlinedButton(
                   onPressed: _retryScan,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white),
+                  ),
                   child: const Text('Thử lại'),
                 ),
               ),

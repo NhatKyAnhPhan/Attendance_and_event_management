@@ -34,6 +34,9 @@ class ApiEndpoints {
       '/api/organizer/events/${Uri.encodeComponent(eventId)}/certificates/send';
   static const reports = '/api/reports';
   static const attendanceReport = '/api/reports/attendance';
+  static const attendanceReportClasses = '$attendanceReport/classes';
+  static String attendanceClassReport(String classId) =>
+      '$attendanceReportClasses/${Uri.encodeComponent(classId)}';
   // Danh sách và tệp PDF chỉ dành cho chứng nhận của sinh viên đang đăng nhập.
   static const studentCertificates = '/api/student/certificates';
   static String studentCertificatePdf(String certificateId) =>

@@ -1,14 +1,25 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
+
+const _productionApiBaseUrl =
+    'https://attendance-and-event-management.onrender.com';
 
 String _resolveBaseUrl(String? baseUrl) {
   final configured = (baseUrl ?? const String.fromEnvironment('API_BASE_URL'))
       .trim();
   if (configured.isNotEmpty) return configured;
-  return kIsWeb ? 'http://127.0.0.1:3000' : 'http://10.0.2.2:3000';
+  return _productionApiBaseUrl;
 }
+
+bool isLocalApiBaseUrl(String? baseUrl) {
+  final uri = Uri.tryParse((baseUrl ?? '').trim());
+  return uri != null &&
+      {'localhost', '127.0.0.1', '10.0.2.2'}.contains(uri.host);
+}
+
+String get productionApiBaseUrl => _productionApiBaseUrl;
 
 class ApiException implements Exception {
   final String message;

@@ -296,6 +296,7 @@ async function ensureAttendanceLocationColumns() {
     ['latitude', 'DECIMAL(10, 7) NULL'],
     ['longitude', 'DECIMAL(10, 7) NULL'],
     ['radius_meters', 'INT NOT NULL DEFAULT 150'],
+    ['accuracy_meters', 'DOUBLE NOT NULL DEFAULT 0'],
   ]) {
     try {
       await pool.query(`ALTER TABLE \`BuoiDiemDanh\` ADD COLUMN \`${column}\` ${definition}`);
@@ -1913,15 +1914,6 @@ function makeId(prefix) {
 const classAttendanceRadiusMeters = 100;
 const eventAttendanceRadiusMeters = 300;
 
-function classRadiusForStudentCount(studentCount) {
-  const count = Math.max(0, Number(studentCount) || 0);
-  if (count <= 50) return 20;
-  return Math.min(
-    classAttendanceRadiusMeters,
-    Math.ceil(20 + ((count - 50) / 50) * 80),
-  );
-}
-
 // Đọc và kiểm tra vĩ độ, kinh độ từ request hoặc payload QR.
 function readCoordinates(body) {
   if (body?.latitude === undefined || body.latitude === null
@@ -1935,6 +1927,29 @@ function readCoordinates(body) {
     return null;
   }
   return { latitude, longitude };
+}
+
+function readLocationAccuracy(body) {
+  if (body?.accuracy === undefined) return 0;
+  if (body.accuracy === null) return null;
+  const accuracy = Number(body.accuracy);
+  return Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : null;
+}
+
+const maxGpsAccuracyAllowanceMeters = 20;
+
+function isWithinAttendanceRadius(
+  first,
+  second,
+  radiusMeters,
+  firstAccuracyMeters = 0,
+  secondAccuracyMeters = 0,
+) {
+  const accuracyAllowance = Math.min(
+    maxGpsAccuracyAllowanceMeters,
+    Math.max(0, firstAccuracyMeters) + Math.max(0, secondAccuracyMeters),
+  );
+  return distanceInMeters(first, second) <= radiusMeters + accuracyAllowance;
 }
 
 async function checkInEventAttendance(request, response, payload, deviceId, coordinates) {
@@ -2243,7 +2258,13 @@ function distanceInMeters(first, second) {
 }
 
 // Tạo JWT dùng làm mã QR cho phiên điểm danh có thời hạn.
-function createAttendanceQr(sessionId, expiresAt, coordinates, radiusMeters) {
+function createAttendanceQr(
+  sessionId,
+  expiresAt,
+  coordinates,
+  radiusMeters,
+  accuracyMeters,
+) {
   return jwt.sign(
     {
       type: 'attendance',
@@ -2251,6 +2272,7 @@ function createAttendanceQr(sessionId, expiresAt, coordinates, radiusMeters) {
       latitude: coordinates.latitude,
       longitude: coordinates.longitude,
       radiusMeters,
+      accuracyMeters,
       exp: Math.floor(expiresAt.getTime() / 1000),
     },
     jwtSecret,
@@ -2513,6 +2535,111 @@ app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requir
   }
 });
 
+// Danh sách lớp mà người dùng được phép xem báo cáo điểm danh.
+app.get('/api/reports/attendance/classes', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT lhp.Malop AS id, COALESCE(lhp.Tenlop, '') AS name,
+              COUNT(DISTINCT tvl.Masv) AS studentCount
+       FROM LopHocPhan lhp
+       LEFT JOIN ThanhVienLop tvl ON tvl.Malop = lhp.Malop
+       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
+       GROUP BY lhp.Malop, lhp.Tenlop
+       ORDER BY lhp.Tenlop, lhp.Malop`,
+      [request.auth.role, request.auth.sub],
+    );
+    return response.json({
+      items: rows.map((row) => ({
+        ...row,
+        studentCount: Number(row.studentCount || 0),
+      })),
+    });
+  } catch (error) {
+    console.error('Attendance report classes error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải danh sách lớp để lập báo cáo.',
+    });
+  }
+});
+
+// Báo cáo số buổi có mặt, đi muộn, vắng và vắng có phép theo từng sinh viên.
+app.get('/api/reports/attendance/classes/:classId', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+  try {
+    await recordExpiredClassAbsences();
+    const [[classInfo]] = await pool.execute(
+      `SELECT lhp.Malop AS id, COALESCE(lhp.Tenlop, '') AS name,
+              (SELECT COUNT(*)
+               FROM Buoi b
+               INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoi = b.Mabuoi
+               WHERE b.Malop = lhp.Malop
+                 AND (bpd.Trangthaidiemdanh <> 'Đang mở'
+                   OR bpd.Thoigiandong <= NOW())) AS sessionCount
+       FROM LopHocPhan lhp
+       WHERE lhp.Malop = ?
+         AND (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
+       LIMIT 1`,
+      [request.params.classId, request.auth.role, request.auth.sub],
+    );
+    if (!classInfo) {
+      return response.status(404).json({
+        message: 'Không tìm thấy lớp hoặc bạn không phụ trách lớp này.',
+      });
+    }
+
+    const [students] = await pool.execute(
+      `SELECT tvl.Masv AS studentId,
+              COALESCE(nd.Hoten, tvl.Masv) AS studentName,
+              COUNT(DISTINCT bpd.Mabuoidiemdanh) AS totalSessions,
+              COUNT(DISTINCT CASE
+                WHEN kd.Trangthaiketqua = 'Có mặt'
+                THEN bpd.Mabuoidiemdanh
+              END) AS present,
+              COUNT(DISTINCT CASE
+                WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn')
+                THEN bpd.Mabuoidiemdanh
+              END) AS late,
+              COUNT(DISTINCT CASE
+                WHEN COALESCE(kd.Trangthaiketqua, 'Vắng mặt') = 'Vắng mặt'
+                THEN bpd.Mabuoidiemdanh
+              END) AS absent,
+              COUNT(DISTINCT CASE
+                WHEN kd.Trangthaiketqua = 'Vắng có phép'
+                THEN bpd.Mabuoidiemdanh
+              END) AS excused
+       FROM ThanhVienLop tvl
+       LEFT JOIN NguoiDung nd ON nd.Mand = tvl.Masv
+       LEFT JOIN Buoi b ON b.Malop = ?
+         AND (tvl.NgayThamGia IS NULL
+           OR b.Thoigianbatdau >= tvl.NgayThamGia)
+       LEFT JOIN BuoiDiemDanh bpd ON bpd.Mabuoi = b.Mabuoi
+         AND (bpd.Trangthaidiemdanh <> 'Đang mở' OR bpd.Thoigiandong <= NOW())
+       LEFT JOIN KetQuaDiemDanh kd
+         ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh AND kd.Masv = tvl.Masv
+       WHERE tvl.Malop = ?
+       GROUP BY tvl.Masv, nd.Hoten
+       ORDER BY nd.Hoten, tvl.Masv`,
+      [classInfo.id, classInfo.id],
+    );
+    return response.json({
+      class: classInfo,
+      sessionCount: Number(classInfo.sessionCount || 0),
+      items: students.map((student) => ({
+        ...student,
+        totalSessions: Number(student.totalSessions || 0),
+        present: Number(student.present || 0),
+        late: Number(student.late || 0),
+        absent: Number(student.absent || 0),
+        excused: Number(student.excused || 0),
+      })),
+    });
+  } catch (error) {
+    console.error('Attendance class report error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tải báo cáo sinh viên của lớp.',
+    });
+  }
+});
+
 // Tổng hợp kết quả điểm danh theo trạng thái và ngày cho Admin/Giảng viên.
 app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
   try {
@@ -2567,11 +2694,13 @@ app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên'
 
 // Kiểm tra dữ liệu, lưu phiên điểm danh và phát hành mã QR nếu cần.
 app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
-  const { classSessionId, method = 'QR', durationMinutes = 15 } = request.body || {};
+  const { classSessionId, method = 'QR', durationMinutes = 30 } = request.body || {};
   const duration = Number(durationMinutes);
   const coordinates = readCoordinates(request.body);
+  const accuracyMeters = readLocationAccuracy(request.body);
   if (!classSessionId || !['QR', 'Face', 'Both'].includes(method)
-      || !Number.isInteger(duration) || duration < 1 || duration > 180 || !coordinates) {
+      || !Number.isInteger(duration) || duration < 1 || duration > 180
+      || !coordinates || accuracyMeters === null) {
     return response.status(400).json({ message: 'Cần chọn buổi học và cho phép vị trí để mở điểm danh.' });
   }
 
@@ -2601,7 +2730,7 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
         message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể mở điểm danh.',
       });
     }
-    const radiusMeters = classRadiusForStudentCount(classSession.studentCount);
+    const radiusMeters = classAttendanceRadiusMeters;
 
     const openedAt = new Date();
     const closedAt = new Date(openedAt.getTime() + duration * 60 * 1000);
@@ -2609,8 +2738,8 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
     await pool.execute(
       `INSERT INTO BuoiDiemDanh
         (Mabuoidiemdanh, Thoigianmo, Thoigiandong, Phuongthuc, Trangthaidiemdanh,
-         Mabuoi, latitude, longitude, radius_meters)
-         VALUES (?, ?, ?, ?, 'Đang mở', ?, ?, ?, ?)`,
+         Mabuoi, latitude, longitude, radius_meters, accuracy_meters)
+         VALUES (?, ?, ?, ?, 'Đang mở', ?, ?, ?, ?, ?)`,
       [
         id,
         openedAt,
@@ -2620,6 +2749,7 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
         coordinates.latitude,
         coordinates.longitude,
         radiusMeters,
+        accuracyMeters,
       ],
     );
     return response.status(201).json({
@@ -2632,7 +2762,13 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
       radiusMeters,
       qr: method === 'Face'
         ? null
-        : createAttendanceQr(id, closedAt, coordinates, radiusMeters),
+        : createAttendanceQr(
+            id,
+            closedAt,
+            coordinates,
+            radiusMeters,
+            accuracyMeters,
+          ),
     });
   } catch (error) {
     console.error('Create attendance session error:', error.message);
@@ -2644,6 +2780,7 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
 app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
   const { qrToken, method = 'QR', deviceId } = request.body || {};
   const coordinates = readCoordinates(request.body);
+  const accuracyMeters = readLocationAccuracy(request.body);
   const previewOnly = request.body?.preview === true;
   if (!qrToken || !['QR', 'Face'].includes(method)) {
     return response.status(400).json({ message: 'Thiếu dữ liệu điểm danh.' });
@@ -2653,6 +2790,9 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
   }
   if (!previewOnly && !coordinates) {
     return response.status(400).json({ message: 'Không lấy được vị trí hiện tại của bạn.' });
+  }
+  if (!previewOnly && accuracyMeters === null) {
+    return response.status(400).json({ message: 'Độ chính xác vị trí không hợp lệ.' });
   }
 
   if (!['student', 'sinh viên'].includes(String(request.auth.role).toLowerCase())) {
@@ -2688,7 +2828,14 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
     if (!sessionCoordinates) {
       return response.status(410).json({ message: 'Mã QR không hợp lệ hoặc đã hết hạn.' });
     }
-    if (!previewOnly && distanceInMeters(sessionCoordinates, coordinates) > radiusMeters) {
+    const sessionAccuracyMeters = Number(payload.accuracyMeters) || 0;
+    if (!previewOnly && !isWithinAttendanceRadius(
+      sessionCoordinates,
+      coordinates,
+      radiusMeters,
+      sessionAccuracyMeters,
+      accuracyMeters,
+    )) {
       return response.status(403).json({ message: `Bạn đang cách vị trí điểm danh quá xa (phạm vi ${radiusMeters} m).` });
     }
     if (session.method === 'Face' || (method === 'Face' && session.method === 'QR')) {
@@ -2910,6 +3057,7 @@ app.get('/api/attendance/face-options', requireAuth, async (request, response) =
 
 app.post('/api/attendance/face-check-in', requireAuth, async (request, response) => {
   const coordinates = readCoordinates(request.body);
+  const accuracyMeters = readLocationAccuracy(request.body);
   const deviceId = request.body?.deviceId;
   const recognizedStudentId = request.body?.recognizedStudentId;
   const sessionType = request.body?.sessionType;
@@ -2938,6 +3086,9 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
   if (!previewOnly && !coordinates) {
     return response.status(400).json({ message: 'Cần xác nhận vị trí hiện tại.' });
   }
+  if (!previewOnly && accuracyMeters === null) {
+    return response.status(400).json({ message: 'Độ chính xác vị trí không hợp lệ.' });
+  }
 
   if (sessionType === 'event') {
     return checkInEventFace(request, response, {
@@ -2954,6 +3105,7 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
               bpd.Thoigiandong AS closedAt,
               bpd.latitude AS latitude, bpd.longitude AS longitude,
               bpd.radius_meters AS radiusMeters,
+              bpd.accuracy_meters AS accuracyMeters,
               b.Mabuoi AS classSessionId, b.Malop AS classId,
               COALESCE(lhp.Tenlop, '') AS className,
               COALESCE(b.Noidung, '') AS sessionName,
@@ -3030,12 +3182,14 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
       });
     }
 
-    const distance = distanceInMeters(
+    const radiusMeters = Number(session.radiusMeters) || classAttendanceRadiusMeters;
+    if (!isWithinAttendanceRadius(
       { latitude: Number(session.latitude), longitude: Number(session.longitude) },
       coordinates,
-    );
-    const radiusMeters = Number(session.radiusMeters) || classAttendanceRadiusMeters;
-    if (!Number.isFinite(distance) || distance > radiusMeters) {
+      radiusMeters,
+      Number(session.accuracyMeters) || 0,
+      accuracyMeters,
+    )) {
       return response.status(403).json({ message: `Bạn đang cách vị trí điểm danh quá xa (phạm vi ${radiusMeters} m).` });
     }
 
@@ -4532,7 +4686,7 @@ app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admi
 });
 
 // Lấy danh sách lớp học phần cho khu vực quản trị.
-app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (_request, response) => {
+app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
   try {
     const [rows] = await pool.query(
       `SELECT lhp.Malop AS id, lhp.Malop AS code, lhp.Tenlop AS name,
@@ -4553,11 +4707,13 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
        LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
        LEFT JOIN NguoiDung nd ON nd.Mand = gv.Magv
        LEFT JOIN ThanhVienLop tvl ON tvl.Malop = lhp.Malop
+       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
        GROUP BY lhp.Malop, lhp.Tenlop, lhp.Magv, lhp.Madv, mh.Mabomon,
                 bm.Tenbomon, bm.Maloptat, lhp.Makhoa, lhp.Mamon, mh.Mamon,
                 mh.Tenmon, lhp.Tinchi, lhp.Soluongtoida,
                 lhp.Thoigianbatdau, lhp.Hocky, lhp.Trangthailop, nd.Hoten
        ORDER BY lhp.Malop`,
+      [request.auth.role, request.auth.sub],
     );
     return response.json({ items: rows });
   } catch (error) {
