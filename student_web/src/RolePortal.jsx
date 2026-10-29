@@ -8,6 +8,7 @@ import {
 import { api } from './api.js';
 import { QRCodeSVG } from 'qrcode.react';
 import { AttendanceBarChart, AttendanceDonutChart } from './StatisticsCharts.jsx';
+import { parseStudentIds } from './studentIds.js';
 import './role-portal.css';
 
 const ADMIN_ITEMS = [
@@ -481,7 +482,7 @@ function ClassAdminActions({ item, createOnly = false, onRefresh, showNotice }) 
 
   const importStudents = async (event) => {
     event.preventDefault();
-    const ids = [...new Set(form.studentIds.split(/[\\s,;]+/).map((id) => id.trim()).filter(Boolean))];
+    const ids = parseStudentIds(form.studentIds);
     if (!ids.length) return;
     setBusy(true);
     try {
@@ -489,7 +490,7 @@ function ClassAdminActions({ item, createOnly = false, onRefresh, showNotice }) 
         method: 'POST', body: { studentIds: ids },
       });
       const unknown = result.unknownStudentIds?.length ? ` Mã không tồn tại: ${result.unknownStudentIds.join(', ')}.` : '';
-      showNotice('success', `Đã thêm ${result.importedCount || 0} sinh viên.${unknown}`);
+      showNotice('success', `Đã thêm ${result.importedCount || 0} sinh viên; ${result.alreadyMemberCount || 0} sinh viên đã có trong lớp.${unknown}`);
       setForm(null);
       await onRefresh();
     } catch (exception) {
@@ -727,13 +728,13 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
 
   const importStudents = async (event) => {
     event.preventDefault();
-    const ids = [...new Set(studentIds.split(/[\\s,;]+/).map((id) => id.trim()).filter(Boolean))];
+    const ids = parseStudentIds(studentIds);
     if (!ids.length) return;
     setBusyAction('import');
     try {
       const result = await api(`/api/organizer/events/${encodeURIComponent(importTarget.id)}/students/import`, { method: 'POST', body: { studentIds: ids } });
       const unknown = result.unknownStudentIds?.length ? ` Mã không tồn tại: ${result.unknownStudentIds.join(', ')}.` : '';
-      showNotice('success', `Đã thêm ${result.importedCount || 0} sinh viên.${unknown}`);
+      showNotice('success', `Đã thêm ${result.importedCount || 0} sinh viên đăng ký; ${result.alreadyRegisteredCount || 0} sinh viên đã đăng ký trước đó.${unknown}`);
       setImportTarget(null);
       setStudentIds('');
       await onRefresh();
