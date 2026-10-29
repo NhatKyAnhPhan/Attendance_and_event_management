@@ -7,6 +7,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
 const mysql = require('mysql2/promise');
 const { createUpdateProfileHandler } = require('./profile_handler');
 const { createCertificatePdf, createMailTransport } = require('./certificate_mailer');
@@ -15,6 +16,33 @@ const { createPasswordResetHandlers } = require('./password_reset_handler');
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const jwtSecret = process.env.JWT_SECRET || 'change-this-development-secret';
+const eventImagesDirectory = path.resolve(
+  process.env.EVENT_IMAGES_DIRECTORY || path.join(__dirname, 'uploads', 'events'),
+);
+const eventImageExtensions = new Map([
+  ['image/jpeg', '.jpg'],
+  ['image/png', '.png'],
+  ['image/webp', '.webp'],
+]);
+fs.mkdirSync(eventImagesDirectory, { recursive: true });
+
+const eventImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: eventImagesDirectory,
+    filename: (_request, file, callback) => {
+      callback(null, `${crypto.randomUUID()}${eventImageExtensions.get(file.mimetype)}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, callback) => {
+    if (!eventImageExtensions.has(file.mimetype)) {
+      callback(new Error('Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP.'));
+      return;
+    }
+    callback(null, true);
+  },
+});
+
 const dbSslCaPath = process.env.DB_SSL_CA?.trim();
 const dbSsl = dbSslCaPath
   ? { ca: fs.readFileSync(path.resolve(__dirname, dbSslCaPath)) }
@@ -68,6 +96,76 @@ const eventStatusSql = `CASE
   WHEN NOW() < sk.Thoigianketthuc THEN 'Đang diễn ra'
   ELSE 'Đã kết thúc'
 END`;
+
+const eventImageRules = [
+  { keywords: ['hiến máu', 'donation'], photoId: '1615461066841-6116e61058f4' },
+  { keywords: ['lập trình', 'it contest', 'coding', 'hackathon', 'công nghệ'], photoId: '1516321318423-f06f85e504b3' },
+  { keywords: ['kỹ năng mềm', 'tập huấn', 'workshop', 'đào tạo'], photoId: '1521737711867-e3b97375f902' },
+  { keywords: ['câu lạc bộ', 'clb', 'đoàn hội'], photoId: '1523240795612-9a054b0db644' },
+  { keywords: ['hướng nghiệp', 'tư vấn nghề', 'career'], photoId: '1551836022-d5d88e9218df' },
+  { keywords: ['đổi mới sáng tạo', 'innovation', 'sáng tạo'], photoId: '1531058020387-3be344556be6' },
+];
+
+function getEventImageUrl(name, description = '') {
+  const searchText = `${name || ''} ${description || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase();
+  const rule = eventImageRules.find(({ keywords }) => keywords.some((keyword) => {
+    const normalizedKeyword = keyword
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[đĐ]/g, 'd')
+      .toLowerCase();
+    return searchText.includes(normalizedKeyword);
+  }));
+  const photoId = rule?.photoId || '1503676260728-1c00da094a0b';
+  return `https://images.unsplash.com/photo-${photoId}?auto=format&fit=crop&w=1400&q=85`;
+}
+
+function validateEventImageUrl(value) {
+  if (value === undefined || value === null || value === '') {
+    return { value: '' };
+  }
+  if (typeof value !== 'string' || value.trim().length > 1000) {
+    return { message: 'Đường dẫn ảnh không hợp lệ (tối đa 1000 ký tự).' };
+  }
+  const imageUrl = value.trim();
+  try {
+    const parsedUrl = new URL(imageUrl);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
+      return { message: 'Ảnh phải dùng đường dẫn HTTP hoặc HTTPS hợp lệ.' };
+    }
+  } catch {
+    return { message: 'Đường dẫn ảnh không hợp lệ.' };
+  }
+  return { value: imageUrl };
+}
+
+async function ensureEventImageColumn() {
+  const [columns] = await pool.query("SHOW COLUMNS FROM SuKien LIKE 'HinhAnh'");
+  if (!columns.length) {
+    try {
+      await pool.query('ALTER TABLE SuKien ADD COLUMN HinhAnh VARCHAR(1000) NULL');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+    }
+  }
+
+  const [eventsWithoutImages] = await pool.query(
+    `SELECT Masukien AS id, Tensukien AS name, Mota AS description
+     FROM SuKien
+     WHERE HinhAnh IS NULL OR TRIM(HinhAnh) = ''`,
+  );
+  for (const event of eventsWithoutImages) {
+    await pool.execute(
+      `UPDATE SuKien SET HinhAnh = ?
+       WHERE Masukien = ? AND (HinhAnh IS NULL OR TRIM(HinhAnh) = '')`,
+      [getEventImageUrl(event.name, event.description), event.id],
+    );
+  }
+}
 
 async function synchronizeEventStatuses() {
   await pool.query(
@@ -429,6 +527,12 @@ async function ensureEventAttendanceTable() {
          ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
+  const [columns] = await pool.query('SHOW COLUMNS FROM event_attendance');
+  if (!columns.some((column) => column.Field === 'checked_in_at')) {
+    await pool.query(
+      'ALTER TABLE event_attendance ADD COLUMN checked_in_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP',
+    );
+  }
   const [indexes] = await pool.query('SHOW INDEX FROM event_attendance');
   const uniqueIndexes = new Map();
   for (const index of indexes) {
@@ -606,6 +710,22 @@ async function ensureEventAttendanceSessionsTable() {
          ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
+  const [recordColumns] = await pool.query(
+    'SHOW COLUMNS FROM event_attendance_records',
+  );
+  const recordColumnNames = new Set(
+    recordColumns.map((column) => column.Field),
+  );
+  if (!recordColumnNames.has('method')) {
+    await pool.query(
+      "ALTER TABLE event_attendance_records ADD COLUMN method VARCHAR(16) NOT NULL DEFAULT 'QR'",
+    );
+  }
+  if (!recordColumnNames.has('checked_in_at')) {
+    await pool.query(
+      'ALTER TABLE event_attendance_records ADD COLUMN checked_in_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP',
+    );
+  }
   const collationMappings = [
     {
       sourceTable: 'SuKien',
@@ -665,6 +785,13 @@ async function ensureEventAttendanceSessionsTable() {
 }
 
 app.use(cors());
+app.use('/uploads/events', express.static(eventImagesDirectory, {
+  dotfiles: 'deny',
+  fallthrough: false,
+  index: false,
+  maxAge: '1y',
+  setHeaders: (response) => response.setHeader('X-Content-Type-Options', 'nosniff'),
+}));
 app.use(express.json());
 
 app.get('/', (_request, response) => {
@@ -715,6 +842,74 @@ function requireRole(...roles) {
 
 // Vai trò được quản lý sự kiện; người không phải admin chỉ thao tác trên đơn vị mình phụ trách.
 const eventManagerRoles = ['Quản trị viên', 'admin', 'Ban tổ chức', 'event_organizer', 'Cán bộ', 'Nhân viên'];
+
+async function isValidEventImageFile(file) {
+  const handle = await fs.promises.open(file.path, 'r');
+  try {
+    const header = Buffer.alloc(12);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    if (file.mimetype === 'image/jpeg') {
+      return bytesRead >= 3 && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
+    }
+    if (file.mimetype === 'image/png') {
+      return header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    }
+    return file.mimetype === 'image/webp'
+      && header.toString('ascii', 0, 4) === 'RIFF'
+      && header.toString('ascii', 8, 12) === 'WEBP'
+      && bytesRead === 12;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function removeEventImageFile(filePath) {
+  try {
+    await fs.promises.unlink(filePath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error('Event image cleanup failed:', error.message);
+    }
+  }
+}
+
+app.post(
+  '/api/organizer/event-images',
+  requireAuth,
+  requireRole(...eventManagerRoles),
+  (request, response, next) => {
+    eventImageUpload.single('image')(request, response, (error) => {
+      if (!error) return next();
+      const status = error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE'
+        ? 413
+        : 400;
+      return response.status(status).json({ message: error.message || 'Không thể tải ảnh lên.' });
+    });
+  },
+  async (request, response) => {
+    if (!request.file) {
+      return response.status(400).json({ message: 'Vui lòng chọn ảnh sự kiện.' });
+    }
+    try {
+      if (!await isValidEventImageFile(request.file)) {
+        await removeEventImageFile(request.file.path);
+        return response.status(400).json({
+          message: 'Nội dung tệp không khớp với ảnh JPEG, PNG hoặc WebP.',
+        });
+      }
+      const publicBaseUrl = (
+        process.env.PUBLIC_API_BASE_URL || `${request.protocol}://${request.get('host')}`
+      ).replace(/\/+$/, '');
+      return response.status(201).json({
+        imageUrl: `${publicBaseUrl}/uploads/events/${encodeURIComponent(request.file.filename)}`,
+      });
+    } catch (error) {
+      await removeEventImageFile(request.file.path);
+      console.error('Event image upload failed:', error.message);
+      return response.status(500).json({ message: 'Không thể lưu ảnh sự kiện.' });
+    }
+  },
+);
 
 function isAdminAuth(auth) {
   return ['quản trị viên', 'admin'].includes(String(auth.role || '').trim().toLowerCase());
@@ -1209,6 +1404,7 @@ app.get('/api/events', requireAuth, async (request, response) => {
   try {
     const [rows] = await pool.execute(
       `SELECT sk.Masukien AS id, sk.Tensukien AS name,
+              COALESCE(sk.HinhAnh, '') AS imageUrl,
               sk.Madv AS organizerId, COALESCE(dv.Tendv, '') AS organizerName,
               sk.Thoigianbatdau AS startTime, sk.Thoigianketthuc AS endTime,
               ${eventStatusSql} AS status,
@@ -1241,7 +1437,7 @@ app.get('/api/events', requireAuth, async (request, response) => {
         AND dkMine.Masv = ?
        GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, dv.Tendv,
                 sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien,
-                sk.Diadiem,
+                sk.Diadiem, sk.HinhAnh,
                 sk.Soluongtoida, dkMine.Masv, dkMine.Trangthaidangky,
                 dkMine.Ngaydangky
        ORDER BY sk.Thoigianbatdau`,
@@ -1260,6 +1456,7 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
     const [[event]] = await pool.execute(
       [
         "SELECT sk.Masukien AS id, sk.Tensukien AS name,",
+        "COALESCE(sk.HinhAnh, '') AS imageUrl,",
         "sk.Mota AS description, COALESCE(sk.Diadiem, '') AS location,",
         "sk.Thoigianbatdau AS startTime, sk.Thoigianketthuc AS endTime,",
         "COALESCE(sk.Soluongtoida, 0) AS capacity,",
@@ -3926,7 +4123,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
   }
 });
 
-app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên'), async (request, response) => {
+app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
   const canViewStudentDetails = !['sinh viên', 'student'].includes(
     String(request.auth.role || '').trim().toLowerCase(),
@@ -4144,6 +4341,7 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
   const parsedStart = new Date(startTime);
   const parsedEnd = new Date(endTime);
   const contentResult = validateEventContent(body);
+  const imageResult = validateEventImageUrl(body.imageUrl);
 
   if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
       || parsedCapacity <= 0
@@ -4154,6 +4352,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
   }
   if (contentResult.message) {
     return response.status(400).json({ message: contentResult.message });
+  }
+  if (imageResult.message) {
+    return response.status(400).json({ message: imageResult.message });
   }
   if (attendancePeriodsResult.message) {
     return response.status(400).json({
@@ -4174,14 +4375,15 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
         await connection.beginTransaction();
         await connection.execute(
           `INSERT INTO SuKien
-           (Masukien, Tensukien, Madv, Mota, Thoigianbatdau,
+           (Masukien, Tensukien, Madv, Mota, HinhAnh, Thoigianbatdau,
             Thoigianketthuc, Diadiem, Soluongtoida, Trangthaisukien)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra')`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra')`,
           [
             id,
             name.trim(),
             organizerId.trim(),
             contentResult.value.description,
+            imageResult.value || getEventImageUrl(name, contentResult.value.description),
             parsedStart,
             parsedEnd,
             location.trim(),
@@ -4226,6 +4428,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
   const hasEventContent = ['description', 'benefits', 'rules']
     .some((field) => Object.hasOwn(body, field));
   const contentResult = validateEventContent(body);
+  const imageResult = validateEventImageUrl(body.imageUrl);
   const attendancePeriodsResult = hasAttendancePeriods
     ? validateEventAttendancePeriods(
       body.attendancePeriods,
@@ -4243,6 +4446,9 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
   }
   if (hasEventContent && contentResult.message) {
     return response.status(400).json({ message: contentResult.message });
+  }
+  if (imageResult.message) {
+    return response.status(400).json({ message: imageResult.message });
   }
   if (attendancePeriodsResult?.message) {
     return response.status(400).json({
@@ -4312,10 +4518,19 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
       const [result] = await connection.execute(
         `UPDATE SuKien
          SET Tensukien = ?, Madv = ?,
-           Thoigianbatdau = ?, Thoigianketthuc = ?,
+           HinhAnh = ?, Thoigianbatdau = ?, Thoigianketthuc = ?,
            Diadiem = ?, Soluongtoida = ?
          WHERE Masukien = ?`,
-      [name.trim(), organizerId.trim(), parsedStart, parsedEnd, location.trim(), parsedCapacity, request.params.eventId],
+      [
+        name.trim(),
+        organizerId.trim(),
+        imageResult.value || getEventImageUrl(name, contentResult.value.description),
+        parsedStart,
+        parsedEnd,
+        location.trim(),
+        parsedCapacity,
+        request.params.eventId,
+      ],
       );
       if (hasEventContent) {
         await replaceEventContent(connection, request.params.eventId, contentResult.value);
@@ -5146,6 +5361,7 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
 
 ensureAttendanceLocationColumns()
   .then(async () => {
+    await ensureEventImageColumn();
     await ensurePasswordResetChallengesTable();
     await ensureAttendanceDeviceClaimsTable();
     await ensureEventAttendanceTable();

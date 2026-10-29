@@ -1,4 +1,3 @@
-import 'package:excel/excel.dart' hide Border;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -842,36 +841,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
 
     try {
       setState(() => _importingEventIds.add(event.id));
-      final workbook = decodeExcelWorkbook(bytes);
-      if (workbook.tables.isEmpty) {
-        throw const FormatException('File Excel không có trang tính dữ liệu.');
-      }
-      final rows = workbook.tables.values.first.rows;
-      if (rows.isEmpty) {
-        throw const FormatException('Trang tính Excel không có dữ liệu.');
-      }
-
-      final header = rows.first.map(_excelCellText).toList();
-      final idColumn = header.indexWhere(_isStudentIdHeader);
-      if (idColumn < 0) {
-        throw const FormatException(
-          'Cột mã sinh viên cần có tiêu đề MSSV, Mã SV hoặc Mã sinh viên.',
-        );
-      }
-
-      final uniqueIds = <String>{};
-      final studentIds = <String>[];
-      var duplicateRows = 0;
-      for (final row in rows.skip(1)) {
-        if (idColumn >= row.length) continue;
-        final studentId = _excelCellText(row[idColumn]).trim();
-        if (studentId.isEmpty) continue;
-        if (uniqueIds.add(studentId.toUpperCase())) {
-          studentIds.add(studentId);
-        } else {
-          duplicateRows++;
-        }
-      }
+      final parsed = extractStudentIdsFromWorkbook(decodeExcelWorkbook(bytes));
+      final studentIds = parsed.studentIds;
+      final duplicateRows = parsed.duplicateRows;
       if (studentIds.isEmpty) {
         throw const FormatException(
           'Không tìm thấy mã sinh viên nào trong file Excel.',
@@ -924,29 +896,6 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     } finally {
       if (mounted) setState(() => _importingEventIds.remove(event.id));
     }
-  }
-
-  static String _excelCellText(Data? cell) {
-    final value = cell?.value;
-    return switch (value) {
-      TextCellValue(:final value) =>
-        value.text ??
-            value.children?.map((span) => span.text ?? '').join() ??
-            '',
-      _ => value?.toString() ?? '',
-    };
-  }
-
-  static bool _isStudentIdHeader(String header) {
-    final normalized = header.toLowerCase().replaceAll(RegExp(r'[\s_.-]'), '');
-    return const {
-      'mssv',
-      'masv',
-      'mãsv',
-      'mãsinhviên',
-      'studentid',
-      'studentcode',
-    }.contains(normalized);
   }
 
   Future<void> _showEventAttendanceQr(

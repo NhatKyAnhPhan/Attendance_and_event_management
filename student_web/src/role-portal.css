@@ -109,8 +109,7 @@
 .rp-breadcrumb strong { overflow: hidden; color: #fff; font-family: Nunito, sans-serif; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .rp-header-actions { display: flex; align-items: center; gap: 8px; }
 .rp-connected { display: flex; align-items: center; gap: 7px; margin-right: 6px; color: rgb(255 255 255 / 82%); font-size: 10px; }
-.rp-connected i,.rp-health-dot { width: 8px; height: 8px; border-radius: 50%; background: #dc2626; }
-.rp-connected i,.rp-health-dot.ok { background: #16a34a; }
+.rp-connected i { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; }
 .rp-icon-button,.rp-menu-button { display: grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #fff; cursor: pointer; }
 .rp-icon-button:hover,.rp-menu-button:hover { background: rgb(255 255 255 / 14%); color: #fff; }
 .rp-header-avatar { width: 34px; height: 34px; border: 0; background: #fff; color: #245dbd; }
@@ -136,6 +135,8 @@
 .rp-form-modal textarea,.rp-form-grid textarea,.rp-profile-form textarea { resize: vertical; }
 .rp-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .rp-form-wide { grid-column: 1 / -1; }
+.rp-image-help { color: var(--rp-muted); font-size: 10px; font-weight: 400; line-height: 1.5; }
+.rp-event-image-preview { display: block; width: 100%; max-height: 190px; border: 1px solid var(--rp-border); border-radius: 8px; object-fit: cover; }
 .rp-form-hint { grid-column: 1 / -1; color: var(--rp-muted); font-size: 11px; line-height: 1.5; }
 .rp-form-modal footer,.rp-modal form > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--rp-border); }
 .rp-form-modal .rp-error { min-height: 0; margin-bottom: 12px; padding: 12px; }
@@ -224,7 +225,6 @@
 .rp-report-select label { font-size: 12px; font-weight: 700; }
 .rp-report-select select { min-height: 42px; padding: 0 11px; border: 1px solid var(--rp-border); border-radius: 8px; background: var(--rp-card); color: var(--rp-text); font: inherit; }
 .rp-settings-card { display: flex; max-width: 780px; align-items: center; gap: 12px; padding: 18px; }
-.rp-settings-card .rp-health-dot { width: 11px; height: 11px; flex: 0 0 auto; }
 .rp-settings-card > div { flex: 1; }
 .rp-settings-card h2 { margin: 0 0 5px; font-family: Nunito, sans-serif; font-size: 16px; }
 .rp-settings-card p { margin: 0; color: var(--rp-muted); font-size: 12px; }
@@ -253,6 +253,18 @@
 .rp-modal > header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
 .rp-modal h2 { margin: 0; font-family: Nunito, sans-serif; font-size: 20px; }
 .rp-modal p { margin: 4px 0 0; color: var(--rp-muted); font-size: 12px; }
+.rp-detail-intro { margin: 0 0 16px; padding: 15px 16px; border: 1px solid var(--rp-border); border-left: 3px solid var(--rp-primary); border-radius: 9px; background: color-mix(in srgb, var(--rp-secondary) 42%, var(--rp-card)); }
+.rp-detail-eyebrow { color: var(--rp-primary); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.rp-detail-intro p { margin: 7px 0 0; color: var(--rp-text); font-size: 13px; line-height: 1.65; }
+.rp-class-detail-grid { margin-bottom: 18px; }
+.rp-event-detail-cover { position: relative; display: flex; min-height: 155px; align-items: flex-end; overflow: hidden; margin-bottom: 15px; padding: 16px; border-radius: 9px; background: linear-gradient(135deg, #1e56a0, #4385d4 58%, #90b8eb); color: #fff; }
+.rp-event-detail-cover.has-image img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.rp-event-detail-cover.has-image::after { position: absolute; inset: 0; background: linear-gradient(0deg, rgb(15 23 42 / 72%), rgb(15 23 42 / 5%)); content: ''; }
+.rp-event-detail-cover span { position: relative; z-index: 1; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.rp-modal-section-title { margin: 20px 0 10px; font-family: Nunito, sans-serif; font-size: 15px; }
+.rp-detail-list-item { margin: 0 0 8px !important; padding: 10px 12px; border: 1px solid var(--rp-border); border-radius: 8px; color: var(--rp-text) !important; line-height: 1.55; }
+.rp-modal-muted { color: var(--rp-muted); font-size: 12px; line-height: 1.55; }
+.rp-detail-error { margin: 12px 0; padding: 11px 12px; border: 1px solid #fca5a5; border-radius: 8px; background: color-mix(in srgb, #fee2e2 30%, var(--rp-card)); color: #b91c1c; font-size: 12px; line-height: 1.5; }
 @media (max-width: 760px) {
   .rp-sidebar { z-index: 40; transform: translateX(-100%); transition: transform .2s ease; }
   .rp-sidebar.rp-sidebar-open { transform: translateX(0); }
@@ -278,10 +290,11 @@
   .rp-list-row { align-items: flex-start; padding: 10px 0; }
   .rp-list-time { max-width: 105px; white-space: normal; text-align: right; }
   .rp-settings-card { align-items: flex-start; flex-wrap: wrap; }
-  .rp-settings-card .rp-secondary-button { margin-left: 22px; }
   .rp-form-grid,.rp-account-readonly { grid-template-columns: 1fr; }
   .rp-modal-backdrop { padding: 10px; }
   .rp-modal { max-height: 92vh; padding: 14px; }
+  .rp-event-detail-cover { min-height: 120px; }
+  .rp-detail-intro { padding: 12px; }
   .rp-inline-actions { align-items: stretch; }
   .rp-inline-actions .rp-secondary-button { flex: 1 1 120px; }
   .rp-roster-summary { align-items: flex-start; flex-direction: column; }

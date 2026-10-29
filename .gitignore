@@ -34,6 +34,7 @@ migrate_working_dir/
 /coverage/
 **/node_modules/
 /student_web/dist/
+/backend_node/uploads/
 /backend_node/.env
 
 # Symbolication related

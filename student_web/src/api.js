@@ -12,25 +12,28 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body, token, responseType } = {}) {
+export async function api(path, {
+  method = 'GET', body, token, responseType, timeoutMs = 10000,
+} = {}) {
   const headers = { Accept: 'application/json' };
   const authToken = token ?? localStorage.getItem('studentWebToken');
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  if (body !== undefined && !isFormData) headers['Content-Type'] = 'application/json';
 
   let response;
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 10000);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
       signal: controller.signal,
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
-      throw new ApiError('Máy chủ không phản hồi trong 10 giây. Vui lòng thử lại.', 0);
+      throw new ApiError(`Máy chủ không phản hồi trong ${Math.ceil(timeoutMs / 1000)} giây. Vui lòng thử lại.`, 0);
     }
     throw new ApiError('Không thể kết nối tới máy chủ. Hãy kiểm tra mạng và địa chỉ API.', 0);
   } finally {

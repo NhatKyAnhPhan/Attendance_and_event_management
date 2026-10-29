@@ -29,4 +29,19 @@ void main() {
 
     expect(decodedWorkbook.tables, contains('Sheet1'));
   });
+
+  test('extracts numeric and text student IDs below the labeled header', () {
+    final workbook = Excel.createExcel();
+    final sheet = workbook.tables['Sheet1']!;
+    sheet.appendRow([TextCellValue('Danh sách sinh viên')]);
+    sheet.appendRow([TextCellValue('Họ tên'), TextCellValue('MSSV')]);
+    sheet.appendRow([TextCellValue('Nguyễn An'), const IntCellValue(123456)]);
+    sheet.appendRow([TextCellValue('Trần Bình'), TextCellValue('001234')]);
+    sheet.appendRow([TextCellValue('Nguyễn An'), const IntCellValue(123456)]);
+
+    final result = extractStudentIdsFromWorkbook(workbook);
+
+    expect(result.studentIds, ['123456', '001234']);
+    expect(result.duplicateRows, 1);
+  });
 }

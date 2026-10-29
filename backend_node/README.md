@@ -83,3 +83,15 @@ security boundary.
 The login page loads aggregate counts from the unauthenticated
 `GET /api/public/stats` endpoint. It returns student, lecturer, class, and event
 counts from the database without exposing user records.
+
+## Event cover photos
+
+On startup, the API adds the nullable `HinhAnh` column to `SuKien` if needed and
+fills events without a photo with a topic-matched Unsplash image URL. Existing
+photo URLs are preserved. In the event create/edit form, organizers can upload
+a JPEG, PNG, or WebP file up to 5 MB, or provide an HTTP(S) image URL. Uploaded
+files are stored under `backend_node/uploads/events` by default; set
+`EVENT_IMAGES_DIRECTORY` to use a persistent storage directory on a hosted
+deployment. Leaving both image inputs empty selects an Unsplash image based on
+the event name and description. The student event cards and details load the
+saved image URL, so clients need internet access to display remote photos.
