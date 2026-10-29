@@ -4125,12 +4125,10 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
 
 app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
-  const canViewStudentDetails = !['sinh viên', 'student'].includes(
-    String(request.auth.role || '').trim().toLowerCase(),
-  );
   try {
     const [[event]] = await pool.execute(
       `SELECT sk.Masukien AS id,
+              sk.Trangthaisukien AS status,
               sk.Thoigianketthuc AS endTime,
               EXISTS (
                 SELECT 1 FROM DonVi dv
@@ -4153,47 +4151,78 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
     const [rows] = await pool.execute(
       `SELECT dk.Masv AS studentId,
               COALESCE(nd.Hoten, dk.Masv) AS studentName,
-              ${canViewStudentDetails ? `
-                COALESCE(sv.Lop, '') AS className,
-                COALESCE(sv.Chuyennganh, '') AS major,` : ''}
+              COALESCE(sv.Lop, '') AS className,
+              COALESCE(sv.Chuyennganh, '') AS major,
               COALESCE(dk.Trangthaidangky, '') AS status,
-              CASE
-                WHEN COALESCE(records.checkedInAt, ea.checked_in_at) IS NULL
-                  THEN CASE
-                    WHEN sk.Trangthaisukien = 'Đã đóng'
-                      OR NOW() >= sk.Thoigianketthuc THEN 'Vắng mặt'
-                    ELSE 'Chưa điểm danh'
-                  END
-                WHEN records.methods = 'Face'
-                  THEN 'Đã điểm danh khuôn mặt'
-                WHEN records.methods = 'QR'
-                  THEN 'Đã điểm danh QR'
-                WHEN records.methods IS NOT NULL
-                  THEN 'Đã điểm danh QR và khuôn mặt'
-                ELSE 'Đã điểm danh QR'
-              END AS attendanceStatus,
-              COALESCE(records.checkedInAt, ea.checked_in_at) AS checkedInAt,
               DATE_FORMAT(dk.Ngaydangky, '%d/%m/%Y') AS dateLabel
        FROM DangKySuKien dk
        LEFT JOIN NguoiDung nd ON nd.Mand = dk.Masv
        LEFT JOIN SinhVien sv ON sv.Masv = dk.Masv
-       LEFT JOIN event_attendance ea
-         ON ea.event_id = dk.Masukien AND ea.student_id = dk.Masv
-       LEFT JOIN (
-         SELECT event_id, student_id,
-                MIN(checked_in_at) AS checkedInAt,
-                GROUP_CONCAT(DISTINCT method ORDER BY method SEPARATOR ',') AS methods
-         FROM event_attendance_records
-         GROUP BY event_id, student_id
-       ) records
-         ON records.event_id = dk.Masukien AND records.student_id = dk.Masv
        WHERE dk.Masukien = ?
        ORDER BY dk.Ngaydangky DESC, nd.Hoten, dk.Masv`,
       [request.params.eventId],
     );
-    return response.json({ items: rows });
+    const attendanceByStudent = new Map();
+    let warning = '';
+    try {
+      const [legacyAttendance] = await pool.execute(
+        `SELECT student_id AS studentId, checked_in_at AS checkedInAt
+         FROM event_attendance
+         WHERE event_id = ?`,
+        [request.params.eventId],
+      );
+      const [attendanceRecords] = await pool.execute(
+        `SELECT student_id AS studentId,
+                MIN(checked_in_at) AS checkedInAt,
+                GROUP_CONCAT(DISTINCT method ORDER BY method SEPARATOR ',') AS methods
+         FROM event_attendance_records
+         WHERE event_id = ?
+         GROUP BY student_id`,
+        [request.params.eventId],
+      );
+      for (const attendance of legacyAttendance) {
+        attendanceByStudent.set(String(attendance.studentId), {
+          checkedInAt: attendance.checkedInAt,
+          methods: '',
+        });
+      }
+      for (const attendance of attendanceRecords) {
+        const key = String(attendance.studentId);
+        const existing = attendanceByStudent.get(key);
+        attendanceByStudent.set(key, {
+          checkedInAt: existing?.checkedInAt || attendance.checkedInAt,
+          methods: attendance.methods || '',
+        });
+      }
+    } catch (error) {
+      warning = 'Không thể tải trạng thái điểm danh; danh sách đăng ký vẫn được hiển thị.';
+      console.error('Organizer event attendance status error:', error.message);
+    }
+
+    const eventEnded = event.status === 'Đã đóng'
+      || new Date(event.endTime) <= new Date();
+    const items = rows.map((row) => {
+      const attendance = attendanceByStudent.get(String(row.studentId));
+      const methods = String(attendance?.methods || '').split(',').filter(Boolean);
+      let attendanceStatus = eventEnded ? 'Vắng mặt' : 'Chưa điểm danh';
+      if (attendance?.checkedInAt) {
+        if (methods.includes('Face') && methods.includes('QR')) {
+          attendanceStatus = 'Đã điểm danh QR và khuôn mặt';
+        } else if (methods.includes('Face')) {
+          attendanceStatus = 'Đã điểm danh khuôn mặt';
+        } else {
+          attendanceStatus = 'Đã điểm danh QR';
+        }
+      }
+      return {
+        ...row,
+        attendanceStatus,
+        checkedInAt: attendance?.checkedInAt || null,
+      };
+    });
+    return response.json({ items, ...(warning ? { warning } : {}) });
   } catch (error) {
-    console.error('Organizer event students error:', error.message);
+    console.error('Organizer event students error:', error.code, error.message);
     return response.status(500).json({
       message: 'Không thể tải danh sách sinh viên đăng ký sự kiện.',
     });
