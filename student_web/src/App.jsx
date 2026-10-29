@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, ArrowLeft, ArrowRight, BookOpen,
+  Activity, ArrowLeft, ArrowRight, Bell, BookOpen,
   CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
   Clock3, Download, GraduationCap, Home, LogOut, MapPin, Menu, Moon,
   Plus, Search, ShieldCheck, Sparkles, Sun, UserRound, Users, X,
 } from 'lucide-react';
 import { api, apiBaseUrl, ApiError } from './api.js';
 import RolePortal from './RolePortal.jsx';
+import { AttendanceBarChart, AttendanceDonutChart } from './StatisticsCharts.jsx';
 
 const NAV_ITEMS = [
   { id: 'home', label: 'Tổng quan', icon: Home },
@@ -14,6 +15,7 @@ const NAV_ITEMS = [
   { id: 'events', label: 'Sự kiện', icon: Sparkles },
   { id: 'calendar', label: 'Lịch của tôi', icon: CalendarDays },
   { id: 'attendance', label: 'Điểm danh', icon: Activity },
+  { id: 'notifications', label: 'Thông báo', icon: Bell },
 ];
 
 const FULL_NAV_ITEMS = [
@@ -166,7 +168,7 @@ export default function App() {
     return <LoginPage onLogin={setUser} notice={notice} clearNotice={() => setNotice(null)} />;
   }
   if (!roleIsStudent(user.role)) {
-    return <RolePortal user={user} onLogout={() => signOut()} showNotice={showNotice} darkMode={darkMode} setDarkMode={setDarkMode} />;
+    return <RolePortal user={user} onUserChange={setUser} onLogout={() => signOut()} showNotice={showNotice} darkMode={darkMode} setDarkMode={setDarkMode} />;
   }
 
   const currentNav = FULL_NAV_ITEMS.find((item) => item.id === activePage);
@@ -226,6 +228,7 @@ export default function App() {
           {activePage === 'events' && <EventsPage showNotice={showNotice} />}
           {activePage === 'calendar' && <CalendarPage showNotice={showNotice} />}
           {activePage === 'attendance' && <AttendancePage />}
+          {activePage === 'notifications' && <NotificationsPage goTo={goTo} />}
           {activePage === 'certificates' && <CertificatesPage showNotice={showNotice} />}
           {activePage === 'profile' && <ProfilePage user={user} onUserChange={setUser} onLogout={() => signOut()} showNotice={showNotice} darkMode={darkMode} setDarkMode={setDarkMode} goTo={goTo} />}
         </section>
@@ -472,6 +475,7 @@ function DashboardPage({ user, goTo, showNotice }) {
     <LoadError errors={errors} onRetry={refresh} />
     <div className="welcome-banner"><div className="welcome-copy"><span className="welcome-tag"><Sparkles size={14} /> KHÔNG GIAN CỦA BẠN</span><h2>Xin chào, {nameOf(user).split(' ').slice(-1)[0]} <span>✦</span></h2><p>Theo dõi lịch học, khám phá sự kiện và lưu lại từng cột mốc đáng nhớ.</p><button className="banner-button" onClick={() => goTo('calendar')}>Xem lịch của tôi <ArrowRight size={16} /></button></div><div className="welcome-illustration"><div className="illustration-ring ring-a" /><div className="illustration-ring ring-b" /><div className="illustration-cap"><GraduationCap size={75} strokeWidth={1.25} /></div><span className="float-star star-a">✦</span><span className="float-star star-b">✧</span><span className="float-dot dot-a" /><span className="float-dot dot-b" /></div></div>
     <div className="stats-grid">{stats.map(({ label, value, icon: Icon, color }) => <article className="stat-card" key={label}><div className={`stat-icon ${color}`}><Icon size={19} /></div><div><span>{label}</span><strong>{loading ? '—' : value}</strong></div><div className={`stat-spark ${color}`}>↗</div></article>)}</div>
+    {!loading && Number(dashboard.present || 0) + Number(dashboard.late || 0) + Number(dashboard.absent || 0) > 0 && <AttendanceDonutChart title="Kết quả điểm danh" data={[{ label: 'Có mặt', value: Number(dashboard.present || 0), color: '#28a76c' }, { label: 'Đi muộn', value: Number(dashboard.late || 0), color: '#e7a639' }, { label: 'Vắng', value: Number(dashboard.absent || 0), color: '#d95d54' }]} />}
     {notifications.length > 0 && <button className="active-session-banner" onClick={() => goTo('attendance')}><span className="pulse-dot" /><span><strong>{notifications.length} phiên điểm danh đang mở</strong><small>Chuyển sang ứng dụng Android để thực hiện điểm danh.</small></span><ArrowRight size={18} /></button>}
     <div className="dashboard-grid">
       <section className="panel-card"><div className="section-title"><div><h2>Lịch học hôm nay</h2><p>Các lớp có lịch trong ngày</p></div><button className="text-button" onClick={() => goTo('classes')}>Tất cả lớp <ArrowRight size={15} /></button></div>
@@ -515,6 +519,7 @@ function ClassesPage({ showNotice }) {
     <LoadError errors={errors} onRetry={refresh} />
     <form className="join-class-form" onSubmit={joinClass}><div className="join-icon"><Plus size={19} /></div><div className="join-copy"><strong>Tham gia lớp học</strong><span>Nhập mã lớp do giảng viên cung cấp.</span></div><input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="Nhập mã lớp" required aria-label="Mã lớp" /><button className="primary-button" disabled={joining}>{joining ? 'Đang tham gia...' : 'Tham gia lớp'}</button></form>
     <div className="toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm theo tên lớp hoặc giảng viên..." /></div><span className="result-count">{loading ? 'Đang tải...' : `${filtered.length} lớp học`}</span></div>
+    {!loading && filtered.some((item) => Number(item.present || 0) + Number(item.late || 0) + Number(item.absent || 0) > 0) && <AttendanceBarChart title="Kết quả điểm danh theo lớp" categories={filtered.map((item) => item.id || item.code)} series={[{ label: 'Có mặt', color: '#28a76c', values: filtered.map((item) => Number(item.present || 0)) }, { label: 'Đi muộn', color: '#e7a639', values: filtered.map((item) => Number(item.late || 0)) }, { label: 'Vắng', color: '#d95d54', values: filtered.map((item) => Number(item.absent || 0)) }]} />}
     {loading ? <LoadingGrid /> : filtered.length ? <div className="class-grid">{filtered.map((item, index) => <button className="class-card" key={item.id} onClick={() => openClass(item)}><div className={`class-card-art art-${index % 4}`}><span className="class-code">{item.id}</span><BookOpen size={42} strokeWidth={1.2} /><span className="art-label">HỌC PHẦN</span></div><div className="class-card-body"><div className="card-title-row"><h3>{item.name}</h3><ArrowRight size={17} /></div><p><GraduationCap size={14} /> {item.lecturer || 'Chưa cập nhật giảng viên'}</p><p><Clock3 size={14} /> {item.time || 'Chưa có lịch học'}</p><div className="class-card-footer"><span>{item.room ? <><MapPin size={13} /> {item.room}</> : 'Lớp học phần'}</span><span className="progress-caption">{item.rate || 0}% chuyên cần</span></div><div className="progress-track"><span style={{ width: `${Math.min(100, Number(item.rate) || 0)}%` }} /></div></div></button>)}</div> : <EmptyState icon={BookOpen} title={query ? 'Không tìm thấy lớp phù hợp' : 'Bạn chưa tham gia lớp học nào'} text={query ? 'Thử từ khóa khác để tìm lớp học.' : 'Nhập mã lớp ở trên để tham gia lớp học phần của bạn.'} />}
     {selected && <Modal title="Chi tiết lớp học" onClose={() => setSelected(null)}>
       <div className="detail-title">
@@ -548,9 +553,49 @@ function ClassesPage({ showNotice }) {
             </div>;
           }) : <p className="muted-text">Lớp chưa có sinh viên.</p>}
         </div>
+        <ClassFeedback classId={selected.id} showNotice={showNotice} />
       </>}
     </Modal>}
   </>;
+}
+
+function ClassFeedback({ classId, showNotice }) {
+  const [summary, setSummary] = useState(null);
+  const [mode, setMode] = useState('');
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api(`/api/classes/${encodeURIComponent(classId)}/feedback`)
+      .then((result) => { if (active) setSummary(result); })
+      .catch((exception) => { if (active) setError(getApiMessage(exception)); });
+    return () => { active = false; };
+  }, [classId]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setError('');
+    if (mode === 'rating' && !rating) { setError('Vui lòng chọn số sao.'); return; }
+    if (mode === 'feedback' && !comment.trim()) { setError('Vui lòng nhập nội dung phản hồi.'); return; }
+    setSaving(true);
+    try {
+      await api(`/api/classes/${encodeURIComponent(classId)}/feedback`, {
+        method: 'POST', body: mode === 'rating' ? { rating, comment: comment.trim() } : { comment: comment.trim() },
+      });
+      setSummary(await api(`/api/classes/${encodeURIComponent(classId)}/feedback`));
+      setMode(''); setComment(''); setRating(0);
+      showNotice('success', mode === 'rating' ? 'Đã gửi đánh giá lớp học.' : 'Đã gửi phản hồi lớp học.');
+    } catch (exception) {
+      setError(getApiMessage(exception));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <section className="feedback-panel"><h4 className="modal-section-title">Đánh giá & phản hồi lớp học</h4><p className="feedback-summary">{summary?.ratingCount ? `${Number(summary.averageRating).toFixed(1)} / 5 sao · ${summary.ratingCount} lượt đánh giá` : 'Chưa có lượt đánh giá.'}</p>{error && <div className="alert error">{error}</div>}{mode ? <form onSubmit={submit} className="feedback-form">{mode === 'rating' && <div className="rating-stars" role="group" aria-label="Chọn số sao">{[1, 2, 3, 4, 5].map((value) => <button type="button" key={value} className={value <= rating ? 'chosen' : ''} aria-label={`${value} sao`} onClick={() => setRating(value)}>★</button>)}</div>}<label>{mode === 'rating' ? 'Nhận xét thêm' : 'Nội dung phản hồi'}<textarea value={comment} maxLength={2000} onChange={(event) => setComment(event.target.value)} placeholder="Chia sẻ ý kiến của bạn..." required={mode === 'feedback'} /></label><div className="feedback-actions"><button type="button" className="text-button" onClick={() => { setMode(''); setError(''); }}>Hủy</button><button className="primary-button compact" disabled={saving}>{saving ? 'Đang gửi...' : 'Gửi'}</button></div></form> : <div className="feedback-actions"><button className="outline-button compact" onClick={() => setMode('feedback')}>Gửi phản hồi</button><button className="outline-button compact" onClick={() => setMode('rating')}>Đánh giá</button></div>}</section>;
 }
 
 function EventsPage({ showNotice }) {
@@ -768,6 +813,51 @@ function AttendancePage() {
     <PageHeading eyebrow="ĐIỂM DANH AN TOÀN" title="Điểm danh trên Android" description="Để xác thực chính xác bằng QR, vị trí hoặc khuôn mặt, vui lòng dùng ứng dụng HUIT trên điện thoại Android." actions={<button className="outline-button" onClick={load}><Activity size={16} /> Kiểm tra phiên</button>} />
     <div className="android-hero"><div className="android-visual"><div className="phone-frame"><div className="phone-notch" /><div className="phone-screen"><div className="phone-logo"><img className="huit-logo" src="/huit-logo.jpg" alt="Logo HUIT" /></div><span>HUIT STUDENT</span><div className="phone-scan"><div className="scan-corner top-left" /><div className="scan-corner top-right" /><div className="scan-corner bottom-left" /><div className="scan-corner bottom-right" /><div className="scan-line" /></div><small>Đưa mã QR vào khung hình</small></div></div><div className="phone-orbit orbit-left" /><div className="phone-orbit orbit-right" /></div><div className="android-copy"><span className="welcome-tag"><ShieldCheck size={14} /> BẢO MẬT TRÊN THIẾT BỊ</span><h2>Điểm danh cần camera và vị trí của điện thoại</h2><p>Phiên bản web không kích hoạt quét QR, nhận diện khuôn mặt hoặc gửi yêu cầu điểm danh. Mở ứng dụng Android để sử dụng các chức năng này.</p><div className="android-steps"><div><span>01</span><p>Mở ứng dụng <strong>HUIT</strong> trên điện thoại Android.</p></div><div><span>02</span><p>Chọn lớp học hoặc sự kiện cần điểm danh.</p></div><div><span>03</span><p>Quét mã QR hoặc chọn phương thức được yêu cầu.</p></div></div></div></div>
     <section className="panel-card active-attendance-panel"><div className="section-title"><div><h2>Phiên điểm danh đang mở</h2><p>Thông tin phiên hiện tại dành cho tài khoản của bạn</p></div><span className="live-label"><i /> TRỰC TIẾP</span></div>{error && <div className="alert error">{error}</div>}{loading ? <LoadingLine /> : sessions.length ? <div className="active-session-list">{sessions.map((session) => <div className="active-session-row" key={session.sessionId}><span className="active-session-icon"><Activity size={18} /></span><div><strong>Lớp {session.classId}</strong><p>{session.content || 'Phiên điểm danh'} · {session.method || 'QR'}{session.closesAt ? ` · Đóng lúc ${formatTime(session.closesAt)}` : ''}</p></div><span className="status-tag green-tag">Đang mở</span></div>)}</div> : <EmptyState icon={Check} title="Hiện không có phiên đang mở" text="Khi giảng viên mở phiên, thông tin sẽ xuất hiện tại đây." />}</section>
+  </>;
+}
+
+function NotificationsPage({ goTo }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [selected, setSelected] = useState(null);
+  const [readIds, setReadIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('studentWebReadNotifications') || '[]')); }
+    catch { return new Set(); }
+  });
+  const refresh = useCallback(async () => {
+    setError('');
+    try {
+      const result = await api('/api/notifications');
+      setItems(result.items || []);
+    } catch (exception) {
+      setError(getApiMessage(exception));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 15000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  useEffect(() => {
+    localStorage.setItem('studentWebReadNotifications', JSON.stringify([...readIds]));
+  }, [readIds]);
+
+  const markRead = (id) => setReadIds((current) => new Set(current).add(id));
+  const visible = items.filter((item) => filter !== 'unread' || !readIds.has(item.sessionId));
+
+  return <>
+    <PageHeading eyebrow="CẬP NHẬT TÀI KHOẢN" title="Thông báo" description="Các phiên điểm danh đang mở cho lớp bạn tham gia." actions={<button className="outline-button" onClick={refresh}><Activity size={16} /> Làm mới</button>} />
+    <div className="filter-tabs"><button className={filter === 'all' ? 'selected' : ''} onClick={() => setFilter('all')}>Tất cả</button><button className={filter === 'unread' ? 'selected' : ''} onClick={() => setFilter('unread')}>Chưa đọc</button><button className={filter === 'important' ? 'selected' : ''} onClick={() => setFilter('important')}>Quan trọng</button></div>
+    {items.some((item) => !readIds.has(item.sessionId)) && <button className="text-button" onClick={() => setReadIds(new Set(items.map((item) => item.sessionId)))}>Đánh dấu tất cả đã đọc</button>}
+    {error && <div className="alert error">{error}</div>}
+    {loading ? <LoadingLine /> : visible.length ? <div className="notification-list">{visible.map((item) => <button className={`notification-item ${readIds.has(item.sessionId) ? 'read' : ''}`} key={item.sessionId} onClick={() => { setSelected(item); markRead(item.sessionId); }}><span className="notification-icon"><Bell size={18} /></span><span className="notification-copy"><strong>Điểm danh lớp {item.classId} đã mở</strong><small>{item.content || 'Phiên điểm danh'} · {item.method || 'QR'} · {formatTime(item.createdAt)}</small></span><span className="status-tag amber-tag">Quan trọng</span></button>)}</div> : <EmptyState icon={Bell} title="Không có thông báo nào" text="Khi giảng viên mở phiên điểm danh, thông tin sẽ xuất hiện tại đây." />}
+    {selected && <Modal title={`Điểm danh lớp ${selected.classId}`} onClose={() => setSelected(null)}><p>{selected.content || 'Phiên điểm danh'} đang mở bằng {selected.method || 'QR'}.</p><p className="modal-footnote">{selected.closesAt ? `Đóng lúc ${formatTime(selected.closesAt)}.` : ''} Điểm danh cần camera/vị trí trên thiết bị di động.</p><button className="primary-button" onClick={() => { setSelected(null); goTo('attendance'); }}>Xem hướng dẫn điểm danh <ArrowRight size={16} /></button></Modal>}
   </>;
 }
 
