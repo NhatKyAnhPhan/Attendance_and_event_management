@@ -71,6 +71,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   bool _sendingCertificates = false;
   DateTimeRange? _dateRange;
   final Set<String> _importingEventIds = {};
+  final Map<String, String> _activeQrSessionIds = {};
 
   Future<void> _selectDateRange() async {
     final now = DateTime.now();
@@ -303,6 +304,15 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                                 colors,
                                 Icons.people_outline_rounded,
                                 'Đăng ký: ${event.registeredCount}/${event.capacity}',
+                              ),
+                              _eventMetaLine(
+                                colors,
+                                event.certificateEnabled
+                                    ? Icons.verified_outlined
+                                    : Icons.verified_user_outlined,
+                                event.certificateEnabled
+                                    ? 'Có cấp chứng nhận'
+                                    : 'Không cấp chứng nhận',
                               ),
                               if (event.isArchived) ...[
                                 const SizedBox(height: 7),
@@ -754,13 +764,38 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
           if (Get.find<AuthController>().canManageEvents &&
               !event.isClosed &&
               event.endTime.isAfter(DateTime.now()))
-            OutlinedButton.icon(
-              onPressed: () =>
-                  _showEventAttendanceQr(dialogContext, controller, event),
-              icon: const Icon(Icons.qr_code_2),
-              label: const Text('Mở phiên điểm danh'),
-            ),
+            if (_activeQrSessionIds[event.id] == null)
+              OutlinedButton.icon(
+                onPressed: () =>
+                    _showEventAttendanceQr(dialogContext, controller, event),
+                icon: const Icon(Icons.qr_code_2),
+                label: const Text('Mở phiên điểm danh'),
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: () async {
+                  try {
+                    await controller.closeAttendanceSession(
+                      event.id,
+                      _activeQrSessionIds[event.id]!,
+                    );
+                    if (!mounted || !dialogContext.mounted) return;
+                    setState(() => _activeQrSessionIds.remove(event.id));
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      const SnackBar(content: Text('Đã tắt mã QR điểm danh.')),
+                    );
+                  } catch (error) {
+                    if (!dialogContext.mounted) return;
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(content: Text('Không thể tắt mã QR: $error')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('Tắt mã QR đang hoạt động'),
+              ),
           if (Get.find<AuthController>().canManageEvents &&
+              event.certificateEnabled &&
               (event.isClosed || !event.endTime.isAfter(DateTime.now())))
             FilledButton.icon(
               onPressed: _sendingCertificates
@@ -975,6 +1010,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       periodName ??= result['periodName']?.toString();
       periodEndTime ??= event.endTime;
       if (!context.mounted) return;
+      setState(() => _activeQrSessionIds[event.id] = sessionId);
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -1037,6 +1073,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                 try {
                   await controller.closeAttendanceSession(event.id, sessionId);
                   if (!context.mounted) return;
+                  setState(() => _activeQrSessionIds.remove(event.id));
                   Navigator.pop(dialogContext);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Đã đóng phiên điểm danh.')),
@@ -1049,7 +1086,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                 }
               },
               icon: const Icon(Icons.stop_circle_outlined),
-              label: const Text('Đóng phiên'),
+              label: const Text('Tắt mã QR'),
             ),
           ],
         ),
@@ -1346,6 +1383,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ),
             )
             .toList();
+    var certificateEnabled =
+        currentDetails['certificateEnabled'] == true ||
+        currentDetails['certificateEnabled']?.toString() == '1';
 
     await showDialog<void>(
       context: context,
@@ -1494,6 +1534,17 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                             },
                           ),
                         ],
+                      ),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: certificateEnabled,
+                        onChanged: (value) =>
+                            setState(() => certificateEnabled = value ?? false),
+                        title: const Text('Cấp chứng nhận cho người tham dự'),
+                        subtitle: const Text(
+                          'Chỉ bật nếu sự kiện này sẽ phát hành giấy chứng nhận.',
+                        ),
+                        controlAffinity: ListTileControlAffinity.leading,
                       ),
                       const SizedBox(height: 16),
                       _eventFormSection(
@@ -1861,6 +1912,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         endTime: endTime,
                         location: location,
                         capacity: capacity,
+                        certificateEnabled: certificateEnabled,
                         description: descriptionController.text.trim(),
                         benefits: eventBenefits,
                         rules: eventRules,
@@ -1874,6 +1926,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         endTime: endTime,
                         location: location,
                         capacity: capacity,
+                        certificateEnabled: certificateEnabled,
                         description: descriptionController.text.trim(),
                         benefits: eventBenefits,
                         rules: eventRules,

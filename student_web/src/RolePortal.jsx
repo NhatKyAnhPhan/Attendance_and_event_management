@@ -7,24 +7,24 @@ import {
 } from 'lucide-react';
 import { api } from './api.js';
 import { QRCodeSVG } from 'qrcode.react';
-import { AttendanceBarChart, AttendanceDonutChart } from './StatisticsCharts.jsx';
+import { AttendanceDonutChart } from './StatisticsCharts.jsx';
 import { parseStudentIds } from './studentIds.js';
 import './role-portal.css';
 
 const ADMIN_ITEMS = [
-  ['dashboard', 'Dashboard', Home], ['users', 'Quản lý người dùng', Users],
+  ['dashboard', 'Trang chủ', Home], ['users', 'Quản lý người dùng', Users],
   ['orgUnits', 'Đơn vị tổ chức', Building2], ['classes', 'Quản lý lớp học', BookOpen],
   ['events', 'Quản lý sự kiện', CalendarDays], ['attendance', 'Điểm danh', ClipboardCheck],
   ['reports', 'Báo cáo & Thống kê', BarChart3], ['feedback', 'Phản hồi', MessageSquare],
   ['certificates', 'Chứng chỉ', Award], ['settings', 'Cài đặt', Settings],
 ];
 const LECTURER_ITEMS = [
-  ['dashboard', 'Dashboard', Home], ['calendar', 'Lịch của tôi', CalendarDays],
+  ['dashboard', 'Trang chủ', Home], ['calendar', 'Lịch của tôi', CalendarDays],
   ['classes', 'Quản lý lớp học', BookOpen], ['attendance', 'Điểm danh', ClipboardCheck],
   ['reports', 'Báo cáo & Thống kê', BarChart3], ['notifications', 'Thông báo', Bell],
 ];
 const EMPLOYEE_ITEMS = [
-  ['dashboard', 'Dashboard', Home], ['calendar', 'Lịch của tôi', CalendarDays],
+  ['dashboard', 'Trang chủ', Home], ['calendar', 'Lịch của tôi', CalendarDays],
   ['attendance', 'Điểm danh', ClipboardCheck], ['events', 'Quản lý sự kiện', CalendarDays],
   ['certificates', 'Chứng chỉ', Award], ['feedback', 'Phản hồi', MessageSquare],
 ];
@@ -103,7 +103,7 @@ export default function RolePortal({ user, onUserChange, onLogout, showNotice, d
       <main className="rp-main">
         <header className="rp-header">
           <button className="rp-menu-button" aria-label="Mở menu" onClick={() => setMobileMenuOpen(true)}><Menu size={21} /></button>
-          <div className="rp-breadcrumb"><span>Trang chủ</span><ChevronRight size={15} /><strong>{PAGE_TITLES[activePage] || 'Dashboard'}</strong></div>
+          <div className="rp-breadcrumb">{activePage !== 'dashboard' && <><span>Trang chủ</span><ChevronRight size={15} /></>}<strong>{PAGE_TITLES[activePage] || 'Trang chủ'}</strong></div>
           <div className="rp-header-actions">
             <span className="rp-connected"><i /> Đang kết nối</span>
             <button className="rp-icon-button" aria-label={darkMode ? 'Giao diện sáng' : 'Giao diện tối'} onClick={() => setDarkMode((value) => !value)}>
@@ -275,10 +275,144 @@ function PageTitle({ title, subtitle, onRefresh, loading, action }) {
 
 function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
   const metrics = Array.isArray(data?.metrics) ? data.metrics : [];
-  const numericMetrics = metrics.filter((metric) => Number.isFinite(Number(metric.value)));
+  const [attendanceReport, setAttendanceReport] = useState(null);
+  const [attendanceReportLoading, setAttendanceReportLoading] = useState(false);
+  const [attendanceReportError, setAttendanceReportError] = useState('');
+  const [classOptions, setClassOptions] = useState([]);
+  const [eventOptions, setEventOptions] = useState([]);
+  const [classOptionsError, setClassOptionsError] = useState('');
+  const [eventOptionsError, setEventOptionsError] = useState('');
+  const [optionsReload, setOptionsReload] = useState(0);
+  const [classSearch, setClassSearch] = useState('');
+  const [eventSearch, setEventSearch] = useState('');
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState('');
+  const [selectedClassReport, setSelectedClassReport] = useState(null);
+  const [selectedClassLoading, setSelectedClassLoading] = useState(false);
+  const [selectedClassError, setSelectedClassError] = useState('');
+  const [classReportReload, setClassReportReload] = useState(0);
+  const canViewAttendanceReport = isAdminRole(role) || isLecturerRole(role);
+  const canViewClasses = canViewAttendanceReport;
+  const canViewEvents = !isLecturerRole(role);
+  const loadAttendanceReport = useCallback(async () => {
+    setAttendanceReportLoading(true);
+    setAttendanceReportError('');
+    try {
+      setAttendanceReport(await api('/api/reports/attendance'));
+    } catch (exception) {
+      setAttendanceReportError(exception instanceof Error ? exception.message : 'Không thể tải báo cáo điểm danh.');
+    } finally {
+      setAttendanceReportLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    let active = true;
+    if (canViewClasses) {
+      setClassOptionsError('');
+      api('/api/reports/attendance/classes')
+        .then((result) => {
+          if (active) setClassOptions(itemsOf(result));
+        })
+        .catch((exception) => {
+          if (active) setClassOptionsError(exception instanceof Error ? exception.message : 'Không thể tải danh sách lớp.');
+        });
+    }
+    if (canViewEvents) {
+      setEventOptionsError('');
+      api('/api/organizer/events')
+        .then((result) => {
+          if (active) setEventOptions(itemsOf(result));
+        })
+        .catch((exception) => {
+          if (active) setEventOptionsError(exception instanceof Error ? exception.message : 'Không thể tải danh sách sự kiện.');
+        });
+    }
+    return () => { active = false; };
+  }, [canViewClasses, canViewEvents, optionsReload]);
+
+  useEffect(() => {
+    if (!data || data.attendanceBreakdown || !canViewAttendanceReport) return;
+    void loadAttendanceReport();
+  }, [data, data?.attendanceBreakdown, canViewAttendanceReport, loadAttendanceReport]);
+
+  useEffect(() => {
+    if (!selectedClassId) {
+      setSelectedClassReport(null);
+      setSelectedClassError('');
+      setSelectedClassLoading(false);
+      return undefined;
+    }
+    let active = true;
+    setSelectedClassReport(null);
+    setSelectedClassError('');
+    setSelectedClassLoading(true);
+    api(`/api/reports/attendance/classes/${encodeURIComponent(selectedClassId)}`)
+      .then((result) => {
+        if (active) setSelectedClassReport(result);
+      })
+      .catch((exception) => {
+        if (active) setSelectedClassError(exception instanceof Error ? exception.message : 'Không thể tải báo cáo lớp.');
+      })
+      .finally(() => {
+        if (active) setSelectedClassLoading(false);
+      });
+    return () => { active = false; };
+  }, [selectedClassId, classReportReload]);
+
+  const filteredClasses = classOptions.filter((item) => String(item.id) === selectedClassId || `${item.id} ${item.name}`.toLowerCase().includes(classSearch.trim().toLowerCase()));
+  const filteredEvents = eventOptions.filter((item) => String(item.id) === selectedEventId || `${item.id} ${item.name}`.toLowerCase().includes(eventSearch.trim().toLowerCase()));
+  const selectedClass = classOptions.find((item) => String(item.id) === selectedClassId);
+  const selectedEvent = eventOptions.find((item) => String(item.id) === selectedEventId);
+  const classBreakdown = selectedClassReport?.items?.reduce((summary, student) => ({
+    present: summary.present + Number(student.present || 0),
+    late: summary.late + Number(student.late || 0),
+    absent: summary.absent + Number(student.absent || 0),
+    excused: summary.excused + Number(student.excused || 0),
+  }), { present: 0, late: 0, absent: 0, excused: 0 });
+  const eventBreakdown = selectedEvent ? {
+    present: Number(selectedEvent.checkedInCount || 0),
+    late: 0,
+    absent: Number(selectedEvent.absentCount || 0),
+    pending: Number(selectedEvent.pendingCount || 0),
+  } : null;
+  const aggregateEventBreakdown = eventOptions.reduce((summary, event) => ({
+    present: summary.present + Number(event.checkedInCount || 0),
+    late: summary.late,
+    absent: summary.absent + Number(event.absentCount || 0),
+    pending: summary.pending + Number(event.pendingCount || 0),
+  }), { present: 0, late: 0, absent: 0, pending: 0 });
+  const isClassSelected = Boolean(selectedClassId);
+  const isEventSelected = Boolean(selectedEventId);
+  const attendanceBreakdown = isClassSelected
+    ? classBreakdown
+    : isEventSelected
+      ? eventBreakdown
+      : data?.attendanceBreakdown || attendanceReport?.summary || (!canViewAttendanceReport ? aggregateEventBreakdown : null);
+  const chartData = attendanceBreakdown ? [
+    { label: 'Có mặt', value: Number(attendanceBreakdown.present) || 0, color: '#28a76c' },
+    { label: 'Đi muộn', value: Number(attendanceBreakdown.late) || 0, color: '#e7a639' },
+    { label: 'Vắng', value: Number(attendanceBreakdown.absent) || 0, color: '#d95d54' },
+    ...(Number(attendanceBreakdown.excused) > 0 ? [{ label: 'Vắng có phép', value: Number(attendanceBreakdown.excused), color: '#8b5cf6' }] : []),
+    ...(Number(attendanceBreakdown.pending) > 0 ? [{ label: 'Chưa điểm danh', value: Number(attendanceBreakdown.pending), color: '#94a3b8' }] : []),
+  ] : [];
+  const chartTotal = chartData.reduce((total, item) => total + item.value, 0);
+  const chartTitle = isClassSelected
+    ? `Kết quả điểm danh · Lớp ${selectedClass?.name || selectedClassId}`
+    : isEventSelected
+      ? `Kết quả điểm danh · ${selectedEvent?.name || selectedEventId}`
+      : 'Kết quả điểm danh toàn hệ thống';
+  const selectClass = (event) => {
+    setSelectedClassId(event.target.value);
+    if (event.target.value) setSelectedEventId('');
+  };
+  const selectEvent = (event) => {
+    setSelectedEventId(event.target.value);
+    if (event.target.value) setSelectedClassId('');
+  };
+
   return (
     <>
-      <PageTitle title="Tổng quan" subtitle={`Số liệu hiện tại · ${isAdminRole(role) ? 'Quản trị viên' : isLecturerRole(role) ? 'Giảng viên' : 'Công nhân viên'}`} onRefresh={onRefresh} loading={loading} />
+      <PageTitle title="Trang chủ" subtitle={`Số liệu hiện tại · ${isAdminRole(role) ? 'Quản trị viên' : isLecturerRole(role) ? 'Giảng viên' : 'Công nhân viên'}`} onRefresh={onRefresh} loading={loading} />
       {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading && !metrics.length ? <LoadingPanel /> : metrics.length === 0 ? <EmptyPanel title="Chưa có dữ liệu tổng quan" message="Thống kê sẽ hiển thị khi có dữ liệu trong hệ thống." /> : (
         <>
           <div className="rp-metrics-grid">
@@ -289,7 +423,36 @@ function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
               </article>
             ))}
           </div>
-          {!!numericMetrics.length && <AttendanceBarChart title="Số lượng theo chỉ số" categories={numericMetrics.map((metric) => metric.label)} series={[{ label: 'Số lượng', color: '#4770d8', pointColors: numericMetrics.map((metric) => metricColor(metric.label)), values: numericMetrics.map((metric) => Number(metric.value) || 0) }]} />}
+          <section className="rp-dashboard-filters" aria-label="Lọc kết quả điểm danh">
+            {canViewClasses && <div className="rp-dashboard-filter-group">
+            <h2><BookOpen size={17} /> Theo lớp học</h2>
+            <label className="rp-search"><Search size={16} /><input value={classSearch} onChange={(event) => setClassSearch(event.target.value)} placeholder="Tìm mã hoặc tên lớp..." aria-label="Tìm lớp học" /></label>
+            <select value={selectedClassId} onChange={selectClass} aria-label="Chọn lớp học">
+              <option value="">Tất cả lớp học</option>
+              {filteredClasses.map((item) => <option key={item.id} value={item.id}>{item.name || item.id} · {item.id}</option>)}
+            </select>
+            {classOptionsError && <p className="rp-filter-error">{classOptionsError} <button type="button" onClick={() => setOptionsReload((value) => value + 1)}>Thử lại</button></p>}
+            {!classOptionsError && classOptions.length > 0 && filteredClasses.length === 0 && <p className="rp-filter-hint">Không tìm thấy lớp phù hợp.</p>}
+            </div>}
+            {canViewEvents && <div className="rp-dashboard-filter-group">
+            <h2><CalendarDays size={17} /> Theo sự kiện</h2>
+            <label className="rp-search"><Search size={16} /><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="Tìm mã hoặc tên sự kiện..." aria-label="Tìm sự kiện" /></label>
+            <select value={selectedEventId} onChange={selectEvent} aria-label="Chọn sự kiện">
+              <option value="">Tất cả sự kiện</option>
+              {filteredEvents.map((item) => <option key={item.id} value={item.id}>{item.name || item.id} · {item.id}</option>)}
+            </select>
+            {eventOptionsError && <p className="rp-filter-error">{eventOptionsError} <button type="button" onClick={() => setOptionsReload((value) => value + 1)}>Thử lại</button></p>}
+            {!eventOptionsError && eventOptions.length > 0 && filteredEvents.length === 0 && <p className="rp-filter-hint">Không tìm thấy sự kiện phù hợp.</p>}
+            </div>}
+          </section>
+          {selectedClassLoading && <LoadingPanel />}
+          {selectedClassError && <ErrorPanel message={selectedClassError} onRetry={() => setClassReportReload((value) => value + 1)} />}
+          {attendanceBreakdown && chartTotal > 0 && <AttendanceDonutChart title={chartTitle} data={chartData} />}
+          {attendanceBreakdown && chartTotal === 0 && !selectedClassLoading && <EmptyPanel title="Chưa có kết quả điểm danh" message="Chưa ghi nhận kết quả cho lựa chọn này." />}
+          {!isClassSelected && !isEventSelected && !attendanceBreakdown && attendanceReportLoading && <LoadingPanel />}
+          {!isClassSelected && !isEventSelected && !attendanceBreakdown && attendanceReportError && <ErrorPanel message={attendanceReportError} onRetry={loadAttendanceReport} />}
+          {!isClassSelected && !isEventSelected && !attendanceBreakdown && !attendanceReportLoading && !attendanceReportError && <EmptyPanel title="Chưa có kết quả điểm danh" message="Chưa có dữ liệu điểm danh phù hợp để hiển thị." />}
+          {isClassSelected && !attendanceBreakdown && !selectedClassLoading && !selectedClassError && <EmptyPanel title="Chưa có kết quả điểm danh" message="Chưa ghi nhận kết quả cho lớp đã chọn." />}
           <div className="rp-quick-actions">
             <button className="rp-card rp-quick-card" onClick={() => onNavigate(isLecturerRole(role) ? 'classes' : 'events')}><BookOpen size={20} /><span><strong>{isLecturerRole(role) ? 'Lớp học của tôi' : 'Sự kiện phụ trách'}</strong><small>Mở danh sách và thông tin chi tiết</small></span><ChevronRight size={18} /></button>
             <button className="rp-card rp-quick-card" onClick={() => onNavigate('attendance')}><ClipboardCheck size={20} /><span><strong>Điểm danh</strong><small>Xem các phiên và kết quả tham dự</small></span><ChevronRight size={18} /></button>
@@ -298,15 +461,6 @@ function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
       )}
     </>
   );
-}
-
-function metricColor(label) {
-  const normalized = String(label || '').toLowerCase();
-  if (normalized.includes('vắng')) return '#d95d54';
-  if (normalized.includes('muộn') || normalized.includes('trễ')) return '#e7a639';
-  if (normalized.includes('có mặt')) return '#28a76c';
-  if (normalized.includes('sự kiện')) return '#1596a4';
-  return '#4770d8';
 }
 
 function CalendarView({ data, loading, error, onRefresh, selectedDate, setSelectedDate, role }) {
@@ -608,21 +762,30 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
         item ? api(`/api/events/${encodeURIComponent(item.id)}`) : Promise.resolve({}),
       ]);
       const current = eventDetails || {};
-      const benefits = (current.benefits || []).map((benefit) => `${benefit.type || 'Khác'}|${benefit.points || 0}|${benefit.content || ''}`).join('\n');
+      const benefits = (current.benefits || []).map((benefit) => ({
+        type: benefit.type || 'Khác',
+        points: String(benefit.points || 0),
+        content: benefit.content || '',
+      }));
       const rules = (current.rules || []).map((rule) => typeof rule === 'string' ? rule : rule.text || '').join('\n');
-      const periods = (current.attendancePeriods || []).map((period) => `${period.name || ''}|${toDateTimeInput(period.startTime)}|${toDateTimeInput(period.endTime)}`).join('\n');
+      const periods = (current.attendancePeriods || []).map((period) => ({
+        name: period.name || '',
+        startTime: toDateTimeInput(period.startTime),
+        endTime: toDateTimeInput(period.endTime),
+      }));
       setUnits(itemsOf(unitResult));
       setForm({
         id: item?.id || '', name: current.name || item?.name || '', organizerId: current.organizerId || item?.organizerId || '',
         startTime: toDateTimeInput(current.startTime || item?.startTime || new Date(Date.now() + 86400000)),
         endTime: toDateTimeInput(current.endTime || item?.endTime || new Date(Date.now() + 93600000)),
         location: current.location || item?.location || '', capacity: String(current.capacity || item?.capacity || 100),
+        certificateEnabled: current.certificateEnabled === true || Number(current.certificateEnabled) === 1,
         imageUrl: current.imageUrl || item?.imageUrl || '',
         description: current.description || '', benefits, rules, periods,
       });
     } catch (exception) {
       setFormError(exception instanceof Error ? exception.message : 'Không thể tải dữ liệu sự kiện.');
-      setForm({ id: item?.id || '', name: item?.name || '', organizerId: item?.organizerId || '', startTime: '', endTime: '', location: item?.location || '', capacity: String(item?.capacity || 100), imageUrl: item?.imageUrl || '', description: '', benefits: '', rules: '', periods: '' });
+      setForm({ id: item?.id || '', name: item?.name || '', organizerId: item?.organizerId || '', startTime: '', endTime: '', location: item?.location || '', capacity: String(item?.capacity || 100), certificateEnabled: item?.certificateEnabled === true || Number(item?.certificateEnabled) === 1, imageUrl: item?.imageUrl || '', description: '', benefits: [], rules: '', periods: [] });
     } finally {
       setSaving(false);
     }
@@ -632,28 +795,29 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     event.preventDefault();
     setSaving(true);
     setFormError('');
-    const parseBenefits = form.benefits.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
-      const [type, points = '0', ...content] = line.split('|');
-      return { type: type.trim() || 'Khác', points: Number(points.trim()) || 0, content: content.join('|').trim() };
-    });
     let parsePeriods;
     try {
-      parsePeriods = form.periods.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
-        const [name, startTime, endTime] = line.split('|').map((part) => part.trim());
-        const start = new Date(startTime);
-        const end = new Date(endTime);
-        if (!name || Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf())) throw new Error('Khung điểm danh cần đúng định dạng: tên | bắt đầu | kết thúc.');
-        return { name, startTime: start.toISOString(), endTime: end.toISOString() };
+      parsePeriods = form.periods.map((period) => {
+        const start = new Date(period.startTime);
+        const end = new Date(period.endTime);
+        if (!period.name.trim() || Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf())) throw new Error('Vui lòng nhập tên, thời gian bắt đầu và kết thúc cho mỗi khung điểm danh.');
+        return { name: period.name.trim(), startTime: start.toISOString(), endTime: end.toISOString() };
       });
     } catch (exception) {
       setFormError(exception instanceof Error ? exception.message : 'Khung điểm danh không hợp lệ.');
       setSaving(false);
       return;
     }
+    const parseBenefits = form.benefits.map((benefit) => ({
+      type: benefit.type,
+      points: Number(benefit.points) || 0,
+      content: benefit.content.trim(),
+    }));
     const body = {
       name: form.name.trim(), organizerId: form.organizerId,
       startTime: new Date(form.startTime).toISOString(), endTime: new Date(form.endTime).toISOString(),
       location: form.location.trim(), capacity: Number(form.capacity), description: form.description.trim(),
+      certificateEnabled: form.certificateEnabled === true,
       imageUrl: form.imageUrl.trim(),
       benefits: parseBenefits, rules: form.rules.split('\n').map((line) => line.trim()).filter(Boolean),
       attendancePeriods: parsePeriods,
@@ -766,9 +930,9 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên sự kiện, địa điểm, trạng thái..." />
     {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : events.length ? <div className="rp-event-grid">{events.map((item) => {
       const eventEnded = item.status === 'Đã đóng' || item.status === 'Đã kết thúc' || (item.endTime && new Date(item.endTime) <= new Date());
-      return <article className="rp-card rp-event-card" key={item.id}><button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className="rp-tag">{item.status || 'Sự kiện'}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions"><button className="rp-secondary-button" onClick={() => openForm(item)}><Settings size={15} /> Sửa</button><button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button><EventQrAction item={item} /><button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>{item.status !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}<button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button></div>}</article>;
+      return <article className="rp-card rp-event-card" key={item.id}><button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className="rp-tag">{item.status || 'Sự kiện'}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><Award size={15} />{Number(item.certificateEnabled) === 1 || item.certificateEnabled === true ? 'Có cấp chứng nhận' : 'Không cấp chứng nhận'}</div><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions"><button className="rp-secondary-button" onClick={() => openForm(item)}><Settings size={15} /> Sửa</button><button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button><EventQrAction item={item} />{(Number(item.certificateEnabled) === 1 || item.certificateEnabled === true) && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>}{item.status !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}<button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button></div>}</article>;
     })}</div> : <EmptyPanel title="Chưa có sự kiện" message="Không tìm thấy sự kiện phù hợp." />}
-    {form && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setForm(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={saveEvent}><header><div><h2>{form.id ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện'}</h2><p>{form.id || 'Nhập thông tin hoạt động.'}</p></div><button type="button" className="rp-icon-button" onClick={() => setForm(null)} aria-label="Đóng"><X size={18} /></button></header>{formError && <ErrorPanel message={formError} />}<div className="rp-form-grid"><label>Tên sự kiện<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>Đơn vị tổ chức<select required value={form.organizerId} onChange={(event) => setForm({ ...form, organizerId: event.target.value })}><option value="">Chọn đơn vị</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label>Bắt đầu<input type="datetime-local" required value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} /></label><label>Kết thúc<input type="datetime-local" required value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} /></label><label>Địa điểm<input required value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></label><label>Sức chứa<input type="number" min="1" required value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /></label><label className="rp-form-wide">Chọn ảnh từ máy<input key={imageInputVersion} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const imageFile = event.target.files?.[0] || null; setForm({ ...form, imageFile, ...(imageFile ? { imageUrl: '' } : {}) }); }} /><small className="rp-image-help">JPEG, PNG hoặc WebP, tối đa 5 MB. Ảnh sẽ tải lên khi lưu sự kiện.</small></label><label className="rp-form-wide">Hoặc dùng URL ảnh<input type="url" maxLength="1000" value={form.imageUrl} onChange={(event) => { if (form.imageFile) setImageInputVersion((version) => version + 1); setForm({ ...form, imageUrl: event.target.value, imageFile: null }); }} placeholder="https://..." /><small className="rp-image-help">Để trống cả hai trường để tự chọn ảnh theo chủ đề sự kiện.</small>{(imagePreview || form.imageUrl) && <img key={imagePreview || form.imageUrl} className="rp-event-image-preview" src={imagePreview || form.imageUrl} alt="Xem trước ảnh sự kiện" onError={(event) => { event.currentTarget.hidden = true; }} />}</label><label className="rp-form-wide">Mô tả<textarea rows="3" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label><label className="rp-form-wide">Quyền lợi<textarea rows="3" value={form.benefits} onChange={(event) => setForm({ ...form, benefits: event.target.value })} placeholder="Mỗi dòng: loại | điểm | nội dung" /></label><label className="rp-form-wide">Nội quy<textarea rows="3" value={form.rules} onChange={(event) => setForm({ ...form, rules: event.target.value })} placeholder="Mỗi dòng một nội quy" /></label><label className="rp-form-wide">Khung giờ điểm danh<textarea rows="3" value={form.periods} onChange={(event) => setForm({ ...form, periods: event.target.value })} placeholder="Mỗi dòng: tên | bắt đầu (YYYY-MM-DDTHH:mm) | kết thúc (YYYY-MM-DDTHH:mm)" /></label></div><footer><button type="button" className="rp-secondary-button" onClick={() => setForm(null)} disabled={saving}>Hủy</button><button className="rp-secondary-button" disabled={saving}>{saving ? 'Đang lưu...' : form.id ? 'Lưu thay đổi' : 'Tạo sự kiện'}</button></footer></form></div>}
+    {form && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setForm(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={saveEvent}><header><div><h2>{form.id ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện'}</h2><p>{form.id || 'Nhập thông tin hoạt động.'}</p></div><button type="button" className="rp-icon-button" onClick={() => setForm(null)} aria-label="Đóng"><X size={18} /></button></header>{formError && <ErrorPanel message={formError} />}<div className="rp-form-grid"><label>Tên sự kiện<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>Đơn vị tổ chức<select required value={form.organizerId} onChange={(event) => setForm({ ...form, organizerId: event.target.value })}><option value="">Chọn đơn vị</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label>Bắt đầu<input type="datetime-local" required value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} /></label><label>Kết thúc<input type="datetime-local" required value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} /></label><label>Địa điểm<input required value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></label><label>Sức chứa<input type="number" min="1" required value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /></label><label className="rp-form-wide rp-checkbox-field"><input type="checkbox" checked={form.certificateEnabled === true} onChange={(event) => setForm({ ...form, certificateEnabled: event.target.checked })} /><span>Cấp chứng nhận cho người tham dự</span><small>Chỉ bật nếu sự kiện này sẽ phát hành giấy chứng nhận.</small></label><label className="rp-form-wide">Chọn ảnh từ máy<input key={imageInputVersion} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const imageFile = event.target.files?.[0] || null; setForm({ ...form, imageFile, ...(imageFile ? { imageUrl: '' } : {}) }); }} /><small className="rp-image-help">JPEG, PNG hoặc WebP, tối đa 5 MB. Ảnh sẽ tải lên khi lưu sự kiện.</small></label><label className="rp-form-wide">Hoặc dùng URL ảnh<input type="url" maxLength="1000" value={form.imageUrl} onChange={(event) => { if (form.imageFile) setImageInputVersion((version) => version + 1); setForm({ ...form, imageUrl: event.target.value, imageFile: null }); }} placeholder="https://..." /><small className="rp-image-help">Để trống cả hai trường để tự chọn ảnh theo chủ đề sự kiện.</small>{(imagePreview || form.imageUrl) && <img key={imagePreview || form.imageUrl} className="rp-event-image-preview" src={imagePreview || form.imageUrl} alt="Xem trước ảnh sự kiện" onError={(event) => { event.currentTarget.hidden = true; }} />}</label><label className="rp-form-wide">Mô tả<textarea rows="3" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Quyền lợi</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, benefits: [...form.benefits, { type: 'Khác', points: '0', content: '' }] })} disabled={form.benefits.length >= 20}><Plus size={15} /> Thêm quyền lợi</button></div>{form.benefits.map((benefit, index) => <div className="rp-editor-row rp-benefit-row" key={`benefit-${index}`}><select aria-label={`Loại quyền lợi ${index + 1}`} value={benefit.type} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value } : item) })}>{['Điểm rèn luyện', 'Điểm công tác xã hội', 'Chứng nhận', 'Khác'].map((type) => <option key={type} value={type}>{type}</option>)}</select><input aria-label={`Số điểm quyền lợi ${index + 1}`} type="number" min="0" step="1" required value={benefit.points} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, points: event.target.value } : item) })} placeholder="Số điểm" /><input aria-label={`Nội dung quyền lợi ${index + 1}`} maxLength="500" required value={benefit.content} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, content: event.target.value } : item) })} placeholder="Nội dung quyền lợi" /><button type="button" className="rp-icon-button" aria-label={`Xóa quyền lợi ${index + 1}`} onClick={() => setForm({ ...form, benefits: form.benefits.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section><label className="rp-form-wide">Nội quy<textarea rows="3" value={form.rules} onChange={(event) => setForm({ ...form, rules: event.target.value })} placeholder="Mỗi dòng một nội quy" /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Khung giờ điểm danh</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, periods: [...form.periods, { name: `Đợt ${form.periods.length + 1}`, startTime: form.startTime, endTime: form.endTime }] })} disabled={form.periods.length >= 12}><Plus size={15} /> Thêm khung giờ</button></div><small>Chọn ngày giờ trên lịch; để trống danh sách nếu điểm danh trong toàn bộ thời gian sự kiện.</small>{form.periods.map((period, index) => <div className="rp-editor-row rp-period-row" key={`period-${index}`}><input aria-label={`Tên khung điểm danh ${index + 1}`} required maxLength="60" value={period.name} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} placeholder="Tên khung, ví dụ: Đợt 1" /><label>Bắt đầu<input aria-label={`Bắt đầu khung ${index + 1}`} type="datetime-local" required value={period.startTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, startTime: event.target.value } : item) })} /></label><label>Kết thúc<input aria-label={`Kết thúc khung ${index + 1}`} type="datetime-local" required value={period.endTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, endTime: event.target.value } : item) })} /></label><button type="button" className="rp-icon-button" aria-label={`Xóa khung điểm danh ${index + 1}`} onClick={() => setForm({ ...form, periods: form.periods.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section></div><footer><button type="button" className="rp-secondary-button" onClick={() => setForm(null)} disabled={saving}>Hủy</button><button className="rp-secondary-button" disabled={saving}>{saving ? 'Đang lưu...' : form.id ? 'Lưu thay đổi' : 'Tạo sự kiện'}</button></footer></form></div>}
     {importTarget && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) setImportTarget(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importStudents}><header><div><h2>Nhập sinh viên đăng ký</h2><p>{importTarget.name}</p></div><button type="button" className="rp-icon-button" onClick={() => setImportTarget(null)} aria-label="Đóng"><X size={18} /></button></header><label>Chọn file Excel (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={readEventStudentWorkbook} disabled={Boolean(busyAction)} />{busyAction === 'reading-import' && <small role="status">Đang đọc file Excel...</small>}</label><label>Mã sinh viên<textarea rows="7" required value={studentIds} onChange={(event) => setStudentIds(event.target.value)} placeholder="Mỗi dòng một mã sinh viên; có thể phân tách bằng dấu phẩy hoặc dấu chấm phẩy." /></label><footer><button type="button" className="rp-secondary-button" onClick={() => setImportTarget(null)} disabled={busyAction === 'import'}>Hủy</button><button className="rp-secondary-button" disabled={busyAction === 'import'}>{busyAction === 'import' ? 'Đang nhập...' : 'Nhập sinh viên'}</button></footer></form></div>}
     {selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>{details?.name || selected.name}</h2><p>{selected.id} · {details?.status || selected.status || 'Sự kiện'}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header>{detailLoading ? <LoadingPanel /> : <><div className={`rp-event-detail-cover${(details?.imageUrl || selected.imageUrl) ? ' has-image' : ''}`}>{(details?.imageUrl || selected.imageUrl) && <img src={details?.imageUrl || selected.imageUrl} alt="" onError={(event) => { event.currentTarget.hidden = true; }} />}<span>{details?.id || selected.id} · HOẠT ĐỘNG HUIT</span></div><section className="rp-detail-intro"><span className="rp-detail-eyebrow">GIỚI THIỆU SỰ KIỆN</span><p>{details?.description?.trim() || `Sự kiện ${details?.name || selected.name || 'HUIT'} là hoạt động dành cho sinh viên quan tâm đến các chương trình và trải nghiệm tại trường. Xem thông tin thời gian, địa điểm, quyền lợi và nội quy bên dưới để chuẩn bị tham gia.`}</p></section>{detailError && <div className="rp-detail-error" role="alert">Không tải được một số thông tin chi tiết: {detailError}. Thông tin cơ bản bên dưới được lấy từ danh sách sự kiện.</div>}<div className="rp-profile-grid"><div><span>Đơn vị tổ chức</span><strong>{details?.organizerName || selected.organizerName || 'Chưa cập nhật'}</strong></div><div><span>Thời gian</span><strong>{formatDate(details?.startTime || selected.startTime)} – {formatDate(details?.endTime || selected.endTime)}</strong></div><div><span>Địa điểm</span><strong>{details?.location || selected.location || 'Chưa cập nhật'}</strong></div><div><span>Số lượng đăng ký</span><strong>{details?.registeredCount ?? selected.registeredCount ?? 0}{(details?.capacity || selected.capacity) ? ` / ${details?.capacity || selected.capacity}` : ''}</strong></div></div><h3 className="rp-modal-section-title">Quyền lợi</h3>{details?.benefits?.length ? details.benefits.map((benefit, index) => <p className="rp-detail-list-item" key={index}>{benefit.type}{benefit.points ? ` · ${benefit.points} điểm` : ''}: {benefit.content}</p>) : <p className="rp-modal-muted">Thông tin quyền lợi sẽ được cập nhật bởi đơn vị tổ chức.</p>}<h3 className="rp-modal-section-title">Nội quy tham gia</h3>{details?.rules?.length ? details.rules.map((rule, index) => <p className="rp-detail-list-item" key={index}>{index + 1}. {rule.text || rule}</p>) : <p className="rp-modal-muted">Vui lòng theo dõi thông báo của ban tổ chức trước khi tham gia.</p>}<h3 className="rp-modal-section-title">Danh sách đăng ký ({students.length})</h3>{rosterWarning && <div className="rp-detail-error" role="status">{rosterWarning}</div>}{rosterError ? <div className="rp-detail-error" role="alert">Không thể tải danh sách đăng ký: {rosterError}</div> : students.length ? <DataTable items={students} columns={[["Mã SV", "studentId"], ["Họ tên", "studentName"], ["Lớp", "className"], ["Trạng thái đăng ký", "status"], ["Điểm danh", "attendanceStatus"]]} /> : <EmptyPanel title="Chưa có đăng ký" message="Sự kiện hiện chưa có sinh viên đăng ký." />}</>}</section></div>}
   </>;
@@ -778,13 +942,12 @@ function EventQrAction({ item }) {
   const [open, setOpen] = useState(false);
   const [periods, setPeriods] = useState([]);
   const [periodId, setPeriodId] = useState('');
-  const [qr, setQr] = useState('');
+  const [qr, setQr] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const openDialog = async () => {
     setOpen(true);
-    setQr('');
     setError('');
     try {
       const details = await api(`/api/events/${encodeURIComponent(item.id)}`);
@@ -806,7 +969,7 @@ function EventQrAction({ item }) {
         method: 'POST', body: { latitude: position.coords.latitude, longitude: position.coords.longitude, ...(periodId ? { periodId } : {}) },
       });
       if (!result.qr) throw new Error('Backend không trả về mã QR.');
-      setQr(result.qr);
+      setQr(result);
     } catch (exception) {
       setError(exception?.code === 1 ? 'Cần cấp quyền vị trí cho trình duyệt.' : exception instanceof Error ? exception.message : 'Không thể tạo QR sự kiện.');
     } finally {
@@ -814,7 +977,21 @@ function EventQrAction({ item }) {
     }
   };
 
-  return <><button className="rp-secondary-button" onClick={openDialog}><QrCode size={15} /> Tạo QR</button>{open && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setOpen(false); }}><section className="rp-modal rp-qr-modal" role="dialog" aria-modal="true"><header><div><h2>QR điểm danh sự kiện</h2><p>{item.name} · Flutter có thể quét mã này</p></div><button className="rp-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={18} /></button></header>{error && <ErrorPanel message={error} />}{qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr} size={250} level="M" includeMargin /></div><strong>QR sự kiện đã sẵn sàng</strong><p>Mã được backend ký. Sinh viên cần đăng ký sự kiện và xác nhận vị trí trên Flutter.</p><button className="rp-secondary-button" onClick={() => setQr('')}>Tạo mã mới</button></div> : <><div className="rp-form-grid">{periods.length > 0 && <label>Khung điểm danh<select value={periodId} onChange={(event) => setPeriodId(event.target.value)}>{periods.map((period) => <option key={period.id} value={period.id}>{period.name} · {formatDate(period.startTime)}</option>)}</select></label>}<p className="rp-form-hint">Trình duyệt sẽ yêu cầu quyền vị trí của nơi tổ chức.</p></div><footer><button className="rp-secondary-button" onClick={() => setOpen(false)} disabled={busy}>Hủy</button><button className="rp-secondary-button" onClick={createQr} disabled={busy || (periods.length > 0 && !periodId)}>{busy ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer></>}</section></div>}</>;
+  const stopQr = async () => {
+    if (!qr?.sessionId) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/organizer/events/${encodeURIComponent(item.id)}/attendance/sessions/${encodeURIComponent(qr.sessionId)}/close`, { method: 'POST' });
+      setQr(null);
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : 'Không thể tắt mã QR sự kiện.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <><button className="rp-secondary-button" onClick={openDialog}><QrCode size={15} /> Tạo QR</button>{open && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setOpen(false); }}><section className="rp-modal rp-qr-modal" role="dialog" aria-modal="true"><header><div><h2>QR điểm danh sự kiện</h2><p>{item.name} · Flutter có thể quét mã này</p></div><button className="rp-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={18} /></button></header>{error && <ErrorPanel message={error} />}{qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr.qr} size={250} level="M" includeMargin /></div><strong>QR sự kiện đã sẵn sàng</strong><p>Mã được backend ký. Sinh viên cần đăng ký sự kiện và xác nhận vị trí trên Flutter.</p><button className="rp-secondary-button" onClick={stopQr} disabled={busy}>{busy ? 'Đang tắt...' : 'Tắt mã QR để tạo mã mới'}</button></div> : <><div className="rp-form-grid">{periods.length > 0 && <label>Khung điểm danh<select value={periodId} onChange={(event) => setPeriodId(event.target.value)}>{periods.map((period) => <option key={period.id} value={period.id}>{period.name} · {formatDate(period.startTime)}</option>)}</select></label>}<p className="rp-form-hint">Trình duyệt sẽ yêu cầu quyền vị trí của nơi tổ chức.</p></div><footer><button className="rp-secondary-button" onClick={() => setOpen(false)} disabled={busy}>Hủy</button><button className="rp-secondary-button" onClick={createQr} disabled={busy || (periods.length > 0 && !periodId)}>{busy ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer></>}</section></div>}</>;
 }
 
 function EventsView({ items }) {
@@ -828,7 +1005,12 @@ function AttendanceView({ data, loading, error, query, setQuery, onRefresh, role
   const [rosterError, setRosterError] = useState('');
   const [savingStudent, setSavingStudent] = useState('');
   const lecturerOrAdmin = isLecturerRole(role) || isAdminRole(role);
-  const items = itemsOf(data).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
+  const items = itemsOf(data).map((item) => ({
+    ...item,
+    classLabel: item.className
+      ? `${item.className} · ${item.classId}`
+      : item.classId || '',
+  })).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
   const stats = lecturerOrAdmin
     ? [['Có mặt', sum(items, 'present')], ['Đi trễ', sum(items, 'late')], ['Vắng mặt', sum(items, 'absent')]]
     : [['Đăng ký', sum(items, 'registeredCount')], ['Đã tham dự', sum(items, 'checkedInCount')], ['Vắng mặt', sum(items, 'absentCount')]];
@@ -868,10 +1050,10 @@ function AttendanceView({ data, loading, error, query, setQuery, onRefresh, role
       <div className="rp-metrics-grid rp-metrics-compact">{stats.map(([label, value]) => <article className="rp-metric-card" key={label}><span className="rp-metric-icon"><ClipboardCheck size={19} /></span><div><span>{label}</span><strong>{value}</strong></div></article>)}</div>
       <SearchBox value={query} onChange={setQuery} placeholder="Tìm mã lớp, sự kiện, trạng thái..." />
       {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : lecturerOrAdmin
-        ? <DataTable items={items} columns={[['Lớp', 'className'], ['Buổi học', 'sessionName'], ['Mở lúc', 'openedAt'], ['Đóng lúc', 'closedAt'], ['Phương thức', 'method'], ['Có mặt', 'present'], ['Đi trễ', 'late'], ['Vắng', 'absent']]} />
+        ? <DataTable items={items} columns={[[ 'Lớp', 'classLabel'], ['Buổi học', 'sessionName'], ['Mở lúc', 'openedAt'], ['Đóng lúc', 'closedAt'], ['Phương thức', 'method'], ['Có mặt', 'present'], ['Đi trễ', 'late'], ['Vắng', 'absent']]} />
         : <EventsView items={items} />}
-      {lecturerOrAdmin && <div className="rp-attendance-session-actions">{items.map((item) => <button key={item.id} className="rp-secondary-button" onClick={() => openRoster(item)}>{item.className || item.classId} · {item.sessionName || 'Buổi học'} · Danh sách</button>)}</div>}
-      {selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>Danh sách điểm danh</h2><p>{selected.className || selected.classId} · {selected.sessionName || 'Buổi học'}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header>{rosterError && <ErrorPanel message={rosterError} onRetry={() => openRoster(selected)} />}{rosterLoading ? <LoadingPanel /> : roster && <><div className="rp-roster-summary"><span>{roster.session?.canEdit ? 'Phiên đang mở · có thể cập nhật' : 'Phiên đã đóng · chỉ xem'}</span><button className="rp-secondary-button" onClick={() => openRoster(selected)}><RefreshCw size={15} /> Làm mới</button></div><div className="rp-table-wrap"><table className="rp-table"><thead><tr><th>Mã sinh viên</th><th>Họ tên</th><th>Trạng thái</th><th>Thời gian</th></tr></thead><tbody>{itemsOf(roster).map((student) => <tr key={student.studentId}><td>{student.studentId}</td><td>{student.studentName}</td><td>{roster.session?.canEdit ? <select aria-label={`Trạng thái ${student.studentName}`} value={statusValue(student.attendanceStatus)} disabled={savingStudent === student.studentId} onChange={(event) => updateStudentStatus(student.studentId, event.target.value)}><option value="">Chưa ghi nhận</option><option value="present">Có mặt</option><option value="late">Đi muộn</option><option value="absent">Vắng mặt</option><option value="excused">Vắng có phép</option></select> : student.attendanceStatus || 'Chưa ghi nhận'}</td><td>{formatDate(student.checkedInAt)}</td></tr>)}</tbody></table></div>{!itemsOf(roster).length && <EmptyPanel title="Chưa có sinh viên" message="Lớp chưa có sinh viên tham gia." />}</>}</section></div>}
+      {lecturerOrAdmin && <div className="rp-attendance-session-actions">{items.map((item) => <button key={item.id} className="rp-secondary-button" onClick={() => openRoster(item)}>{item.classLabel} · {item.sessionName || 'Buổi học'} · Danh sách</button>)}</div>}
+      {selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>Danh sách điểm danh</h2><p>{selected.classLabel || selected.className || selected.classId} · {selected.sessionName || 'Buổi học'}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header>{rosterError && <ErrorPanel message={rosterError} onRetry={() => openRoster(selected)} />}{rosterLoading ? <LoadingPanel /> : roster && <><div className="rp-roster-summary"><span>{roster.session?.canEdit ? 'Phiên đang mở · có thể cập nhật' : 'Phiên đã đóng · chỉ xem'}</span><button className="rp-secondary-button" onClick={() => openRoster(selected)}><RefreshCw size={15} /> Làm mới</button></div><div className="rp-table-wrap"><table className="rp-table"><thead><tr><th>Mã sinh viên</th><th>Họ tên</th><th>Trạng thái</th><th>Thời gian</th></tr></thead><tbody>{itemsOf(roster).map((student) => <tr key={student.studentId}><td>{student.studentId}</td><td>{student.studentName}</td><td>{roster.session?.canEdit ? <select aria-label={`Trạng thái ${student.studentName}`} value={statusValue(student.attendanceStatus)} disabled={savingStudent === student.studentId} onChange={(event) => updateStudentStatus(student.studentId, event.target.value)}><option value="">Chưa ghi nhận</option><option value="present">Có mặt</option><option value="late">Đi muộn</option><option value="absent">Vắng mặt</option><option value="excused">Vắng có phép</option></select> : student.attendanceStatus || 'Chưa ghi nhận'}</td><td>{formatDate(student.checkedInAt)}</td></tr>)}</tbody></table></div>{!itemsOf(roster).length && <EmptyPanel title="Chưa có sinh viên" message="Lớp chưa có sinh viên tham gia." />}</>}</section></div>}
     </>
   );
 }
@@ -889,10 +1071,36 @@ function ClassQrGenerator({ onCreated }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!qr?.closedAt) return undefined;
+    const remaining = new Date(qr.closedAt).getTime() - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+      setQr(null);
+      api('/api/attendance/sessions').then((result) => {
+        const nextSessions = itemsOf(result);
+        setSessions(nextSessions);
+        setSessionId((current) => nextSessions.some((session) => session.classSessionId === current)
+          ? current
+          : nextSessions[0]?.classSessionId || '');
+      }).catch(() => {});
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setQr(null);
+      api('/api/attendance/sessions').then((result) => {
+        const nextSessions = itemsOf(result);
+        setSessions(nextSessions);
+        setSessionId((current) => nextSessions.some((session) => session.classSessionId === current)
+          ? current
+          : nextSessions[0]?.classSessionId || '');
+      }).catch(() => {});
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [qr]);
+
   const openDialog = async () => {
     setOpen(true);
     setError('');
-    setQr(null);
     setLoading(true);
     try {
       const result = await api('/api/attendance/sessions');
@@ -944,15 +1152,32 @@ function ClassQrGenerator({ onCreated }) {
     }
   };
 
+  const activeSessionId = sessions.find((session) => session.classSessionId === sessionId)?.activeSessionId;
+  const stopQr = async (targetSessionId) => {
+    setLoading(true);
+    setError('');
+    try {
+      await api(`/api/attendance/sessions/${encodeURIComponent(targetSessionId)}/close`, { method: 'POST' });
+      setQr(null);
+      setSessions((current) => current.map((session) => session.classSessionId === sessionId
+        ? { ...session, activeSessionId: null }
+        : session));
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : 'Không thể tắt mã QR.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return <>
     <button className="rp-secondary-button" onClick={openDialog}><QrCode size={16} /> Tạo mã QR</button>
     {open && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !loading) setOpen(false); }}>
       <section className="rp-modal rp-qr-modal" role="dialog" aria-modal="true" aria-labelledby="rp-qr-title">
         <header><div><h2 id="rp-qr-title">Tạo mã QR điểm danh</h2><p>Mã do backend HUIT phát hành, tương thích với ứng dụng Flutter.</p></div><button className="rp-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={18} /></button></header>
         {error && <ErrorPanel message={error} />}
-        {qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr.qr} size={250} level="M" includeMargin /></div><strong>Phiên điểm danh đang mở</strong><span>Đóng lúc {formatDate(qr.closedAt)}</span><p>Sinh viên mở Flutter, chọn Điểm danh và quét mã này. Vị trí cần được bật trên cả hai thiết bị.</p><button className="rp-secondary-button" onClick={() => setQr(null)}>Tạo mã khác</button></div> : <form onSubmit={createQr}>
-          {loading && !sessions.length ? <LoadingPanel /> : <div className="rp-form-grid"><label>Buổi học<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">Chọn buổi học</option>{sessions.map((session) => <option key={session.classSessionId} value={session.classSessionId}>{session.className || session.classId} · Buổi {session.classSessionId} · {formatDate(session.startTime)}</option>)}</select></label><label>Thời lượng<select value={duration} onChange={(event) => setDuration(event.target.value)}>{[5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} phút</option>)}</select></label><p className="rp-form-hint">Trình duyệt sẽ yêu cầu quyền vị trí. Hãy mở trang qua HTTPS hoặc localhost.</p></div>}
-          <footer><button type="button" className="rp-secondary-button" onClick={() => setOpen(false)} disabled={loading}>Hủy</button><button className="rp-secondary-button" disabled={loading || !sessionId}>{loading ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer>
+        {qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr.qr} size={250} level="M" includeMargin /></div><strong>Phiên điểm danh đang mở</strong><span>Đóng lúc {formatDate(qr.closedAt)}</span><p>Sinh viên mở Flutter, chọn Điểm danh và quét mã này. Vị trí cần được bật trên cả hai thiết bị.</p><button className="rp-secondary-button" onClick={() => stopQr(qr.id)} disabled={loading}>{loading ? 'Đang tắt...' : 'Tắt mã QR để tạo mã mới'}</button></div> : <form onSubmit={createQr}>
+          {loading && !sessions.length ? <LoadingPanel /> : <div className="rp-form-grid"><label>Buổi học<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">Chọn buổi học</option>{sessions.map((session) => <option key={session.classSessionId} value={session.classSessionId}>{session.className || session.classId} · {session.classId} · Buổi {session.classSessionId} · {formatDate(session.startTime)}{session.activeSessionId ? ' · Đang có QR' : ''}</option>)}</select></label><label>Thời lượng<select value={duration} onChange={(event) => setDuration(event.target.value)}>{[5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} phút</option>)}</select></label><p className="rp-form-hint">Trình duyệt sẽ yêu cầu quyền vị trí. Hãy mở trang qua HTTPS hoặc localhost.</p>{activeSessionId && <><p className="rp-form-hint">Buổi học đã có mã QR hoạt động. Tắt mã đó trước khi tạo mã mới.</p><button type="button" className="rp-secondary-button" onClick={() => stopQr(activeSessionId)} disabled={loading}>Tắt mã QR đang hoạt động</button></>}</div>}
+          <footer><button type="button" className="rp-secondary-button" onClick={() => setOpen(false)} disabled={loading}>Hủy</button><button className="rp-secondary-button" disabled={loading || !sessionId || Boolean(activeSessionId)}>{loading ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer>
         </form>}
       </section>
     </div>}

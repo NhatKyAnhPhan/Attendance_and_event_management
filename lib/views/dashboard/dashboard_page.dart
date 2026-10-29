@@ -24,17 +24,10 @@ class DashboardPage extends StatelessWidget {
       final metrics = rawMetrics is List
           ? rawMetrics.whereType<Map>().map(Map<String, dynamic>.from).toList()
           : <Map<String, dynamic>>[];
-      final countMetrics = metrics
-          .where((metric) => metric['value'] is num)
-          .toList();
-      final chartPalette = [
-        colors.primary,
-        colors.success,
-        colors.warning,
-        colors.info,
-        colors.danger,
-        colors.accent,
-      ];
+      final rawAttendanceBreakdown = controller.summary['attendanceBreakdown'];
+      final attendanceBreakdown = rawAttendanceBreakdown is Map
+          ? Map<String, dynamic>.from(rawAttendanceBreakdown)
+          : null;
 
       return RefreshIndicator(
         onRefresh: controller.load,
@@ -96,25 +89,28 @@ class DashboardPage extends StatelessWidget {
                   ),
                 ),
               ),
-            if (countMetrics.isNotEmpty) ...[
+            if (attendanceBreakdown != null) ...[
               const SizedBox(height: 16),
-              StatisticsBarChart(
-                title: 'Số lượng theo chỉ số',
+              StatisticsDonutChart(
+                title: 'Kết quả điểm danh',
                 colors: colors,
-                categories: countMetrics
-                    .map((metric) => metric['label']?.toString() ?? '')
-                    .toList(),
-                series: [
-                  StatisticsChartSeries(
-                    label: 'Số lượng',
-                    color: colors.primary,
-                    values: countMetrics
-                        .map((metric) => (metric['value'] as num).toInt())
-                        .toList(),
-                    pointColors: List.generate(
-                      countMetrics.length,
-                      (index) => chartPalette[index % chartPalette.length],
-                    ),
+                data: [
+                  StatisticsChartDatum(
+                    label: 'Có mặt',
+                    value:
+                        (attendanceBreakdown['present'] as num?)?.toInt() ?? 0,
+                    color: colors.success,
+                  ),
+                  StatisticsChartDatum(
+                    label: 'Đi muộn',
+                    value: (attendanceBreakdown['late'] as num?)?.toInt() ?? 0,
+                    color: colors.warning,
+                  ),
+                  StatisticsChartDatum(
+                    label: 'Vắng',
+                    value:
+                        (attendanceBreakdown['absent'] as num?)?.toInt() ?? 0,
+                    color: colors.danger,
                   ),
                 ],
               ),

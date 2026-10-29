@@ -30,6 +30,7 @@ class EventModel {
   final String location;
   final int capacity;
   final int registeredCount;
+  final bool certificateEnabled;
   final bool requiresApproval;
 
   const EventModel({
@@ -42,6 +43,7 @@ class EventModel {
     required this.location,
     required this.capacity,
     required this.registeredCount,
+    this.certificateEnabled = false,
     this.requiresApproval = true,
   });
 
@@ -57,6 +59,9 @@ class EventModel {
       location: json['location'] as String? ?? '',
       capacity: json['capacity'] as int? ?? 0,
       registeredCount: json['registeredCount'] as int? ?? 0,
+      certificateEnabled:
+          json['certificateEnabled'] == true ||
+          json['certificateEnabled']?.toString() == '1',
       requiresApproval: json['requiresApproval'] as bool? ?? true,
     );
   }
@@ -72,6 +77,7 @@ class EventModel {
     'location': location,
     'capacity': capacity,
     'registeredCount': registeredCount,
+    'certificateEnabled': certificateEnabled,
     'requiresApproval': requiresApproval,
   };
 }
@@ -100,6 +106,7 @@ class OrganizerEventSummary {
 
   final int capacity;
   final int registeredCount;
+  final bool certificateEnabled;
 
   const OrganizerEventSummary({
     required this.id,
@@ -111,6 +118,7 @@ class OrganizerEventSummary {
     this.storedStatus = '',
     required this.capacity,
     required this.registeredCount,
+    this.certificateEnabled = false,
   });
 
   // Đọc dữ liệu tóm tắt sự kiện dành cho màn hình quản lý.
@@ -127,6 +135,9 @@ class OrganizerEventSummary {
       storedStatus: json['status']?.toString() ?? '',
       capacity: (json['capacity'] as num?)?.toInt() ?? 0,
       registeredCount: (json['registeredCount'] as num?)?.toInt() ?? 0,
+      certificateEnabled:
+          json['certificateEnabled'] == true ||
+          json['certificateEnabled']?.toString() == '1',
     );
   }
 }

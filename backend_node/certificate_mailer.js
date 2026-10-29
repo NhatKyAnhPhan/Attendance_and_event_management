@@ -173,6 +173,15 @@ async function createCertificatePdf({
     { width: 260, align: 'right', lineBreak: false, ellipsis: true },
   );
 
+  document
+    .fontSize(11)
+    .fillColor('#164b85')
+    .text('ĐÃ KÝ', 627, 502, {
+      width: 136,
+      align: 'center',
+      lineBreak: false,
+    });
+
   if (isSample) {
     document
       .save()

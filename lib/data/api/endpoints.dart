@@ -16,6 +16,8 @@ class ApiEndpoints {
   static const adminClasses = '/api/admin/classes';
   static const attendance = '/api/attendance';
   static const attendanceSessions = '/api/attendance/sessions';
+  static String closeAttendanceSession(String sessionId) =>
+      '$attendanceSessions/${Uri.encodeComponent(sessionId)}/close';
   static const adminAttendanceSessions = '/api/admin/attendance/sessions';
 
   /// Tạo endpoint lấy danh sách sinh viên của phiên điểm danh.

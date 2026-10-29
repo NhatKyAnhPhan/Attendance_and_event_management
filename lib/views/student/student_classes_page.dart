@@ -106,6 +106,7 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
       final filteredClasses = classes.where((cls) {
         return [
           cls.id,
+          cls.code,
           cls.name,
           cls.lecturer,
           cls.time,
@@ -307,7 +308,7 @@ class _ClassCard extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                cls.id,
+                                cls.code.isEmpty ? cls.id : cls.code,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: AppTextStyles.mono(

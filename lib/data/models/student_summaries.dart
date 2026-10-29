@@ -1,5 +1,6 @@
 class StudentClassSummary {
   final String id;
+  final String code;
   final String name;
   final String lecturer;
   final String time;
@@ -16,6 +17,7 @@ class StudentClassSummary {
 
   const StudentClassSummary({
     required this.id,
+    this.code = '',
     required this.name,
     required this.lecturer,
     required this.time,
@@ -34,7 +36,8 @@ class StudentClassSummary {
   /// Chuyển dữ liệu lớp học trả về từ API thành model tóm tắt.
   factory StudentClassSummary.fromJson(Map<String, dynamic> json) {
     return StudentClassSummary(
-      id: json['code']?.toString() ?? json['id']?.toString() ?? '',
+      id: json['id']?.toString() ?? json['code']?.toString() ?? '',
+      code: json['code']?.toString() ?? json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       lecturer: json['lecturerName']?.toString() ?? '',
       time: json['schedule']?.toString() ?? '',

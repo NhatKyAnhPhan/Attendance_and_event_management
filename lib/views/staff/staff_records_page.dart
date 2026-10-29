@@ -30,9 +30,13 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   late Future<Map<String, dynamic>> _dataFuture;
   String _query = '';
   String _filter = 'all';
+  final Set<String> _issuingCertificates = <String>{};
 
   bool _isCertificateIssued(Map<String, dynamic> item) =>
       item['status']?.toString().trim().toLowerCase() == 'đã cấp';
+
+  bool _isCertificateSending(Map<String, dynamic> item) =>
+      item['status']?.toString().trim().toLowerCase() == 'đang gửi';
 
   String _certificateStatus(Map<String, dynamic> item) =>
       _isCertificateIssued(item) ? 'Đã cấp' : 'Chưa cấp';
@@ -160,7 +164,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
               const SizedBox(height: 5),
               Text(
                 isCertificates
-                    ? 'Tra cứu chứng chỉ đã ghi nhận theo sự kiện.'
+                    ? 'Theo dõi sinh viên đủ điều kiện và cấp chứng chỉ theo sự kiện.'
                     : 'Ý kiến và đánh giá của sinh viên về sự kiện.',
                 style: AppTextStyles.bodySm(colors.mutedForeground),
               ),
@@ -348,11 +352,15 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
   Widget _buildCertificate(AppColors colors, Map<String, dynamic> item) {
     final status = _certificateStatus(item);
     final isIssued = _isCertificateIssued(item);
+    final isSending = _isCertificateSending(item);
+    final eventId = item['eventId']?.toString() ?? '';
+    final studentId = item['studentId']?.toString() ?? '';
+    final issueKey = '$eventId:$studentId';
+    final isIssuing = _issuingCertificates.contains(issueKey);
     final studentName =
         item['studentName']?.toString() ??
         item['studentId']?.toString() ??
         'Sinh viên';
-    final studentId = item['studentId']?.toString() ?? '';
     final eventName = item['eventName']?.toString() ?? 'Sự kiện không xác định';
     final content = item['content']?.toString() ?? '';
     return Container(
@@ -420,7 +428,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
                 ),
               ),
               const SizedBox(width: 10),
-              _statusLabel(colors, status),
+              _statusLabel(colors, isSending ? 'Đang gửi' : status),
             ],
           ),
           const SizedBox(height: 14),
@@ -444,7 +452,7 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
                       child: _certificateMeta(
                         colors,
                         'Mã chứng chỉ',
-                        item['id']?.toString() ?? '',
+                        item['id']?.toString() ?? 'Chưa tạo',
                       ),
                     ),
                     SizedBox(
@@ -487,20 +495,108 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
               ),
             ),
           ],
-          if (isIssued) ...[
+          if (isIssued || !isSending) ...[
             const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: () => _openCertificateDetails(item),
-                icon: const Icon(Icons.visibility_outlined),
-                label: const Text('Xem chứng nhận'),
-              ),
+              child: isIssued
+                  ? OutlinedButton.icon(
+                      onPressed: () => _openCertificateDetails(item),
+                      icon: const Icon(Icons.visibility_outlined),
+                      label: const Text('Xem chứng nhận'),
+                    )
+                  : FilledButton.icon(
+                      onPressed: isIssuing || isSending
+                          ? null
+                          : () => _issueCertificate(item),
+                      icon: isIssuing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.workspace_premium_outlined),
+                      label: Text(isIssuing ? 'Đang cấp...' : 'Cấp chứng chỉ'),
+                    ),
             ),
           ],
         ],
       ),
     );
+  }
+
+  Future<void> _issueCertificate(Map<String, dynamic> item) async {
+    final eventId = item['eventId']?.toString() ?? '';
+    final studentId = item['studentId']?.toString() ?? '';
+    if (eventId.isEmpty || studentId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Thiếu mã sự kiện hoặc mã sinh viên.')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Cấp chứng chỉ cho sinh viên?'),
+        content: Text(
+          'Chứng chỉ PDF sẽ được gửi qua email cho '
+          '${item['studentName'] ?? studentId}.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Cấp chứng chỉ'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final issueKey = '$eventId:$studentId';
+    setState(() => _issuingCertificates.add(issueKey));
+    try {
+      final result = await ApiClient().post(
+        ApiEndpoints.sendEventCertificates(eventId),
+        data: {'studentId': studentId},
+      );
+      if (!mounted) return;
+      final sent = result['sent'] is num ? (result['sent'] as num).toInt() : 0;
+      final skipped = result['skipped'] is num
+          ? (result['skipped'] as num).toInt()
+          : 0;
+      final failures = result['failures'] is List
+          ? (result['failures'] as List)
+                .whereType<Map>()
+                .map((failure) => failure['message']?.toString() ?? '')
+                .where((message) => message.isNotEmpty)
+                .toList()
+          : const <String>[];
+      final future = _loadData();
+      setState(() => _dataFuture = future);
+      await future.then<void>((_) {}, onError: (Object _) {});
+      if (!mounted) return;
+      final message = sent > 0
+          ? 'Đã cấp chứng chỉ và gửi email cho sinh viên.'
+          : failures.isNotEmpty
+          ? failures.join('\n')
+          : skipped > 0
+          ? 'Chứng chỉ đã được cấp hoặc đang được gửi.'
+          : result['message']?.toString() ?? 'Không cấp được chứng chỉ.';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không cấp được chứng chỉ: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _issuingCertificates.remove(issueKey));
+    }
   }
 
   void _openCertificateDetails(Map<String, dynamic> item) {

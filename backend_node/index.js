@@ -76,14 +76,13 @@ function createCertificatePdfForRequest(request, certificate) {
     endTime: certificate.endTime,
     location: certificate.location || '',
     certificateId: certificate.certificateId,
-    issuedAt: certificate.issuedAt,
+    issuedAt: certificate.endTime,
     verificationUrl,
     isSample: String(certificate.content || '').startsWith(
       '[MẪU KIỂM THỬ]',
     ),
   });
 }
-
 const passwordResetHandlers = createPasswordResetHandlers({
   pool,
   secret: process.env.PASSWORD_RESET_SECRET,
@@ -164,6 +163,20 @@ async function ensureEventImageColumn() {
        WHERE Masukien = ? AND (HinhAnh IS NULL OR TRIM(HinhAnh) = '')`,
       [getEventImageUrl(event.name, event.description), event.id],
     );
+  }
+}
+
+async function ensureEventCertificateColumn() {
+  const [columns] = await pool.query(
+    "SHOW COLUMNS FROM SuKien LIKE 'Capchungnhan'",
+  );
+  if (columns.length) return;
+  try {
+    await pool.query(
+      'ALTER TABLE SuKien ADD COLUMN Capchungnhan TINYINT(1) NOT NULL DEFAULT 0',
+    );
+  } catch (error) {
+    if (error.code !== 'ER_DUP_FIELDNAME') throw error;
   }
 }
 
@@ -249,6 +262,15 @@ async function recordExpiredClassAbsences() {
       connection.release();
     }
   }
+}
+
+async function closeExpiredClassAttendanceSessions() {
+  await pool.execute(
+    `UPDATE BuoiDiemDanh
+     SET Trangthaidiemdanh = 'Đã đóng'
+     WHERE Trangthaidiemdanh = 'Đang mở'
+       AND Thoigiandong <= NOW()`,
+  );
 }
 
 // Sinh mã sự kiện ngẫu nhiên; khóa duy nhất của cơ sở dữ liệu ngăn mã trùng.
@@ -1425,6 +1447,7 @@ app.get('/api/events', requireAuth, async (request, response) => {
               ${eventStatusSql} AS status,
               COALESCE(sk.Diadiem, '') AS location,
               COALESCE(sk.Soluongtoida, 0) AS capacity,
+              COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,
               COUNT(DISTINCT dkAll.Masv) AS registeredCount,
               dkMine.Ngaydangky AS registeredAt,
               CASE WHEN dkMine.Masv IS NULL THEN 'notRegistered'
@@ -1453,7 +1476,8 @@ app.get('/api/events', requireAuth, async (request, response) => {
        GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, dv.Tendv,
                 sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien,
                 sk.Diadiem, sk.HinhAnh,
-                sk.Soluongtoida, dkMine.Masv, dkMine.Trangthaidangky,
+                sk.Soluongtoida, sk.Capchungnhan,
+                dkMine.Masv, dkMine.Trangthaidangky,
                 dkMine.Ngaydangky
        ORDER BY sk.Thoigianbatdau`,
       [request.auth.sub],
@@ -1475,6 +1499,7 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
         "sk.Mota AS description, COALESCE(sk.Diadiem, '') AS location,",
         "sk.Thoigianbatdau AS startTime, sk.Thoigianketthuc AS endTime,",
         "COALESCE(sk.Soluongtoida, 0) AS capacity,",
+        "COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,",
         "dv.Tendv AS organizerName,",
         "(SELECT COUNT(*) FROM DangKySuKien allRegs",
         "WHERE allRegs.Masukien = sk.Masukien) AS registeredCount,",
@@ -2008,7 +2033,9 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
       );
       const [[attendance]] = await pool.query(
         `SELECT COUNT(*) AS total,
-                SUM(CASE WHEN Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present
+                SUM(CASE WHEN Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+                SUM(CASE WHEN Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
+                SUM(CASE WHEN Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
          FROM KetQuaDiemDanh`,
       );
       const rate = Number(attendance.total || 0) === 0
@@ -2023,6 +2050,11 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
           { label: 'Phiên điểm danh', value: Number(sessions.total || 0) },
           { label: 'Tỷ lệ có mặt', value: `${rate}%` },
         ],
+        attendanceBreakdown: {
+          present: Number(attendance.present || 0),
+          late: Number(attendance.late || 0),
+          absent: Number(attendance.absent || 0),
+        },
       });
     }
 
@@ -2067,7 +2099,7 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
       const [[attendance]] = await pool.execute(
         `SELECT COUNT(kd.Maketqua) AS total,
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
-                SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
+                SUM(CASE WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
                 SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
          FROM KetQuaDiemDanh kd
          INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
@@ -2086,6 +2118,11 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
           { label: 'Buổi học', value: Number(teaching.sessions || 0) },
           { label: 'Tỷ lệ có mặt', value: `${rate}%` },
         ],
+        attendanceBreakdown: {
+          present: Number(attendance.present || 0),
+          late: Number(attendance.late || 0),
+          absent: Number(attendance.absent || 0),
+        },
       });
     }
 
@@ -2531,12 +2568,20 @@ async function findManagedAttendanceSession(sessionId, auth) {
 // Tải các buổi học mà giảng viên hoặc quản trị viên được phép mở điểm danh.
 app.get('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer'), async (request, response) => {
   try {
+    await closeExpiredClassAttendanceSessions();
     const [rows] = await pool.execute(
       `SELECT b.Mabuoi AS classSessionId, b.Malop AS classId,
               COALESCE(lhp.Tenlop, '') AS className,
               COALESCE(mh.Tenmon, '') AS subjectName,
               b.Thoigianbatdau AS startTime,
-              b.Thoigianketthuc AS endTime
+              b.Thoigianketthuc AS endTime,
+              (SELECT bpd.Mabuoidiemdanh
+               FROM BuoiDiemDanh bpd
+               WHERE bpd.Mabuoi = b.Mabuoi
+                 AND bpd.Trangthaidiemdanh = 'Đang mở'
+                 AND bpd.Thoigiandong > NOW()
+               ORDER BY bpd.Thoigianmo DESC
+               LIMIT 1) AS activeSessionId
              FROM Buoi b
              LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
              LEFT JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
@@ -2917,6 +2962,7 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
   }
 
   try {
+    await closeExpiredClassAttendanceSessions();
     const [[classSession]] = await pool.execute(
       `SELECT b.Mabuoi AS id, b.Malop AS classId,
               lhp.Trangthailop AS classStatus,
@@ -2940,6 +2986,20 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
     if (classSession.classStatus === 'Đã đóng' || Number(classSession.isArchived)) {
       return response.status(409).json({
         message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể mở điểm danh.',
+      });
+    }
+    const [[activeSession]] = await pool.execute(
+      `SELECT Mabuoidiemdanh AS id
+       FROM BuoiDiemDanh
+       WHERE Mabuoi = ? AND Trangthaidiemdanh = 'Đang mở'
+         AND Thoigiandong > NOW()
+       ORDER BY Thoigianmo DESC
+       LIMIT 1`,
+      [classSessionId],
+    );
+    if (activeSession) {
+      return response.status(409).json({
+        message: 'Buổi học đang có mã QR hoạt động. Hãy tắt mã hiện tại trước khi tạo mã mới.',
       });
     }
     const radiusMeters = classAttendanceRadiusMeters;
@@ -2985,6 +3045,36 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
   } catch (error) {
     console.error('Create attendance session error:', error.message);
     return response.status(500).json({ message: 'Không thể tạo phiên điểm danh.' });
+  }
+});
+
+app.post('/api/attendance/sessions/:sessionId/close', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer'), async (request, response) => {
+  try {
+    const session = await findManagedAttendanceSession(
+      request.params.sessionId,
+      request.auth,
+    );
+    if (!session) {
+      return response.status(404).json({
+        message: 'Không tìm thấy phiên điểm danh hoặc bạn không phụ trách phiên này.',
+      });
+    }
+    const [result] = await pool.execute(
+      `UPDATE BuoiDiemDanh
+       SET Trangthaidiemdanh = 'Đã đóng'
+       WHERE Mabuoidiemdanh = ?
+         AND Trangthaidiemdanh = 'Đang mở'`,
+      [request.params.sessionId],
+    );
+    if (result.affectedRows === 0) {
+      return response.json({ message: 'Phiên điểm danh đã được đóng hoặc hết hạn.' });
+    }
+    return response.json({ message: 'Đã tắt mã QR điểm danh.' });
+  } catch (error) {
+    console.error('Close attendance session error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể tắt mã QR điểm danh.',
+    });
   }
 });
 
@@ -3642,6 +3732,7 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
               sk.Madv AS organizerId,
               sk.Diadiem AS location, sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
+              COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,
               ${eventStatusSql} AS status,
               COALESCE(sk.Soluongtoida, 0) AS capacity,
               COUNT(dk.Masv) AS registeredCount,
@@ -3699,7 +3790,7 @@ app.get('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles),
        )
       GROUP BY sk.Masukien, sk.Tensukien, sk.Madv, sk.Diadiem,
                sk.Thoigianbatdau, sk.Thoigianketthuc, sk.Trangthaisukien,
-                sk.Soluongtoida
+                sk.Soluongtoida, sk.Capchungnhan
        ORDER BY sk.Thoigianbatdau`,
       [isAdminAuth(request.auth) ? 1 : 0, request.auth.sub],
     );
@@ -3730,6 +3821,7 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
       `SELECT sk.Masukien AS id, sk.Tensukien AS name,
               sk.Thoigianketthuc AS endTime,
               sk.Trangthaisukien AS status,
+              COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,
               EXISTS (
                 SELECT 1 FROM DonVi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
@@ -3777,6 +3869,20 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
     if (event.status === 'Đã đóng' || expiresAt <= new Date()) {
       return response.status(409).json({
         message: 'Không thể tạo QR cho sự kiện đã đóng hoặc đã kết thúc.',
+      });
+    }
+    const [[activeSession]] = await pool.execute(
+      `SELECT session_id AS id
+       FROM event_attendance_sessions
+       WHERE event_id = ? AND period_id <=> ?
+         AND closed_at IS NULL AND expires_at > NOW()
+       ORDER BY opened_at DESC
+       LIMIT 1`,
+      [event.id, period?.id ?? null],
+    );
+    if (activeSession) {
+      return response.status(409).json({
+        message: 'Khung điểm danh đang có mã QR hoạt động. Hãy tắt mã hiện tại trước khi tạo mã mới.',
       });
     }
     const expiresIn = Math.floor(expiresAt.getTime() / 1000) - Math.floor(Date.now() / 1000);
@@ -3890,10 +3996,22 @@ app.post('/api/organizer/events/:eventId/attendance/sessions/:sessionId/close', 
   }
 });
 
-app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Cán bộ', 'Nhân viên', 'event_organizer'), async (request, response) => {
+app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requireRole(...eventManagerRoles, 'organizer', 'staff', 'employee'), async (request, response) => {
   const isAdmin = ['quản trị viên', 'admin'].includes(
     String(request.auth.role || '').trim().toLowerCase(),
   );
+  const requestedStudentId = request.body?.studentId;
+  if (
+    requestedStudentId !== undefined
+    && (typeof requestedStudentId !== 'string' || !requestedStudentId.trim())
+  ) {
+    return response.status(400).json({
+      message: 'Mã sinh viên cần cấp chứng nhận không hợp lệ.',
+    });
+  }
+  const studentId = typeof requestedStudentId === 'string'
+    ? requestedStudentId.trim()
+    : null;
   let connection;
   try {
     const [[event]] = await pool.execute(
@@ -3902,6 +4020,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
               sk.Trangthaisukien AS status,
+              COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,
               EXISTS (
                 SELECT 1 FROM DonVi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
@@ -3917,6 +4036,11 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
     if (!isAdmin && !Number(event.isOrganizer)) {
       return response.status(403).json({
         message: 'Bạn không phụ trách sự kiện này.',
+      });
+    }
+    if (!Number(event.certificateEnabled)) {
+      return response.status(409).json({
+        message: 'Sự kiện này không đăng ký cấp chứng nhận.',
       });
     }
     const eventIsClosed =
@@ -3955,11 +4079,18 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
          WHERE issued.Masv = checked_in.student_id
            AND issued.Masukien = checked_in.event_id
            AND issued.Trangthaichungnhan = 'Đã cấp'
+           AND issued.Ngaycap IS NOT NULL
        )
+         AND (? IS NULL OR checked_in.student_id = ?)
        ORDER BY checked_in.checkedInAt, checked_in.student_id`,
-      [event.id, event.id],
+      [event.id, event.id, studentId, studentId],
     );
     if (attendees.length === 0) {
+      if (studentId) {
+        return response.status(409).json({
+          message: 'Sinh viên chưa điểm danh hoặc đã được cấp chứng nhận.',
+        });
+      }
       return response.json({
         eventId: event.id,
         sent: 0,
@@ -4026,7 +4157,8 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         if (
           existingCertificates.some(
             (certificate) =>
-              String(certificate.status).trim().toLowerCase() === 'đã cấp',
+              String(certificate.status).trim().toLowerCase() === 'đã cấp'
+              && certificate.issuedAt != null,
           )
         ) {
           await connection.commit();
@@ -4056,23 +4188,24 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           await connection.execute(
             `INSERT INTO ChungNhan
               (Machungnhan, Masv, Masukien, Ngaycap, Noidung, Trangthaichungnhan)
-             VALUES (?, ?, ?, NOW(), ?, 'Đang gửi')`,
+             VALUES (?, ?, ?, ?, ?, 'Đang gửi')`,
             [
               certificateId,
               attendee.studentId,
               event.id,
+              event.endTime,
               `Giấy chứng nhận tham gia sự kiện ${event.name}`,
             ],
           );
         } else {
           await connection.execute(
             `UPDATE ChungNhan
-             SET Trangthaichungnhan = 'Đang gửi'
+             SET Trangthaichungnhan = 'Đang gửi', Ngaycap = ?
              WHERE Machungnhan = ?`,
-            [certificateId],
+            [event.endTime, certificateId],
           );
         }
-        const issuedAt = new Date();
+        const issuedAt = event.endTime;
 
         const verificationUrl =
           `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificateId)}`;
@@ -4100,9 +4233,9 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         });
         await connection.execute(
           `UPDATE ChungNhan
-           SET Trangthaichungnhan = 'Đã cấp', Ngaycap = NOW()
+           SET Trangthaichungnhan = 'Đã cấp', Ngaycap = ?
            WHERE Machungnhan = ?`,
-          [certificateId],
+          [event.endTime, certificateId],
         );
         await connection.commit();
         connection.release();
@@ -4376,6 +4509,13 @@ app.get('/api/organizer/units', requireAuth, requireRole(...eventManagerRoles), 
 app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const body = request.body || {};
   const { name, organizerId, startTime, endTime, location, capacity } = body;
+  if (body.certificateEnabled !== undefined
+      && typeof body.certificateEnabled !== 'boolean') {
+    return response.status(400).json({
+      message: 'Tùy chọn cấp chứng nhận không hợp lệ.',
+    });
+  }
+  const certificateEnabled = body.certificateEnabled === true;
   const attendancePeriodsResult = validateEventAttendancePeriods(
     body.attendancePeriods ?? [],
     new Date(startTime),
@@ -4420,8 +4560,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
         await connection.execute(
           `INSERT INTO SuKien
            (Masukien, Tensukien, Madv, Mota, HinhAnh, Thoigianbatdau,
-            Thoigianketthuc, Diadiem, Soluongtoida, Trangthaisukien)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra')`,
+            Thoigianketthuc, Diadiem, Soluongtoida, Trangthaisukien,
+            Capchungnhan)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra', ?)`,
           [
             id,
             name.trim(),
@@ -4432,6 +4573,7 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
             parsedEnd,
             location.trim(),
             parsedCapacity,
+            certificateEnabled ? 1 : 0,
           ],
         );
         await replaceEventContent(connection, id, contentResult.value);
@@ -4465,6 +4607,12 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
 app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const body = request.body || {};
   const { name, organizerId, startTime, endTime, location, capacity } = body;
+  if (body.certificateEnabled !== undefined
+      && typeof body.certificateEnabled !== 'boolean') {
+    return response.status(400).json({
+      message: 'Tùy chọn cấp chứng nhận không hợp lệ.',
+    });
+  }
   const hasAttendancePeriods = Object.hasOwn(body, 'attendancePeriods');
   const parsedCapacity = Number(capacity);
   const parsedStart = new Date(startTime);
@@ -4563,7 +4711,8 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         `UPDATE SuKien
          SET Tensukien = ?, Madv = ?,
            HinhAnh = ?, Thoigianbatdau = ?, Thoigianketthuc = ?,
-           Diadiem = ?, Soluongtoida = ?
+           Diadiem = ?, Soluongtoida = ?,
+           Capchungnhan = COALESCE(?, Capchungnhan)
          WHERE Masukien = ?`,
       [
         name.trim(),
@@ -4573,6 +4722,9 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         parsedEnd,
         location.trim(),
         parsedCapacity,
+        body.certificateEnabled === undefined
+          ? null
+          : body.certificateEnabled ? 1 : 0,
         request.params.eventId,
       ],
       );
@@ -4716,7 +4868,7 @@ app.get('/api/certificates/:certificateId', async (request, response) => {
       `SELECT cn.Machungnhan AS certificateId,
               COALESCE(nd.Hoten, cn.Masv) AS studentName,
               cn.Masv AS studentId, sk.Tensukien AS eventName,
-              cn.Ngaycap AS issuedAt, cn.Trangthaichungnhan AS status
+              sk.Thoigianketthuc AS issuedAt, cn.Trangthaichungnhan AS status
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
        LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
@@ -4744,7 +4896,7 @@ app.get('/api/student/certificates', requireAuth, requireRole('Sinh viên', 'stu
               sk.Tensukien AS eventName,
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
-              sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
+              sk.Diadiem AS location, sk.Thoigianketthuc AS issuedAt,
               cn.Noidung AS content, cn.Trangthaichungnhan AS status
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
@@ -4770,7 +4922,7 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
               cn.Masv AS studentId, sk.Tensukien AS eventName,
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
-              sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
+              sk.Diadiem AS location, sk.Thoigianketthuc AS issuedAt,
               cn.Noidung AS content
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
@@ -4814,7 +4966,7 @@ app.get('/api/staff/certificates/:certificateId/pdf', requireAuth, requireRole('
               sk.Tensukien AS eventName,
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
-              sk.Diadiem AS location, cn.Ngaycap AS issuedAt,
+              sk.Diadiem AS location, sk.Thoigianketthuc AS issuedAt,
               cn.Noidung AS content
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
@@ -4857,25 +5009,53 @@ app.get('/api/staff/certificates', requireAuth, requireRole('Quản trị viên'
   const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
   try {
     const [rows] = await pool.execute(
-      `SELECT cn.Machungnhan AS id, cn.Masv AS studentId,
-              COALESCE(nd.Hoten, cn.Masv) AS studentName,
-              cn.Masukien AS eventId, sk.Tensukien AS eventName,
+      `SELECT cn.Machungnhan AS id, candidates.studentId AS studentId,
+              COALESCE(nd.Hoten, candidates.studentId) AS studentName,
+              sk.Masukien AS eventId, sk.Tensukien AS eventName,
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime, sk.Diadiem AS location,
-              cn.Ngaycap AS issuedAt, cn.Noidung AS content,
+              sk.Thoigianketthuc AS issuedAt,
+              COALESCE(cn.Noidung, CONCAT('Giấy chứng nhận tham gia sự kiện ', sk.Tensukien)) AS content,
               CASE
                 WHEN LOWER(TRIM(COALESCE(cn.Trangthaichungnhan, ''))) = 'đã cấp'
                   AND cn.Ngaycap IS NOT NULL THEN 'Đã cấp'
+                WHEN LOWER(TRIM(COALESCE(cn.Trangthaichungnhan, ''))) = 'đang gửi'
+                  THEN 'Đang gửi'
                 ELSE 'Chưa cấp'
               END AS status
-       FROM ChungNhan cn
-       JOIN SuKien sk ON sk.Masukien = cn.Masukien
-       LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
+       FROM (
+         SELECT event_id AS eventId, student_id AS studentId
+         FROM event_attendance
+         UNION
+         SELECT event_id AS eventId, student_id AS studentId
+         FROM event_attendance_records
+         UNION
+         SELECT Masukien AS eventId, Masv AS studentId
+         FROM ChungNhan
+       ) candidates
+       JOIN SuKien sk ON sk.Masukien = candidates.eventId
+       LEFT JOIN ChungNhan cn
+         ON cn.Masv = candidates.studentId
+        AND cn.Masukien = candidates.eventId
+        AND cn.Machungnhan = (
+          SELECT latest.Machungnhan
+          FROM ChungNhan latest
+          WHERE latest.Masv = candidates.studentId
+            AND latest.Masukien = candidates.eventId
+          ORDER BY latest.Ngaycap DESC, latest.Machungnhan DESC
+          LIMIT 1
+        )
+       LEFT JOIN NguoiDung nd ON nd.Mand = candidates.studentId
        WHERE (? = 1 OR EXISTS (
          SELECT 1 FROM DonVi dv
          WHERE dv.Madv = sk.Madv AND dv.Manv = ?
        ))
-       ORDER BY cn.Ngaycap DESC, cn.Machungnhan DESC`,
+         AND (
+           cn.Machungnhan IS NOT NULL
+           OR sk.Trangthaisukien = 'Đã đóng'
+           OR sk.Thoigianketthuc <= NOW()
+         )
+       ORDER BY sk.Thoigianketthuc DESC, studentName, candidates.studentId`,
       [isAdmin ? 1 : 0, request.auth.sub],
     );
     return response.json({ items: rows });
@@ -5407,12 +5587,14 @@ ensureAttendanceLocationColumns()
   .then(async () => {
     await ensureEventStatusColumn();
     await ensureEventImageColumn();
+    await ensureEventCertificateColumn();
     await ensurePasswordResetChallengesTable();
     await ensureAttendanceDeviceClaimsTable();
     await ensureEventAttendanceTable();
     await ensureEventAttendanceSessionsTable();
     await ensureEventAttendancePeriodsTable();
     await synchronizeEventStatuses();
+    await closeExpiredClassAttendanceSessions();
     await recordExpiredClassAbsences();
     const statusSyncTimer = setInterval(() => {
       synchronizeEventStatuses().catch((error) => {
@@ -5426,6 +5608,12 @@ ensureAttendanceLocationColumns()
       });
     }, 60_000);
     classAbsenceTimer.unref();
+    const attendanceExpiryTimer = setInterval(() => {
+      closeExpiredClassAttendanceSessions().catch((error) => {
+        console.error('Attendance session expiry failed:', error.message);
+      });
+    }, 15_000);
+    attendanceExpiryTimer.unref();
     app.listen(port, '0.0.0.0', () => {
       console.log(`API listening on http://0.0.0.0:${port}`);
       console.log(`LAN URL: http://<IP_CUA_MAY_TINH>:${port}`);

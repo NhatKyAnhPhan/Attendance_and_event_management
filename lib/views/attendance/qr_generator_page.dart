@@ -19,6 +19,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
   List<Map<String, dynamic>> _sessions = [];
   String? _selectedClassSession;
   String? _qrToken;
+  String? _qrSessionId;
   DateTime? _expiresAt;
   bool _loading = true;
   bool _creating = false;
@@ -80,12 +81,53 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
       if (radiusMeters is! num) {
         throw const ApiException('Máy chủ không trả về phạm vi điểm danh.');
       }
+      final qrToken = body['qr']?.toString();
+      final sessionId = body['id']?.toString();
+      if (qrToken == null ||
+          qrToken.isEmpty ||
+          sessionId == null ||
+          sessionId.isEmpty) {
+        throw const ApiException('Máy chủ không trả về mã QR hoặc mã phiên.');
+      }
       setState(() {
-        _qrToken = body['qr']?.toString();
+        _qrToken = qrToken;
+        _qrSessionId = sessionId;
         _expiresAt = DateTime.tryParse(body['closedAt']?.toString() ?? '')
             ?.toLocal();
         _lecturerPosition = position;
         _radiusMeters = radiusMeters.toInt();
+        for (final session in _sessions) {
+          if (session['classSessionId']?.toString() == _selectedClassSession) {
+            session['activeSessionId'] = sessionId;
+          }
+        }
+        _creating = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _creating = false;
+      });
+    }
+  }
+
+  Future<void> _stopQr(String sessionId) async {
+    setState(() {
+      _creating = true;
+      _error = null;
+    });
+    try {
+      await _client.post(ApiEndpoints.closeAttendanceSession(sessionId));
+      if (!mounted) return;
+      setState(() {
+        _qrToken = null;
+        _qrSessionId = null;
+        for (final session in _sessions) {
+          if (session['classSessionId']?.toString() == _selectedClassSession) {
+            session['activeSessionId'] = null;
+          }
+        }
         _creating = false;
       });
     } on ApiException catch (error) {
@@ -236,7 +278,9 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           hoverColor: colors.primary.withValues(alpha: 0.045),
-          onTap: () => setState(() => _selectedClassSession = id),
+          onTap: _qrToken == null
+              ? () => setState(() => _selectedClassSession = id)
+              : null,
           child: Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -270,6 +314,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
                         classLabel,
                         style: AppTextStyles.displaySm(colors.foreground),
                       ),
+                      _metadataLine(colors, Icons.tag, 'Mã lớp $classId'),
                       if (subjectName?.isNotEmpty == true) ...[
                         const SizedBox(height: 5),
                         _metadataLine(
@@ -303,6 +348,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         break;
       }
     }
+    final activeSessionId = selectedSession?['activeSessionId']?.toString();
     final details = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -362,6 +408,25 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
               style: AppTextStyles.bodySm(colors.mutedForeground),
             ),
           ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _creating || _qrSessionId == null
+                ? null
+                : () => _stopQr(_qrSessionId!),
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: const Text('Tắt mã QR để tạo mã mới'),
+          ),
+        ] else if (activeSessionId != null && activeSessionId.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Buổi học đang có mã QR hoạt động.',
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+          OutlinedButton.icon(
+            onPressed: _creating ? null : () => _stopQr(activeSessionId),
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: const Text('Tắt mã QR đang hoạt động'),
+          ),
         ] else
           SizedBox(
             height: 230,
@@ -386,7 +451,11 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
             details,
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _creating || _selectedClassSession == null
+            onPressed:
+                _creating ||
+                    _qrToken != null ||
+                    _selectedClassSession == null ||
+                    (activeSessionId != null && activeSessionId.isNotEmpty)
                 ? null
                 : _createQr,
             icon: _creating
@@ -396,7 +465,11 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.qr_code_2),
-            label: const Text('Mở phiên và tạo QR'),
+            label: Text(
+              activeSessionId != null && activeSessionId.isNotEmpty
+                  ? 'Tắt mã hiện tại trước khi tạo QR'
+                  : 'Mở phiên và tạo QR',
+            ),
           ),
         ],
       ),
@@ -429,6 +502,11 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
                 Text(
                   classLabel,
                   style: AppTextStyles.displaySm(colors.foreground),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Mã lớp $classId',
+                  style: AppTextStyles.bodyXs(colors.mutedForeground),
                 ),
                 if (subjectName?.isNotEmpty == true) ...[
                   const SizedBox(height: 4),
