@@ -6,6 +6,7 @@ import {
   Plus, Search, ShieldCheck, Sparkles, Sun, UserRound, Users, X,
 } from 'lucide-react';
 import { api, apiBaseUrl, ApiError } from './api.js';
+import RolePortal from './RolePortal.jsx';
 
 const NAV_ITEMS = [
   { id: 'home', label: 'Tổng quan', icon: Home },
@@ -48,7 +49,7 @@ const ROLE_OPTIONS = [
     label: 'Giảng viên',
     icon: BookOpen,
     portal: 'LECTURER PORTAL',
-    description: 'Không gian làm việc dành cho giảng viên và công tác giảng dạy.',
+    description: 'Đăng nhập để mở không gian làm việc dành cho giảng viên.',
     eyebrow: 'KẾT NỐI CÔNG TÁC GIẢNG DẠY',
     headline: 'Đồng hành cùng',
     headlineAccent: 'mỗi lớp học HUIT.',
@@ -66,7 +67,7 @@ const ROLE_OPTIONS = [
     label: 'Nhân viên',
     icon: Users,
     portal: 'STAFF PORTAL',
-    description: 'Lối vào dành cho nhân viên, cán bộ và đơn vị tổ chức.',
+    description: 'Đăng nhập để mở không gian làm việc dành cho nhân viên và đơn vị tổ chức.',
     eyebrow: 'KẾT NỐI CÁC ĐƠN VỊ HUIT',
     headline: 'Cùng vận hành',
     headlineAccent: 'một HUIT năng động.',
@@ -98,7 +99,6 @@ export default function App() {
     return validPages.includes(requestedPage) ? requestedPage : 'home';
   });
   const [notice, setNotice] = useState(null);
-  const [unavailableRole, setUnavailableRole] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('studentWebDark') === 'true');
 
@@ -120,10 +120,11 @@ export default function App() {
       }
       try {
         const result = await api('/api/me', { token });
-        if (!roleIsStudent(result.user?.role)) {
-          signOut('Tài khoản này không có quyền truy cập cổng sinh viên.');
-        } else {
+        const role = result.user?.role;
+        if (roleIsStudent(role) || roleIsLecturer(role) || roleIsEmployee(role)) {
           setUser(result.user);
+        } else {
+          signOut('Vai trò tài khoản chưa được hỗ trợ trên cổng web.');
         }
       } catch (error) {
         signOut(error.status === 401 ? null : getApiMessage(error));
@@ -162,7 +163,10 @@ export default function App() {
     return <div className="boot-screen"><div className="brand-mark"><GraduationCap size={24} /></div><div className="spinner" /><span>Đang kiểm tra phiên đăng nhập...</span></div>;
   }
   if (!user) {
-    return <LoginPage onLogin={setUser} notice={notice} clearNotice={() => setNotice(null)} unavailableRole={unavailableRole} onRoleUnavailable={setUnavailableRole} />;
+    return <LoginPage onLogin={setUser} notice={notice} clearNotice={() => setNotice(null)} />;
+  }
+  if (!roleIsStudent(user.role)) {
+    return <RolePortal user={user} onLogout={() => signOut()} showNotice={showNotice} darkMode={darkMode} setDarkMode={setDarkMode} />;
   }
 
   const currentNav = FULL_NAV_ITEMS.find((item) => item.id === activePage);
@@ -231,7 +235,7 @@ export default function App() {
   );
 }
 
-function LoginPage({ onLogin, notice, clearNotice, unavailableRole, onRoleUnavailable }) {
+function LoginPage({ onLogin, notice, clearNotice }) {
   const [step, setStep] = useState('login');
   const [selectedRole, setSelectedRole] = useState('');
   const [identifier, setIdentifier] = useState('');
@@ -268,10 +272,6 @@ function LoginPage({ onLogin, notice, clearNotice, unavailableRole, onRoleUnavai
           : roleIsEmployee(actualRole);
       if (!roleMatches) {
         throw new ApiError(`Tài khoản này không thuộc nhóm ${ROLE_OPTIONS.find((role) => role.id === selectedRole)?.label || 'đã chọn'}. Hãy chọn đúng vai trò để tiếp tục.`, 403);
-      }
-      if (selectedRole !== 'student') {
-        onRoleUnavailable(selectedRole);
-        return;
       }
       localStorage.setItem('studentWebToken', session.token);
       onLogin(profile.user);
@@ -320,15 +320,9 @@ function LoginPage({ onLogin, notice, clearNotice, unavailableRole, onRoleUnavai
     setSelectedRole(role);
     setStep('login');
     setError('');
-    onRoleUnavailable('');
   };
   const selectedRoleInfo = ROLE_OPTIONS.find((role) => role.id === selectedRole);
   const SelectedRoleIcon = selectedRoleInfo?.icon;
-
-  if (unavailableRole) {
-    const info = ROLE_OPTIONS.find((role) => role.id === unavailableRole);
-    return <RoleUnavailablePage role={info} onBack={() => { onRoleUnavailable(''); setSelectedRole(''); setStep('login'); }} />;
-  }
 
   if (!selectedRole) {
     return <RoleSelectionPage onSelect={chooseRole} notice={notice} clearNotice={clearNotice} />;
@@ -413,21 +407,6 @@ function RoleSelectionPage({ onSelect, notice, clearNotice }) {
         <div className="role-selection-note"><ShieldCheck size={16} /><span>Thông tin đăng nhập được xác thực an toàn qua hệ thống HUIT.</span></div>
       </main>
       <footer className="role-selection-footer"><span>© HUIT · Cổng thông tin điện tử</span><span>Đào tạo · Kết nối · Phát triển</span></footer>
-    </div>
-  );
-}
-
-function RoleUnavailablePage({ role, onBack }) {
-  return (
-    <div className="role-unavailable-layout">
-      <div className="role-unavailable-card">
-        <div className="brand-mark logo-mark"><img className="huit-logo" src="/huit-logo.jpg" alt="Logo Trường Đại học Công Thương TP.HCM" /></div>
-        <span className="form-kicker">ĐÃ XÁC THỰC TÀI KHOẢN</span>
-        <h1>Xin chào, {role?.label.toLowerCase()}</h1>
-        <p>Tài khoản của bạn đã được xác nhận đúng vai trò. Giao diện web dành riêng cho {role?.label.toLowerCase()} hiện chưa được triển khai; cổng web hiện tại mới hỗ trợ không gian sinh viên.</p>
-        <p>Vui lòng sử dụng ứng dụng HUIT hiện tại để tiếp tục. Bạn có thể quay lại trang chọn vai trò bất cứ lúc nào.</p>
-        <button className="primary-button full" onClick={onBack}><ArrowLeft size={16} /> Quay lại chọn vai trò</button>
-      </div>
     </div>
   );
 }

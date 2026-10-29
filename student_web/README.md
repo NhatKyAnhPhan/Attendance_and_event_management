@@ -1,13 +1,10 @@
 # HUIT web portal
 
 The React portal is a separate web client with a role-selection landing page
-and distinct sign-in screens for students, lecturers, and employees. It uses
-the existing Node.js API and leaves the Flutter Android app unchanged. The
-student workspace is implemented in React. Lecturer and employee credentials
-are role-checked, then directed to the existing application because their web
-workspaces are not part of this portal yet. Attendance check-in is intentionally
-unavailable on the web; students are directed to Android to scan QR codes or
-use face attendance.
+and role-specific workspaces for students, lecturers, employees, and
+administrators. It uses the existing API and leaves the Flutter app unchanged.
+Attendance check-in is intentionally unavailable in the React student portal;
+students are directed to Android to scan QR codes or use face attendance.
 
 ## Run locally
 
