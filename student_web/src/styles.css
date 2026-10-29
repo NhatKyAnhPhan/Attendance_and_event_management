@@ -291,3 +291,100 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .connection-pill { display: none; }.topbar-actions { gap: 5px; }.page-content { padding: 23px 15px 32px; }.topbar { padding: 0 13px; }.breadcrumb > span { display: none; }.breadcrumb svg { display: none; }.page-heading { align-items: flex-start; flex-direction: column; gap: 12px; margin-bottom: 19px; }.page-heading h1 { margin-top: 6px; font-size: 25px; }.page-heading p { font-size: 10px; }.heading-actions { align-self: stretch; }.heading-actions .outline-button { min-height: 35px; }.welcome-banner { min-height: 189px; padding: 20px; }.welcome-copy { max-width: 100%; }.welcome-copy h2 { font-size: 23px; }.welcome-copy p { max-width: 290px; font-size: 10px; }.welcome-illustration { position: absolute; right: -41px; bottom: -28px; width: 155px; height: 150px; opacity: .52; transform: scale(.76); }.stats-grid { gap: 9px; margin: 12px 0; }.stat-card { min-height: 72px; gap: 8px; padding: 10px; }.stat-icon { width: 31px; height: 31px; }.stat-card > div:nth-child(2) span { font-size: 8px; }.stat-card > div:nth-child(2) strong { font-size: 17px; }.stat-spark { display: none; }.panel-card { padding: 15px; }.section-title h2 { font-size: 12px; }.dashboard-grid { gap: 11px; }.event-mini .status-tag { display: inline-flex; }.schedule-item { gap: 8px; }.schedule-time { width: 40px; }.join-class-form { display: grid; grid-template-columns: 37px 1fr; gap: 8px 10px; padding: 12px; }.join-copy { grid-column: 2; grid-row: 1; }.join-class-form input { grid-column: 1 / -1; width: 100%; }.join-class-form .primary-button { grid-column: 1 / -1; }.toolbar { align-items: stretch; flex-direction: column; gap: 9px; }.search-box { width: 100%; }.result-count { align-self: flex-end; }.class-grid,.event-grid { grid-template-columns: 1fr; gap: 11px; }.class-card-art { height: 100px; }.event-cover { height: 114px; }.event-toolbar { gap: 9px; }.filter-tabs { align-self: flex-start; }.filter-tabs button { padding: 0 8px; }.calendar-panel { padding: 12px 8px; }.calendar-toolbar { align-items: flex-start; flex-direction: column; gap: 9px; padding: 0 6px; }.calendar-switch { width: 100%; }.calendar-switch > strong { margin: 0 auto 0 5px; font-size: 9px; }.week-grid { grid-template-columns: repeat(7, minmax(43px, 1fr)); overflow-x: auto; }.week-day { min-height: 270px; }.week-day-heading { height: 55px; }.week-day-items { padding: 6px 3px; }.calendar-event { padding: 5px 4px; }.calendar-event strong { font-size: 7px; }.calendar-event span,.calendar-event small { font-size: 7px; }.android-hero { grid-template-columns: 1fr; gap: 4px; padding: 18px; }.android-visual { min-height: 226px; }.phone-frame { transform: scale(.78) rotate(-5deg); }.phone-orbit { transform: scale(.78); }.orbit-left { transform: scale(.78) translate(-25px, 20px); }.orbit-right { transform: scale(.78) translate(22px, -20px); }.android-copy h2 { font-size: 19px; }.android-copy > p { font-size: 10px; }.active-session-row { align-items: flex-start; flex-wrap: wrap; }.active-session-row .status-tag { margin-left: 46px; }.certificate-grid { grid-template-columns: 1fr; }.certificate-card { grid-template-columns: .85fr 1.15fr; }.certificate-art { min-height: 185px; }.profile-side { display: flex; }.profile-side .logout-button { grid-column: auto; }.profile-banner { padding: 19px; }.profile-avatar { width: 53px; height: 53px; }.profile-banner h2 { font-size: 16px; }.profile-form { padding: 17px; }.form-grid { grid-template-columns: 1fr; gap: 11px; }.detail-grid { gap: 6px; }.modal-backdrop { padding: 10px; }.modal-card { max-height: 92vh; }.modal-content { padding: 15px; }.event-detail-heading { align-items: flex-start; flex-direction: column; }.page-heading .heading-actions .outline-button { font-size: 9px; }
   .login-layout { display: flex; min-height: 100vh; flex-direction: column; }.login-art { display: none; }.login-form-side { display: block; min-height: 100vh; padding: 20px 23px 28px; }.login-form-wrap { display: flex; min-height: calc(100vh - 48px); flex-direction: column; justify-content: center; margin: 0 auto; }.role-lecturer .login-form-wrap,.role-employee .login-form-wrap { min-height: calc(100vh - 48px); }.form-mobile-brand { display: flex; align-items: center; gap: 9px; margin-bottom: 31px; font-family: Manrope, sans-serif; font-size: 17px; font-weight: 800; }.form-mobile-brand .brand-mark { width: 37px; height: 37px; }.login-form-wrap > h2 { font-size: 25px; }.login-mobile-footer { display: block; margin-top: 35px; color: #a0aaba; font-size: 8px; text-align: center; }.login-footnote { font-size: 8px; }.art-stats { gap: 10px; }.role-selection-layout { padding: 18px 17px 14px; }.role-header-secure { font-size: 0; }.role-header-secure svg { width: 18px; height: 18px; }.role-selection-main { padding: 38px 0; }.role-selection-intro { margin-bottom: 22px; }.role-selection-intro h1 { font-size: 28px; }.role-selection-intro p { font-size: 10px; }.role-choice-grid { grid-template-columns: 1fr; gap: 10px; }.role-choice-card { min-height: 132px; padding: 15px; }.role-choice-icon { width: 39px; height: 39px; border-radius: 11px; }.role-choice-copy { padding-top: 11px; gap: 4px; }.role-choice-copy strong { font-size: 13px; }.role-choice-copy small { font-size: 9px; }.role-choice-footer { margin-top: 8px; padding-top: 8px; }.role-selection-footer { font-size: 7px; }.role-unavailable-card { padding: 23px; }
 }
+
+:root[data-theme='dark'] .login-layout,
+:root[data-theme='dark'] .login-form-side {
+  background: var(--page);
+}
+:root[data-theme='dark'] .login-form-wrap {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+:root[data-theme='dark'] .role-lecturer .login-form-side,
+:root[data-theme='dark'] .role-employee .login-form-side {
+  background: var(--page);
+}
+:root[data-theme='dark'] .login-form-wrap > h2,
+:root[data-theme='dark'] .success-panel h2 {
+  color: var(--text);
+}
+:root[data-theme='dark'] .auth-form label,
+:root[data-theme='dark'] .back-button,
+:root[data-theme='dark'] .login-footnote {
+  color: #cbd5e1;
+}
+:root[data-theme='dark'] .auth-form input {
+  border-color: var(--border);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+:root[data-theme='dark'] .auth-form input::placeholder {
+  color: var(--muted);
+}
+:root[data-theme='dark'] .role-lecturer .login-role-badge {
+  background: #183846;
+  color: #82cce2;
+}
+:root[data-theme='dark'] .role-lecturer .form-kicker {
+  color: #82cce2;
+}
+:root[data-theme='dark'] .role-employee .login-role-badge {
+  background: #30264a;
+  color: #c4a9f4;
+}
+:root[data-theme='dark'] .role-employee .form-kicker {
+  color: #c4a9f4;
+}
+:root[data-theme='dark'] .role-lecturer .text-button {
+  color: #72c5df;
+}
+:root[data-theme='dark'] .role-employee .text-button {
+  color: #c4a9f4;
+}
+:root[data-theme='dark'] .role-selection-layout,
+:root[data-theme='dark'] .role-unavailable-layout {
+  background: var(--page);
+  color: var(--text);
+}
+:root[data-theme='dark'] .role-selection-brand small,
+:root[data-theme='dark'] .role-header-secure,
+:root[data-theme='dark'] .role-selection-intro p,
+:root[data-theme='dark'] .role-choice-copy small,
+:root[data-theme='dark'] .role-choice-footer,
+:root[data-theme='dark'] .role-selection-note,
+:root[data-theme='dark'] .form-mobile-brand > span {
+  color: var(--muted);
+}
+:root[data-theme='dark'] .role-choice-card,
+:root[data-theme='dark'] .role-unavailable-card {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+:root[data-theme='dark'] .role-choice-footer {
+  border-color: var(--border);
+}
+:root[data-theme='dark'] .role-choice-icon {
+  background: var(--surface-soft);
+  color: #9bb3ff;
+}
+:root[data-theme='dark'] .role-selection-intro h1 span,
+:root[data-theme='dark'] .role-choice-footer svg {
+  color: #9bb3ff;
+}
+:root[data-theme='dark'] .choice-lecturer .role-choice-icon {
+  background: #183846;
+  color: #82cce2;
+}
+:root[data-theme='dark'] .choice-lecturer .role-choice-footer svg {
+  color: #82cce2;
+}
+:root[data-theme='dark'] .choice-employee .role-choice-icon {
+  background: #30264a;
+  color: #c4a9f4;
+}
+:root[data-theme='dark'] .choice-employee .role-choice-footer svg {
+  color: #c4a9f4;
+}

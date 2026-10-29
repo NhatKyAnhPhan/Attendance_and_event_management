@@ -34,6 +34,7 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
   @override
   /// Hiển thị tiêu đề và thông tin hồ sơ đã đồng bộ từ API.
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 480;
     final c = AppColors.of(isDarkMode);
     final notifications = Get.find<NotificationController>();
     final unread = notifications.unreadCount(role);
@@ -49,7 +50,7 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
 
     return Container(
       height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 20),
       decoration: BoxDecoration(
         color: c.card,
         border: Border(bottom: BorderSide(color: c.border)),
@@ -58,6 +59,10 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
         children: [
           if (onMenuTap != null)
             IconButton(
+              visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+              constraints: compact
+                  ? const BoxConstraints.tightFor(width: 40, height: 40)
+                  : null,
               icon: Icon(Icons.menu, color: c.foreground),
               onPressed: onMenuTap,
             ),
@@ -66,17 +71,28 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                if (breadcrumb != null)
+                if (breadcrumb != null && !compact)
                   Text(
                     breadcrumb!.join(' / '),
                     style: AppTextStyles.bodyXs(c.mutedForeground)
                         .copyWith(fontSize: 11),
                   ),
-                Text(title, style: AppTextStyles.displaySm(c.foreground)),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.displaySm(c.foreground).copyWith(
+                    fontSize: compact ? 16 : null,
+                  ),
+                ),
               ],
             ),
           ),
           IconButton(
+            visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+            constraints: compact
+                ? const BoxConstraints.tightFor(width: 40, height: 40)
+                : null,
             icon: Icon(
               isDarkMode ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
               color: c.mutedForeground,
@@ -118,7 +134,7 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
                   ),
               ],
             ),
-          const SizedBox(width: 8),
+          SizedBox(width: compact ? 4 : 8),
           Tooltip(
             message: role == Role.lecturer || role == Role.organizer
                 ? 'Mở hồ sơ cá nhân'
@@ -132,8 +148,8 @@ class AppHeader extends StatelessWidget implements PreferredSizeWidget {
                     ? () => Get.to<void>(() => const LecturerProfilePage())
                     : null,
                 child: SizedBox(
-                  width: 34,
-                  height: 34,
+                  width: compact ? 32 : 34,
+                  height: compact ? 32 : 34,
                   child: Center(
                     child: Text(
                       initials.isEmpty ? 'U' : initials,

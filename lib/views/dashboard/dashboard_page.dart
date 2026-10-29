@@ -71,12 +71,12 @@ class DashboardPage extends StatelessWidget {
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: constraints.maxWidth >= 960
                         ? 3
-                        : constraints.maxWidth >= 600
+                        : constraints.maxWidth >= 340
                         ? 2
                         : 1,
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
-                    mainAxisExtent: 112,
+                    mainAxisExtent: constraints.maxWidth < 600 ? 92 : 112,
                   ),
                   itemBuilder: (context, index) => _MetricTile(
                     label: metrics[index]['label']?.toString() ?? '',

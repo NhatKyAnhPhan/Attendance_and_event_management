@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../../controllers/auth_controller.dart';
@@ -144,19 +145,33 @@ class _AdminShellPageState extends State<AdminShellPage> {
           return Scaffold(
             key: _scaffoldKey,
             backgroundColor: c.background,
-            drawer: isWide ? null : Drawer(child: sidebar),
-            body: Row(
-              children: [
-                if (isWide) sidebar,
-                Expanded(
-                  child: Column(
-                    children: [
-                      header,
-                      Expanded(child: _buildBody(isDark)),
-                    ],
-                  ),
+            drawer: isWide ? null : Drawer(child: SafeArea(child: sidebar)),
+            body: AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: c.background,
+                statusBarIconBrightness:
+                    isDark ? Brightness.light : Brightness.dark,
+                statusBarBrightness:
+                    isDark ? Brightness.dark : Brightness.light,
+                systemNavigationBarColor: c.background,
+                systemNavigationBarIconBrightness:
+                    isDark ? Brightness.light : Brightness.dark,
+              ),
+              child: SafeArea(
+                child: Row(
+                  children: [
+                    if (isWide) sidebar,
+                    Expanded(
+                      child: Column(
+                        children: [
+                          header,
+                          Expanded(child: _buildBody(isDark)),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           );
         },
