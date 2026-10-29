@@ -167,6 +167,21 @@ async function ensureEventImageColumn() {
   }
 }
 
+async function ensureEventStatusColumn() {
+  const [columns] = await pool.query(
+    "SHOW COLUMNS FROM SuKien LIKE 'Trangthaisukien'",
+  );
+  if (columns.length) return;
+  try {
+    await pool.query(
+      `ALTER TABLE SuKien
+       ADD COLUMN Trangthaisukien VARCHAR(30) NOT NULL DEFAULT 'Sắp diễn ra'`,
+    );
+  } catch (error) {
+    if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+  }
+}
+
 async function synchronizeEventStatuses() {
   await pool.query(
     `UPDATE SuKien sk
@@ -5390,6 +5405,7 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
 
 ensureAttendanceLocationColumns()
   .then(async () => {
+    await ensureEventStatusColumn();
     await ensureEventImageColumn();
     await ensurePasswordResetChallengesTable();
     await ensureAttendanceDeviceClaimsTable();
