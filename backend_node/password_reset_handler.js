@@ -36,13 +36,18 @@ function isRateLimited(key) {
   return false;
 }
 
-function createPasswordResetHandlers({ pool, secret, mailTransportFactory }) {
+function createPasswordResetHandlers({
+  pool,
+  secret,
+  mailTransportFactory,
+  mailConfigured = () => Boolean(
+    process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_FROM,
+  ),
+}) {
   function isConfigured() {
     return typeof secret === 'string'
       && Buffer.byteLength(secret) >= 32
-      && process.env.SMTP_HOST
-      && process.env.SMTP_PORT
-      && process.env.SMTP_FROM;
+      && mailConfigured();
   }
 
   function checkRequest(request, response) {
@@ -113,7 +118,7 @@ function createPasswordResetHandlers({ pool, secret, mailTransportFactory }) {
       try {
         const transport = mailTransportFactory();
         await transport.sendMail({
-          from: process.env.SMTP_FROM,
+          from: process.env.MAIL_FROM || process.env.SMTP_FROM,
           to: user.email,
           subject: 'Mã khôi phục mật khẩu',
           text: `Mã xác nhận của bạn là ${code}. Mã có hiệu lực trong 10 phút. Nếu bạn không yêu cầu, hãy bỏ qua email này.`,

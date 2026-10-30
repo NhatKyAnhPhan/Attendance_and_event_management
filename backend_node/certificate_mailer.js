@@ -23,8 +23,70 @@ function findCertificateFont() {
 }
 
 function createMailTransport() {
+  const provider = String(process.env.MAIL_PROVIDER || '').trim().toLowerCase();
+  const from = process.env.MAIL_FROM || process.env.SMTP_FROM;
+  const resendApiKey = process.env.RESEND_API_KEY;
+
+  if (provider === 'resend' || (!provider && resendApiKey)) {
+    if (!resendApiKey || !from) {
+      throw new Error('Resend cần RESEND_API_KEY và MAIL_FROM (hoặc SMTP_FROM).');
+    }
+    if (typeof fetch !== 'function') {
+      throw new Error('Resend cần Node.js 18 trở lên để gọi API HTTPS.');
+    }
+    return {
+      async verify() {
+        // Resend xác thực API key trong mỗi yêu cầu gửi email.
+        return true;
+      },
+      async sendMail(message) {
+        const attachments = (message.attachments || []).map((attachment) => {
+          const content = Buffer.isBuffer(attachment.content)
+            ? attachment.content
+            : Buffer.from(String(attachment.content || ''));
+          return {
+            filename: attachment.filename,
+            content: content.toString('base64'),
+            ...(attachment.contentType
+              ? { content_type: attachment.contentType }
+              : {}),
+          };
+        });
+        const payload = {
+          from: message.from || from,
+          to: Array.isArray(message.to) ? message.to : [message.to],
+          subject: message.subject,
+          ...(message.text ? { text: message.text } : {}),
+          ...(message.html ? { html: message.html } : {}),
+          ...(attachments.length ? { attachments } : {}),
+        };
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = new Error(
+            result.message || result.error || `Resend API trả về HTTP ${response.status}.`,
+          );
+          error.code = result.name || `RESEND_HTTP_${response.status}`;
+          throw error;
+        }
+        return { messageId: result.id };
+      },
+    };
+  }
+
+  if (provider && provider !== 'smtp') {
+    throw new Error('MAIL_PROVIDER chỉ hỗ trợ giá trị "resend" hoặc "smtp".');
+  }
+
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM } = process.env;
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_FROM) {
+  if (!SMTP_HOST || !SMTP_PORT || !from) {
     throw new Error('Thiếu cấu hình SMTP_HOST, SMTP_PORT hoặc SMTP_FROM trong .env.');
   }
   if ((SMTP_USER && !SMTP_PASSWORD) || (!SMTP_USER && SMTP_PASSWORD)) {
@@ -37,6 +99,16 @@ function createMailTransport() {
     secure: String(process.env.SMTP_SECURE).toLowerCase() === 'true',
     ...(SMTP_USER ? { auth: { user: SMTP_USER, pass: SMTP_PASSWORD } } : {}),
   });
+}
+
+function isMailConfigured() {
+  const provider = String(process.env.MAIL_PROVIDER || '').trim().toLowerCase();
+  const from = process.env.MAIL_FROM || process.env.SMTP_FROM;
+  if (provider === 'resend' || (!provider && process.env.RESEND_API_KEY)) {
+    return Boolean(process.env.RESEND_API_KEY && from);
+  }
+  if (provider && provider !== 'smtp') return false;
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && from);
 }
 
 async function createCertificatePdf({
@@ -200,4 +272,8 @@ async function createCertificatePdf({
   return pdfBuffer;
 }
 
-module.exports = { createCertificatePdf, createMailTransport };
+module.exports = {
+  createCertificatePdf,
+  createMailTransport,
+  isMailConfigured,
+};

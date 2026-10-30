@@ -10,7 +10,11 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const mysql = require('mysql2/promise');
 const { createUpdateProfileHandler } = require('./profile_handler');
-const { createCertificatePdf, createMailTransport } = require('./certificate_mailer');
+const {
+  createCertificatePdf,
+  createMailTransport,
+  isMailConfigured,
+} = require('./certificate_mailer');
 const { createPasswordResetHandlers } = require('./password_reset_handler');
 
 const app = express();
@@ -87,6 +91,7 @@ const passwordResetHandlers = createPasswordResetHandlers({
   pool,
   secret: process.env.PASSWORD_RESET_SECRET,
   mailTransportFactory: createMailTransport,
+  mailConfigured: isMailConfigured,
 });
 
 const eventStatusSql = `CASE
@@ -4242,9 +4247,9 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
       mailTransport = createMailTransport();
       await mailTransport.verify();
     } catch (error) {
-      console.error('SMTP configuration error:', error.message);
+      console.error('Email provider configuration error:', error.message);
       return response.status(503).json({
-        message: `Không thể kết nối SMTP: ${error.message}`,
+        message: `Không thể khởi tạo dịch vụ email: ${error.message}`,
       });
     }
 
@@ -4357,7 +4362,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           verificationUrl,
         });
         await mailTransport.sendMail({
-          from: process.env.SMTP_FROM,
+          from: process.env.MAIL_FROM || process.env.SMTP_FROM,
           to: attendee.email,
           subject: `Chứng nhận tham gia sự kiện ${event.name}`,
           text: `Xin chào ${attendee.studentName},\n\nBạn nhận được chứng nhận tham gia sự kiện "${event.name}". Chứng nhận PDF được đính kèm email này.\n\nBan tổ chức`,

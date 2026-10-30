@@ -25,11 +25,14 @@ can preview an issued certificate as a PDF from the list; the preview endpoint
 only serves certificates for events within the staff member's unit (admins can
 preview all certificates).
 
-Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` and, when required
-by the provider, `SMTP_USER` / `SMTP_PASSWORD` in `backend_node/.env`. Do not
-commit actual SMTP credentials. Set `PUBLIC_API_BASE_URL` to the externally
-reachable API base URL so the certificate QR code can open its verification
-endpoint. On Windows the API uses Arial by default; on Linux/macOS set
+For SMTP, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` and,
+when required by the provider, `SMTP_USER` / `SMTP_PASSWORD`. On hosts that
+block SMTP egress, use Resend's HTTPS API instead: set `MAIL_PROVIDER=resend`,
+`RESEND_API_KEY`, and `MAIL_FROM` to an address on a verified Resend domain.
+Both password recovery messages and certificate PDFs use the selected provider.
+Do not commit actual API keys or SMTP credentials. Set `PUBLIC_API_BASE_URL` to
+the externally reachable API base URL so the certificate QR code can open its
+verification endpoint. On Windows the API uses Arial by default; on Linux/macOS set
 `CERTIFICATE_FONT_PATH` to a Vietnamese-capable TTF font if the system default
 font candidates are unavailable.
 
