@@ -316,12 +316,34 @@ Future<void> showStudentEventDetails(
                               .map(
                                 (item) => Padding(
                                   padding: const EdgeInsets.only(top: 8),
-                                  child: Text(
-                                    '${List.filled(((item['rating'] as num?)?.round() ?? 0).clamp(0, 5), '★').join()}'
-                                    '${List.filled(5 - ((item['rating'] as num?)?.round() ?? 0).clamp(0, 5), '☆').join()}'
-                                    '  ${item['comment'] ?? ''}',
-                                    style: AppTextStyles.bodySm(
-                                      c.mutedForeground,
+                                  child: InkWell(
+                                    onTap: () => showDialog<void>(
+                                      context: context,
+                                      builder: (dialogContext) => AlertDialog(
+                                        title: const Text('Chi tiết đánh giá'),
+                                        content: SingleChildScrollView(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text('${(item['rating'] as num?)?.round() ?? 0} / 5 sao'),
+                                              const SizedBox(height: 12),
+                                              Text(item['comment']?.toString().trim().isNotEmpty == true ? item['comment'].toString() : 'Không có nhận xét.'),
+                                              if (item['createdAt'] != null) ...[
+                                                const SizedBox(height: 12),
+                                                Text('Gửi lúc ${item['createdAt']}'),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Đóng'))],
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '${List.filled(((item['rating'] as num?)?.round() ?? 0).clamp(0, 5), '★').join()}'
+                                      '${List.filled(5 - ((item['rating'] as num?)?.round() ?? 0).clamp(0, 5), '☆').join()}'
+                                      '  ${item['comment'] ?? ''}',
+                                      style: AppTextStyles.bodySm(c.mutedForeground),
                                     ),
                                   ),
                                 ),

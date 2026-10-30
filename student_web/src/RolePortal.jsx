@@ -776,8 +776,8 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
       setUnits(itemsOf(unitResult));
       setForm({
         id: item?.id || '', name: current.name || item?.name || '', organizerId: current.organizerId || item?.organizerId || '',
-        startTime: toDateTimeInput(current.startTime || item?.startTime || new Date(Date.now() + 86400000)),
-        endTime: toDateTimeInput(current.endTime || item?.endTime || new Date(Date.now() + 93600000)),
+        startTime: toDateTimeInput(current.startTime || item?.startTime || new Date()),
+        endTime: toDateTimeInput(current.endTime || item?.endTime || new Date(Date.now() + 7200000)),
         location: current.location || item?.location || '', capacity: String(current.capacity || item?.capacity || 100),
         certificateEnabled: current.certificateEnabled === true || Number(current.certificateEnabled) === 1,
         imageUrl: current.imageUrl || item?.imageUrl || '',
@@ -930,7 +930,7 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên sự kiện, địa điểm, trạng thái..." />
     {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : events.length ? <div className="rp-event-grid">{events.map((item) => {
       const eventEnded = item.status === 'Đã đóng' || item.status === 'Đã kết thúc' || (item.endTime && new Date(item.endTime) <= new Date());
-      return <article className="rp-card rp-event-card" key={item.id}><button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className="rp-tag">{item.status || 'Sự kiện'}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><Award size={15} />{Number(item.certificateEnabled) === 1 || item.certificateEnabled === true ? 'Có cấp chứng nhận' : 'Không cấp chứng nhận'}</div><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions"><button className="rp-secondary-button" onClick={() => openForm(item)}><Settings size={15} /> Sửa</button><button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button><EventQrAction item={item} />{(Number(item.certificateEnabled) === 1 || item.certificateEnabled === true) && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>}{item.status !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}<button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button></div>}</article>;
+      return <article className="rp-card rp-event-card" key={item.id}><button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className="rp-tag">{item.status || 'Sự kiện'}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><Award size={15} />{Number(item.certificateEnabled) === 1 || item.certificateEnabled === true ? 'Có cấp chứng nhận' : 'Không cấp chứng nhận'}</div><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions"><button className="rp-secondary-button" onClick={() => openForm(item)}><Settings size={15} /> Sửa</button><button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button>{(Number(item.certificateEnabled) === 1 || item.certificateEnabled === true) && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>}{item.status !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}<button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button></div>}</article>;
     })}</div> : <EmptyPanel title="Chưa có sự kiện" message="Không tìm thấy sự kiện phù hợp." />}
     {form && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setForm(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={saveEvent}><header><div><h2>{form.id ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện'}</h2><p>{form.id || 'Nhập thông tin hoạt động.'}</p></div><button type="button" className="rp-icon-button" onClick={() => setForm(null)} aria-label="Đóng"><X size={18} /></button></header>{formError && <ErrorPanel message={formError} />}<div className="rp-form-grid"><label>Tên sự kiện<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>Đơn vị tổ chức<select required value={form.organizerId} onChange={(event) => setForm({ ...form, organizerId: event.target.value })}><option value="">Chọn đơn vị</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label>Bắt đầu<input type="datetime-local" required value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} /></label><label>Kết thúc<input type="datetime-local" required value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} /></label><label>Địa điểm<input required value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></label><label>Sức chứa<input type="number" min="1" required value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /></label><label className="rp-form-wide rp-checkbox-field"><input type="checkbox" checked={form.certificateEnabled === true} onChange={(event) => setForm({ ...form, certificateEnabled: event.target.checked })} /><span>Cấp chứng nhận cho người tham dự</span><small>Chỉ bật nếu sự kiện này sẽ phát hành giấy chứng nhận.</small></label><label className="rp-form-wide">Chọn ảnh từ máy<input key={imageInputVersion} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const imageFile = event.target.files?.[0] || null; setForm({ ...form, imageFile, ...(imageFile ? { imageUrl: '' } : {}) }); }} /><small className="rp-image-help">JPEG, PNG hoặc WebP, tối đa 5 MB. Ảnh sẽ tải lên khi lưu sự kiện.</small></label><label className="rp-form-wide">Hoặc dùng URL ảnh<input type="url" maxLength="1000" value={form.imageUrl} onChange={(event) => { if (form.imageFile) setImageInputVersion((version) => version + 1); setForm({ ...form, imageUrl: event.target.value, imageFile: null }); }} placeholder="https://..." /><small className="rp-image-help">Để trống cả hai trường để tự chọn ảnh theo chủ đề sự kiện.</small>{(imagePreview || form.imageUrl) && <img key={imagePreview || form.imageUrl} className="rp-event-image-preview" src={imagePreview || form.imageUrl} alt="Xem trước ảnh sự kiện" onError={(event) => { event.currentTarget.hidden = true; }} />}</label><label className="rp-form-wide">Mô tả<textarea rows="3" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Quyền lợi</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, benefits: [...form.benefits, { type: 'Khác', points: '0', content: '' }] })} disabled={form.benefits.length >= 20}><Plus size={15} /> Thêm quyền lợi</button></div>{form.benefits.map((benefit, index) => <div className="rp-editor-row rp-benefit-row" key={`benefit-${index}`}><select aria-label={`Loại quyền lợi ${index + 1}`} value={benefit.type} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value } : item) })}>{['Điểm rèn luyện', 'Điểm công tác xã hội', 'Chứng nhận', 'Khác'].map((type) => <option key={type} value={type}>{type}</option>)}</select><input aria-label={`Số điểm quyền lợi ${index + 1}`} type="number" min="0" step="1" required value={benefit.points} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, points: event.target.value } : item) })} placeholder="Số điểm" /><input aria-label={`Nội dung quyền lợi ${index + 1}`} maxLength="500" required value={benefit.content} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, content: event.target.value } : item) })} placeholder="Nội dung quyền lợi" /><button type="button" className="rp-icon-button" aria-label={`Xóa quyền lợi ${index + 1}`} onClick={() => setForm({ ...form, benefits: form.benefits.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section><label className="rp-form-wide">Nội quy<textarea rows="3" value={form.rules} onChange={(event) => setForm({ ...form, rules: event.target.value })} placeholder="Mỗi dòng một nội quy" /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Khung giờ điểm danh</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, periods: [...form.periods, { name: `Đợt ${form.periods.length + 1}`, startTime: form.startTime, endTime: form.endTime }] })} disabled={form.periods.length >= 12}><Plus size={15} /> Thêm khung giờ</button></div><small>Chọn ngày giờ trên lịch; để trống danh sách nếu điểm danh trong toàn bộ thời gian sự kiện.</small>{form.periods.map((period, index) => <div className="rp-editor-row rp-period-row" key={`period-${index}`}><input aria-label={`Tên khung điểm danh ${index + 1}`} required maxLength="60" value={period.name} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} placeholder="Tên khung, ví dụ: Đợt 1" /><label>Bắt đầu<input aria-label={`Bắt đầu khung ${index + 1}`} type="datetime-local" required value={period.startTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, startTime: event.target.value } : item) })} /></label><label>Kết thúc<input aria-label={`Kết thúc khung ${index + 1}`} type="datetime-local" required value={period.endTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, endTime: event.target.value } : item) })} /></label><button type="button" className="rp-icon-button" aria-label={`Xóa khung điểm danh ${index + 1}`} onClick={() => setForm({ ...form, periods: form.periods.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section></div><footer><button type="button" className="rp-secondary-button" onClick={() => setForm(null)} disabled={saving}>Hủy</button><button className="rp-secondary-button" disabled={saving}>{saving ? 'Đang lưu...' : form.id ? 'Lưu thay đổi' : 'Tạo sự kiện'}</button></footer></form></div>}
     {importTarget && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) setImportTarget(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importStudents}><header><div><h2>Nhập sinh viên đăng ký</h2><p>{importTarget.name}</p></div><button type="button" className="rp-icon-button" onClick={() => setImportTarget(null)} aria-label="Đóng"><X size={18} /></button></header><label>Chọn file Excel (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={readEventStudentWorkbook} disabled={Boolean(busyAction)} />{busyAction === 'reading-import' && <small role="status">Đang đọc file Excel...</small>}</label><label>Mã sinh viên<textarea rows="7" required value={studentIds} onChange={(event) => setStudentIds(event.target.value)} placeholder="Mỗi dòng một mã sinh viên; có thể phân tách bằng dấu phẩy hoặc dấu chấm phẩy." /></label><footer><button type="button" className="rp-secondary-button" onClick={() => setImportTarget(null)} disabled={busyAction === 'import'}>Hủy</button><button className="rp-secondary-button" disabled={busyAction === 'import'}>{busyAction === 'import' ? 'Đang nhập...' : 'Nhập sinh viên'}</button></footer></form></div>}
@@ -941,6 +941,7 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
 function EventQrAction({ item }) {
   const [open, setOpen] = useState(false);
   const [periods, setPeriods] = useState([]);
+  const [periodsConfigured, setPeriodsConfigured] = useState(false);
   const [periodId, setPeriodId] = useState('');
   const [qr, setQr] = useState(null);
   const [error, setError] = useState('');
@@ -949,11 +950,15 @@ function EventQrAction({ item }) {
   const openDialog = async () => {
     setOpen(true);
     setError('');
+    setPeriodsConfigured(false);
     try {
       const details = await api(`/api/events/${encodeURIComponent(item.id)}`);
-      const next = details.attendancePeriods || [];
+      const allPeriods = details.attendancePeriods || [];
+      const next = allPeriods.filter((period) => !period.endTime || new Date(period.endTime) > new Date());
+      setPeriodsConfigured(allPeriods.length > 0);
       setPeriods(next);
       setPeriodId(next[0]?.id || '');
+      if (allPeriods.length && !next.length) setError('Tất cả khung điểm danh của sự kiện đã kết thúc.');
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : 'Không tải được khung điểm danh.');
     }
@@ -991,7 +996,7 @@ function EventQrAction({ item }) {
     }
   };
 
-  return <><button className="rp-secondary-button" onClick={openDialog}><QrCode size={15} /> Tạo QR</button>{open && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setOpen(false); }}><section className="rp-modal rp-qr-modal" role="dialog" aria-modal="true"><header><div><h2>QR điểm danh sự kiện</h2><p>{item.name} · Flutter có thể quét mã này</p></div><button className="rp-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={18} /></button></header>{error && <ErrorPanel message={error} />}{qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr.qr} size={250} level="M" includeMargin /></div><strong>QR sự kiện đã sẵn sàng</strong><p>Mã được backend ký. Sinh viên cần đăng ký sự kiện và xác nhận vị trí trên Flutter.</p><button className="rp-secondary-button" onClick={stopQr} disabled={busy}>{busy ? 'Đang tắt...' : 'Tắt mã QR để tạo mã mới'}</button></div> : <><div className="rp-form-grid">{periods.length > 0 && <label>Khung điểm danh<select value={periodId} onChange={(event) => setPeriodId(event.target.value)}>{periods.map((period) => <option key={period.id} value={period.id}>{period.name} · {formatDate(period.startTime)}</option>)}</select></label>}<p className="rp-form-hint">Trình duyệt sẽ yêu cầu quyền vị trí của nơi tổ chức.</p></div><footer><button className="rp-secondary-button" onClick={() => setOpen(false)} disabled={busy}>Hủy</button><button className="rp-secondary-button" onClick={createQr} disabled={busy || (periods.length > 0 && !periodId)}>{busy ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer></>}</section></div>}</>;
+  return <><button className="rp-secondary-button" onClick={openDialog}><QrCode size={15} /> Tạo QR</button>{open && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setOpen(false); }}><section className="rp-modal rp-qr-modal" role="dialog" aria-modal="true"><header><div><h2>QR điểm danh sự kiện</h2><p>{item.name} · Flutter có thể quét mã này</p></div><button className="rp-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={18} /></button></header>{error && <ErrorPanel message={error} />}{qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr.qr} size={250} level="M" includeMargin /></div><strong>QR sự kiện đã sẵn sàng</strong><p>Mã được backend ký. Sinh viên cần đăng ký sự kiện và xác nhận vị trí trên Flutter.</p><button className="rp-secondary-button" onClick={stopQr} disabled={busy}>{busy ? 'Đang tắt...' : 'Tắt mã QR để tạo mã mới'}</button></div> : <><div className="rp-form-grid">{periods.length > 0 && <label>Khung điểm danh<select value={periodId} onChange={(event) => setPeriodId(event.target.value)}>{periods.map((period) => <option key={period.id} value={period.id}>{period.name} · {formatDate(period.startTime)}</option>)}</select></label>}<p className="rp-form-hint">Trình duyệt sẽ yêu cầu quyền vị trí của nơi tổ chức.</p></div><footer><button className="rp-secondary-button" onClick={() => setOpen(false)} disabled={busy}>Hủy</button><button className="rp-secondary-button" onClick={createQr} disabled={busy || (periodsConfigured && (!periods.length || !periodId))}>{busy ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer></>}</section></div>}</>;
 }
 
 function EventsView({ items }) {
@@ -1051,9 +1056,73 @@ function AttendanceView({ data, loading, error, query, setQuery, onRefresh, role
       <SearchBox value={query} onChange={setQuery} placeholder="Tìm mã lớp, sự kiện, trạng thái..." />
       {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : lecturerOrAdmin
         ? <DataTable items={items} columns={[[ 'Lớp', 'classLabel'], ['Buổi học', 'sessionName'], ['Mở lúc', 'openedAt'], ['Đóng lúc', 'closedAt'], ['Phương thức', 'method'], ['Có mặt', 'present'], ['Đi trễ', 'late'], ['Vắng', 'absent']]} />
-        : <EventsView items={items} />}
+        : <EventAttendanceView items={items} />}
       {lecturerOrAdmin && <div className="rp-attendance-session-actions">{items.map((item) => <button key={item.id} className="rp-secondary-button" onClick={() => openRoster(item)}>{item.classLabel} · {item.sessionName || 'Buổi học'} · Danh sách</button>)}</div>}
       {selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>Danh sách điểm danh</h2><p>{selected.classLabel || selected.className || selected.classId} · {selected.sessionName || 'Buổi học'}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header>{rosterError && <ErrorPanel message={rosterError} onRetry={() => openRoster(selected)} />}{rosterLoading ? <LoadingPanel /> : roster && <><div className="rp-roster-summary"><span>{roster.session?.canEdit ? 'Phiên đang mở · có thể cập nhật' : 'Phiên đã đóng · chỉ xem'}</span><button className="rp-secondary-button" onClick={() => openRoster(selected)}><RefreshCw size={15} /> Làm mới</button></div><div className="rp-table-wrap"><table className="rp-table"><thead><tr><th>Mã sinh viên</th><th>Họ tên</th><th>Trạng thái</th><th>Thời gian</th></tr></thead><tbody>{itemsOf(roster).map((student) => <tr key={student.studentId}><td>{student.studentId}</td><td>{student.studentName}</td><td>{roster.session?.canEdit ? <select aria-label={`Trạng thái ${student.studentName}`} value={statusValue(student.attendanceStatus)} disabled={savingStudent === student.studentId} onChange={(event) => updateStudentStatus(student.studentId, event.target.value)}><option value="">Chưa ghi nhận</option><option value="present">Có mặt</option><option value="late">Đi muộn</option><option value="absent">Vắng mặt</option><option value="excused">Vắng có phép</option></select> : student.attendanceStatus || 'Chưa ghi nhận'}</td><td>{formatDate(student.checkedInAt)}</td></tr>)}</tbody></table></div>{!itemsOf(roster).length && <EmptyPanel title="Chưa có sinh viên" message="Lớp chưa có sinh viên tham gia." />}</>}</section></div>}
+    </>
+  );
+}
+
+function EventAttendanceView({ items }) {
+  const [selected, setSelected] = useState(null);
+  const [details, setDetails] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const openDetails = async (item) => {
+    setSelected(item); setDetails(null); setError(''); setLoading(true);
+    try { setDetails(await api(`/api/events/${encodeURIComponent(item.id)}`)); }
+    catch (exception) { setError(exception instanceof Error ? exception.message : 'Không thể tải chi tiết sự kiện.'); }
+    finally { setLoading(false); }
+  };
+  const openEvents = items.filter((item) => !['đã đóng', 'đã kết thúc', 'closed', 'ended'].includes(String(item.status || '').trim().toLowerCase()) && (!item.endTime || new Date(item.endTime) > new Date()));
+  return (
+    <>
+      {openEvents.length ? (
+        <div className="rp-event-grid">
+          {openEvents.map((item) => (
+            <article className="rp-card rp-event-card" key={item.id}>
+              <button className="rp-event-open" onClick={() => openDetails(item)}>
+                <div className="rp-event-top"><span className="rp-tag">{item.status || 'Đang mở'}</span><span className="rp-event-id">{item.id}</span></div>
+                <h2>{item.name || 'Sự kiện HUIT'}</h2>
+                <div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div>
+                <div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div>
+                <div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div>
+              </button>
+              <div className="rp-inline-actions">
+                <button className="rp-secondary-button" onClick={() => openDetails(item)}>Chi tiết sự kiện</button>
+                <EventQrAction item={item} />
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : <EmptyPanel title="Không có sự kiện đang mở" message="Chỉ những sự kiện chưa đóng mới hiển thị tại đây." />}
+      {selected && (
+        <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
+          <section className="rp-modal" role="dialog" aria-modal="true">
+            <header>
+              <div><h2>Chi tiết sự kiện</h2><p>{selected.name || selected.id}</p></div>
+              <button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button>
+            </header>
+            {loading ? <LoadingPanel /> : error ? <ErrorPanel message={error} /> : details && (
+              <>
+                <p className="rp-event-description">{details.description || 'Chưa có mô tả cho sự kiện này.'}</p>
+                <div className="rp-detail-grid">
+                  <div><small>Thời gian</small><strong>{formatDate(details.startTime)} – {formatDate(details.endTime)}</strong></div>
+                  <div><small>Địa điểm</small><strong>{details.location || '—'}</strong></div>
+                  <div><small>Đơn vị tổ chức</small><strong>{details.organizerName || '—'}</strong></div>
+                  <div><small>Đăng ký</small><strong>{details.registeredCount ?? selected.registeredCount ?? 0}{details.capacity ? ` / ${details.capacity}` : ''}</strong></div>
+                </div>
+                {details.rules?.length > 0 && (
+                  <>
+                    <h3>Nội quy</h3>
+                    <ul>{details.rules.map((rule, index) => <li key={index}>{typeof rule === 'string' ? rule : rule.text || rule.content}</li>)}</ul>
+                  </>
+                )}
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </>
   );
 }
@@ -1217,16 +1286,20 @@ function ReportsView({ data, loading, error, onRefresh, role }) {
     if (!report || report.error) return;
     setExporting(true);
     try {
+      const cell = (value, style = {}) => ({ value, ...style });
       const rows = [
-        ['BÁO CÁO ĐIỂM DANH'],
-        ['Lớp học phần', classes.find((item) => String(item.id) === selectedClassId)?.name || selectedClassId],
-        ['Tổng số buổi', report.sessionCount ?? report.totalSessions ?? 0],
+        [cell('BÁO CÁO ĐIỂM DANH', { columnSpan: 8, fontWeight: 'bold', fontSize: 18, textColor: '#FFFFFF', backgroundColor: '#174B8A', align: 'center', height: 32 })],
+        [cell('LỚP HỌC PHẦN', { fontWeight: 'bold', textColor: '#36536F', backgroundColor: '#EAF2FB' }), cell(classes.find((item) => String(item.id) === selectedClassId)?.name || selectedClassId, { columnSpan: 7, backgroundColor: '#EAF2FB' })],
+        [cell('TỔNG SỐ BUỔI', { fontWeight: 'bold', textColor: '#36536F', backgroundColor: '#EAF2FB' }), cell(report.sessionCount ?? report.totalSessions ?? 0, { fontWeight: 'bold', textColor: '#174B8A', backgroundColor: '#EAF2FB' })],
         [],
-        ['STT', 'Mã sinh viên', 'Họ và tên', 'Tổng số buổi', 'Có mặt', 'Đi muộn', 'Vắng', 'Vắng có phép'],
-        ...summary.map((item, index) => [index + 1, item.studentId || '', item.studentName || '', Number(item.totalSessions) || 0, Number(item.present) || 0, Number(item.late) || 0, Number(item.absent) || 0, Number(item.excused) || 0]),
+        ['STT', 'Mã sinh viên', 'Họ và tên', 'Tổng số buổi', 'Có mặt', 'Đi muộn', 'Vắng', 'Vắng có phép'].map((value) => cell(value, { fontWeight: 'bold', textColor: '#FFFFFF', backgroundColor: '#2467A6', align: 'center', wrap: true, height: 26 })),
+        ...summary.map((item, index) => {
+          const stripe = index % 2 ? '#F4F8FC' : '#FFFFFF';
+          return [cell(index + 1, { backgroundColor: stripe, align: 'center' }), cell(item.studentId || '', { backgroundColor: stripe }), cell(item.studentName || '', { backgroundColor: stripe }), cell(Number(item.totalSessions) || 0, { backgroundColor: stripe, align: 'center' }), cell(Number(item.present) || 0, { backgroundColor: '#E7F6ED', textColor: '#187747', align: 'center', fontWeight: 'bold' }), cell(Number(item.late) || 0, { backgroundColor: '#FFF3D8', textColor: '#9A6200', align: 'center', fontWeight: 'bold' }), cell(Number(item.absent) || 0, { backgroundColor: '#FCE8E7', textColor: '#AC3832', align: 'center', fontWeight: 'bold' }), cell(Number(item.excused) || 0, { backgroundColor: '#EAF0FF', textColor: '#385AA8', align: 'center', fontWeight: 'bold' })];
+        }),
       ];
       const { default: writeExcelFile } = await import('write-excel-file/universal');
-      const workbook = await writeExcelFile(rows, { sheet: 'Bao cao diem danh' });
+      const workbook = await writeExcelFile(rows, { sheet: 'Báo cáo điểm danh', columns: [{ width: 8 }, { width: 18 }, { width: 30 }, { width: 17 }, { width: 13 }, { width: 13 }, { width: 13 }, { width: 18 }] });
       const url = URL.createObjectURL(await workbook.toBlob());
       const link = document.createElement('a');
       link.href = url;
@@ -1272,16 +1345,29 @@ function SettingsView({ darkMode, setDarkMode }) {
 }
 
 function GenericTable({ page, items }) {
+  const [selected, setSelected] = useState(null);
   const columns = page === 'users' ? [['Mã', 'id'], ['Họ tên', 'name'], ['Email', 'email'], ['Vai trò', 'role'], ['Trạng thái', 'status']]
     : page === 'orgUnits' ? [['Mã đơn vị', 'id'], ['Tên đơn vị', 'name']]
       : page === 'certificates' ? [['Mã chứng chỉ', 'id'], ['Sinh viên', 'studentName'], ['Sự kiện', 'eventName'], ['Ngày cấp', 'issuedAt'], ['Trạng thái', 'status']]
         : page === 'feedback' ? [['Loại', 'sourceType'], ['Sinh viên', 'studentName'], ['Nội dung', 'content'], ['Sự kiện / lớp', 'eventName'], ['Thời gian', 'sentAt']]
           : [['Mã', 'id'], ['Nội dung', 'title'], ['Thời gian', 'createdAt']];
-  return items.length ? <DataTable items={items} columns={columns} /> : <EmptyPanel title="Chưa có dữ liệu" message="Danh sách sẽ hiển thị khi hệ thống có bản ghi." />;
+  return <>{items.length ? <div className="rp-table-wrap"><table className="rp-table"><thead><tr>{columns.map(([label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{items.map((item, index) => <tr key={item.id || index} className={page === 'feedback' ? 'rp-clickable-row' : ''} onClick={() => page === 'feedback' && setSelected(item)}>{columns.map(([label, key]) => <td key={key}>{formatCell(item[key])}</td>)}</tr>)}</tbody></table></div> : <EmptyPanel title="Chưa có dữ liệu" message="Danh sách sẽ hiển thị khi hệ thống có bản ghi." />}{selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>Chi tiết {selected.rating != null ? 'đánh giá' : 'phản hồi'}</h2><p>{selected.studentName || selected.studentId || 'Sinh viên'}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header><div className="rp-detail-grid"><div><small>Đối tượng</small><strong>{selected.eventName || selected.className || selected.sourceType || '—'}</strong></div><div><small>Thời gian</small><strong>{formatDate(selected.sentAt || selected.createdAt)}</strong></div>{selected.rating != null && <div><small>Đánh giá</small><strong>{selected.rating} / 5 ★</strong></div>}</div><div className="rp-feedback-content">{selected.content || selected.comment || 'Không có nội dung.'}</div></section></div>}</>;
 }
 
 function StaffCertificateTable({ items, showNotice }) {
   const [downloading, setDownloading] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+  const openDetails = async (item) => {
+    setSelected(item); setPreviewUrl(''); setPreviewLoading(true);
+    try {
+      const blob = await api(`/api/staff/certificates/${encodeURIComponent(item.id)}/pdf`, { responseType: 'blob' });
+      setPreviewUrl(URL.createObjectURL(blob));
+    } catch (exception) { showNotice('error', exception instanceof Error ? exception.message : 'Không thể mở chứng nhận.'); }
+    finally { setPreviewLoading(false); }
+  };
   const download = async (item) => {
     setDownloading(item.id);
     try {
@@ -1298,7 +1384,7 @@ function StaffCertificateTable({ items, showNotice }) {
       setDownloading('');
     }
   };
-  return items.length ? <div className="rp-table-wrap"><table className="rp-table"><thead><tr>{['Mã chứng nhận', 'Sinh viên', 'Sự kiện', 'Ngày cấp', 'Trạng thái', ''].map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>{items.map((item) => <tr key={item.id}><td>{item.id}</td><td>{item.studentName || item.studentId || '—'}</td><td>{item.eventName || '—'}</td><td>{formatDate(item.issuedAt)}</td><td>{item.status || '—'}</td><td><button className="rp-secondary-button" onClick={() => download(item)} disabled={downloading === item.id}><Download size={15} />{downloading === item.id ? 'Đang tải...' : 'Tải PDF'}</button></td></tr>)}</tbody></table></div> : <EmptyPanel title="Chưa có chứng nhận" message="Danh sách chứng nhận sẽ hiển thị khi có dữ liệu." />;
+  return <>{items.length ? <div className="rp-table-wrap"><table className="rp-table"><thead><tr>{['Mã chứng nhận', 'Sinh viên', 'Sự kiện', 'Ngày cấp', 'Trạng thái', ''].map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>{items.map((item) => <tr key={item.id} className="rp-clickable-row" onClick={() => openDetails(item)}><td>{item.id}</td><td>{item.studentName || item.studentId || '—'}</td><td>{item.eventName || '—'}</td><td>{formatDate(item.issuedAt)}</td><td>{item.status || '—'}</td><td><button className="rp-secondary-button" onClick={(event) => { event.stopPropagation(); download(item); }} disabled={downloading === item.id}><Download size={15} />{downloading === item.id ? 'Đang tải...' : 'Tải PDF'}</button></td></tr>)}</tbody></table></div> : <EmptyPanel title="Chưa có chứng nhận" message="Danh sách chứng nhận sẽ hiển thị khi có dữ liệu." />}{selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal rp-certificate-modal" role="dialog" aria-modal="true"><header><div><h2>Chi tiết chứng nhận</h2><p>{selected.studentName || selected.studentId} · {selected.eventName}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header><div className="rp-detail-grid"><div><small>Mã chứng nhận</small><strong>{selected.id}</strong></div><div><small>Ngày cấp</small><strong>{formatDate(selected.issuedAt)}</strong></div><div><small>Trạng thái</small><strong>{selected.status || 'Đã cấp'}</strong></div></div>{previewLoading ? <LoadingPanel /> : previewUrl ? <iframe className="rp-certificate-preview" src={previewUrl} title={`Chứng nhận ${selected.id}`} /> : <ErrorPanel message="Không thể hiển thị chứng nhận." />}</section></div>}</>;
 }
 
 function DataTable({ items, columns }) {

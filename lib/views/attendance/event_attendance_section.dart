@@ -2,9 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../controllers/auth_controller.dart';
+import '../../controllers/organizer_events_controller.dart';
 import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
@@ -29,6 +32,7 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
   String? _error;
   String _query = '';
   String? _selectedEventId;
+  Map<String, dynamic>? _selectedEventDetails;
 
   @override
   void initState() {
@@ -89,20 +93,28 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
     );
     final query = _query.trim().toLowerCase();
     final events = _events.where((event) {
+      final status = event['status']?.toString().toLowerCase() ?? '';
+      final endTime = _parseDate(event['endTime']);
+      final isOpen = !const {'đã đóng', 'đã kết thúc', 'closed', 'ended'}
+              .contains(status) &&
+          (endTime == null || endTime.isAfter(DateTime.now()));
       final searchable = [
         event['id'],
         event['name'],
         event['location'],
       ].join(' ').toLowerCase();
-      return query.isEmpty || searchable.contains(query);
+      return isOpen && (query.isEmpty || searchable.contains(query));
     }).toList();
 
-    final selectedEvent = _selectedEventId == null
+    final selectedEventSummary = _selectedEventId == null
         ? null
-        : _events.cast<Map<String, dynamic>?>().firstWhere(
+        : events.cast<Map<String, dynamic>?>().firstWhere(
             (event) => event?['id']?.toString() == _selectedEventId,
             orElse: () => null,
           );
+    final selectedEvent = selectedEventSummary == null
+        ? null
+        : {...selectedEventSummary, ...?_selectedEventDetails};
     final summaryEvents = selectedEvent == null ? events : [selectedEvent];
     final registeredCount = summaryEvents.fold<int>(
       0,
@@ -140,7 +152,7 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
           ],
         ),
         Text(
-          'Chọn sự kiện bên trái để xem kết quả riêng hoặc xem tổng hợp.',
+          'Chọn sự kiện đang mở để xem chi tiết và kết quả điểm danh.',
           style: AppTextStyles.bodySm(colors.mutedForeground),
         ),
         const SizedBox(height: 12),
@@ -257,13 +269,31 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
               event: event,
               colors: colors,
               selected: event['id']?.toString() == selectedEventId,
-              onTap: () =>
-                  setState(() => _selectedEventId = event['id']?.toString()),
+              onTap: () => _selectEvent(event),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _selectEvent(Map<String, dynamic> event) async {
+    final eventId = event['id']?.toString() ?? '';
+    setState(() {
+      _selectedEventId = eventId;
+      _selectedEventDetails = null;
+    });
+    try {
+      final details = await Get.put(OrganizerEventsController())
+          .getEventDetails(eventId);
+      if (!mounted || _selectedEventId != eventId) return;
+      setState(() => _selectedEventDetails = details);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không tải được chi tiết sự kiện: $error')),
+      );
+    }
   }
 
   Widget _buildEventOverview(
@@ -283,6 +313,29 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(title, style: AppTextStyles.displaySm(colors.foreground)),
+        if (selectedEvent != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            selectedEvent['description']?.toString().trim().isNotEmpty == true
+                ? selectedEvent['description'].toString()
+                : 'Chưa có mô tả cho sự kiện này.',
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+          if ((selectedEvent['location']?.toString() ?? '').isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Địa điểm: ${selectedEvent['location']}'),
+            ),
+          if (Get.find<AuthController>().canManageEvents)
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: () => _createEventQr(selectedEvent),
+                icon: const Icon(Icons.qr_code_2),
+                label: const Text('Tạo mã QR điểm danh'),
+              ),
+            ),
+        ],
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) => GridView.count(
@@ -366,6 +419,103 @@ class EventAttendanceSectionState extends State<EventAttendanceSection> {
         ],
       ],
     );
+  }
+
+  Future<void> _createEventQr(Map<String, dynamic> event) async {
+    final eventId = event['id']?.toString() ?? '';
+    try {
+      final controller = Get.put(OrganizerEventsController());
+      final details = await controller.getEventDetails(eventId);
+      final hasPeriods = details['attendancePeriods'] is List &&
+          (details['attendancePeriods'] as List).isNotEmpty;
+      final periods = (details['attendancePeriods'] as List? ?? const [])
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from)
+          .where((period) {
+            final end = _parseDate(period['endTime']);
+            return end != null && end.isAfter(DateTime.now());
+          })
+          .toList();
+      if (hasPeriods && periods.isEmpty) {
+        throw Exception('Tất cả khung điểm danh của sự kiện đã kết thúc.');
+      }
+      Map<String, dynamic>? period;
+      if (periods.length == 1) {
+        period = periods.first;
+      } else if (periods.length > 1) {
+        period = await showDialog<Map<String, dynamic>>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Chọn khung điểm danh'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: periods.map((item) => ListTile(
+                title: Text(item['name']?.toString() ?? 'Khung điểm danh'),
+                subtitle: Text('${DateFormat('dd/MM HH:mm').format(_parseDate(item['startTime'])!.toLocal())} – ${DateFormat('dd/MM HH:mm').format(_parseDate(item['endTime'])!.toLocal())}'),
+                onTap: () => Navigator.pop(dialogContext, item),
+              )).toList(),
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Hủy'))],
+          ),
+        );
+        if (period == null || !mounted) return;
+      }
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        throw Exception('Hãy bật dịch vụ vị trí trên thiết bị.');
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        throw Exception('Cần cấp quyền vị trí để tạo mã QR điểm danh.');
+      }
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+      final result = await controller.createAttendanceQr(
+        eventId,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        periodId: period?['id']?.toString(),
+      );
+      final qr = result['qr']?.toString() ?? '';
+      final sessionId = result['sessionId']?.toString() ?? '';
+      if (qr.isEmpty || sessionId.isEmpty) throw Exception('Máy chủ không trả về mã QR hợp lệ.');
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(period?['name']?.toString() ?? 'QR điểm danh sự kiện'),
+          content: SizedBox(
+            width: 300,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(event['name']?.toString() ?? 'Sự kiện', textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              QrImageView(data: qr, size: 250),
+              const Text('Sinh viên quét mã trên ứng dụng để ghi nhận điểm danh.', textAlign: TextAlign.center),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Đóng')),
+            FilledButton.icon(
+              onPressed: () async {
+                try {
+                  await controller.closeAttendanceSession(eventId, sessionId);
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã tắt mã QR.')));
+                } catch (error) {
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Không thể tắt mã QR: $error')));
+                }
+              },
+              icon: const Icon(Icons.stop_circle_outlined),
+              label: const Text('Tắt mã QR'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Không tạo được mã QR: $error')));
+    }
   }
 
   static int _count(dynamic value) =>

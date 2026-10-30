@@ -94,8 +94,8 @@ class AppSidebar extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  width: 36,
-                  height: 36,
+                  width: 48,
+                  height: 48,
                   decoration: BoxDecoration(
                     color: c.primary,
                     borderRadius: BorderRadius.circular(8),

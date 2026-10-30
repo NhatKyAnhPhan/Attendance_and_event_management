@@ -576,10 +576,6 @@ class _TodayClassCard extends StatelessWidget {
                           .copyWith(fontSize: 14),
                     ),
                     Text(
-                      'Mã lớp ${cls.id}',
-                      style: AppTextStyles.bodyXs(c.mutedForeground),
-                    ),
-                    Text(
                       cls.todaySchedule,
                       style: AppTextStyles.bodyXs(c.mutedForeground),
                     ),

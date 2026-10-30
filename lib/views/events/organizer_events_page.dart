@@ -762,39 +762,6 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ),
             ),
           if (Get.find<AuthController>().canManageEvents &&
-              !event.isClosed &&
-              event.endTime.isAfter(DateTime.now()))
-            if (_activeQrSessionIds[event.id] == null)
-              OutlinedButton.icon(
-                onPressed: () =>
-                    _showEventAttendanceQr(dialogContext, controller, event),
-                icon: const Icon(Icons.qr_code_2),
-                label: const Text('Mở phiên điểm danh'),
-              )
-            else
-              OutlinedButton.icon(
-                onPressed: () async {
-                  try {
-                    await controller.closeAttendanceSession(
-                      event.id,
-                      _activeQrSessionIds[event.id]!,
-                    );
-                    if (!mounted || !dialogContext.mounted) return;
-                    setState(() => _activeQrSessionIds.remove(event.id));
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(content: Text('Đã tắt mã QR điểm danh.')),
-                    );
-                  } catch (error) {
-                    if (!dialogContext.mounted) return;
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(content: Text('Không thể tắt mã QR: $error')),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.stop_circle_outlined),
-                label: const Text('Tắt mã QR đang hoạt động'),
-              ),
-          if (Get.find<AuthController>().canManageEvents &&
               event.certificateEnabled &&
               (event.isClosed || !event.endTime.isAfter(DateTime.now())))
             FilledButton.icon(
@@ -1316,7 +1283,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     if (event != null && !_canEditEvent(event)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Sự kiện đã kết thúc hoặc đã bắt đầu quá 1 ngày.'),
+          content: Text('Sự kiện đã kết thúc nên không thể chỉnh sửa.'),
         ),
       );
       return;
@@ -1368,10 +1335,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       text: event?.organizerId ?? '',
     );
     String? selectedOrganizerId = event?.organizerId;
-    DateTime startTime =
-        event?.startTime ?? DateTime.now().add(const Duration(days: 1));
+    DateTime startTime = event?.startTime ?? DateTime.now();
     DateTime endTime =
-        event?.endTime ?? DateTime.now().add(const Duration(days: 1, hours: 2));
+        event?.endTime ?? DateTime.now().add(const Duration(hours: 2));
     final attendancePeriods =
         (currentDetails['attendancePeriods'] as List? ?? const [])
             .whereType<Map>()
@@ -1974,11 +1940,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     if (!endTime.isAfter(startTime)) {
       return 'Thời gian kết thúc phải sau thời gian bắt đầu.';
     }
-    if (endTime.difference(startTime) > const Duration(days: 1)) {
-      return 'Thời lượng sự kiện không được quá 1 ngày.';
-    }
-    if (!isEditing && !startTime.isAfter(now)) {
-      return 'Sự kiện mới phải bắt đầu trong tương lai.';
+    if (!isEditing && startTime.isBefore(now)) {
+      return 'Thời gian bắt đầu không được ở quá khứ.';
     }
     if (isEditing && !endTime.isAfter(now)) {
       return 'Không thể chỉnh sửa sự kiện đã kết thúc.';
@@ -2013,13 +1976,10 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     return null;
   }
 
-  // Kiểm tra sự kiện chưa kết thúc, chưa quá một ngày và không kéo dài quá 24 giờ.
+  // Chỉ khóa chỉnh sửa khi sự kiện đã kết thúc hoặc đã lưu trữ.
   static bool _canEditEvent(OrganizerEventSummary event) {
     final now = DateTime.now();
-    return !event.isArchived &&
-        event.endTime.isAfter(now) &&
-        now.difference(event.startTime) <= const Duration(days: 1) &&
-        event.endTime.difference(event.startTime) <= const Duration(days: 1);
+    return !event.isArchived && event.endTime.isAfter(now);
   }
 
   static Widget _eventFormSection(

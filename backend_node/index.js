@@ -278,16 +278,17 @@ function generateRecordId(prefix) {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 }
 
-// Kiểm tra khoảng thời gian hợp lệ và giới hạn thời lượng sự kiện trong 24 giờ.
-function isValidEventTimeRange(startTime, endTime, { requireFutureStart = false, requireFutureEnd = false } = {}) {
+// Kiểm tra khoảng thời gian sự kiện; cho phép sự kiện kéo dài nhiều ngày.
+function isValidEventTimeRange(startTime, endTime, { requireNonPastStart = false, requireFutureEnd = false } = {}) {
   const start = startTime.valueOf();
   const end = endTime.valueOf();
+  // datetime-local and the mobile picker have minute precision.
   const now = Date.now();
+  const currentMinuteStart = Math.floor(now / 60000) * 60000;
   return Number.isFinite(start)
     && Number.isFinite(end)
     && end > start
-    && end - start <= 24 * 60 * 60 * 1000
-    && (!requireFutureStart || start > now)
+    && (!requireNonPastStart || start >= currentMinuteStart)
     && (!requireFutureEnd || end > now);
 }
 
@@ -4529,9 +4530,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
 
   if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
       || parsedCapacity <= 0
-      || !isValidEventTimeRange(parsedStart, parsedEnd, { requireFutureStart: true })) {
+      || !isValidEventTimeRange(parsedStart, parsedEnd, { requireNonPastStart: true })) {
     return response.status(400).json({
-      message: 'Thời gian sự kiện phải bắt đầu trong tương lai và kéo dài không quá 1 ngày.',
+      message: 'Thời gian bắt đầu không được ở quá khứ và thời gian kết thúc phải sau thời gian bắt đầu.',
     });
   }
   if (contentResult.message) {
@@ -4633,7 +4634,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
       || parsedCapacity <= 0
       || !isValidEventTimeRange(parsedStart, parsedEnd, { requireFutureEnd: true })) {
     return response.status(400).json({
-      message: 'Thời gian sự kiện phải hợp lệ, còn thời gian diễn ra và kéo dài không quá 1 ngày.',
+      message: 'Thời gian sự kiện phải hợp lệ, chưa kết thúc và thời gian kết thúc phải sau thời gian bắt đầu.',
     });
   }
   if (hasEventContent && contentResult.message) {
@@ -4677,14 +4678,11 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
           message: 'Sự kiện đã đóng hoặc đã quá 1 năm nên không thể chỉnh sửa.',
         });
       }
-      const existingStart = new Date(existing.startTime).valueOf();
       const existingEnd = new Date(existing.endTime).valueOf();
-      if (Date.now() >= existingEnd
-          || Date.now() - existingStart > 24 * 60 * 60 * 1000
-          || existingEnd - existingStart > 24 * 60 * 60 * 1000) {
+      if (Date.now() >= existingEnd) {
         await connection.rollback();
         return response.status(409).json({
-          message: 'Sự kiện đã kết thúc hoặc đã bắt đầu quá 1 ngày nên không thể chỉnh sửa.',
+          message: 'Sự kiện đã kết thúc nên không thể chỉnh sửa.',
         });
       }
       const [[registrationCount]] = await connection.execute(

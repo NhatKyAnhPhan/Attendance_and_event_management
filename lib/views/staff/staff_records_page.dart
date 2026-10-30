@@ -640,18 +640,41 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
     final className = item['className']?.toString() ?? '';
     final contextName = eventName.isNotEmpty ? eventName : className;
 
-    return _recordContainer(
-      colors,
-      leading: rating == null ? Icons.forum_outlined : Icons.star_outline,
-      title: contextName.isEmpty ? 'Phản hồi chung' : contextName,
-      subtitle:
-          '${item['studentName'] ?? item['studentId'] ?? 'Sinh viên'} · ${item['studentId'] ?? ''}',
-      trailing: _statusLabel(colors, ratingText),
-      details: [
-        _detail(colors, 'Gửi lúc', _formatDate(item['sentAt'])),
-        if ((item['content']?.toString() ?? '').isNotEmpty)
-          _detail(colors, 'Nội dung', item['content'].toString()),
-      ],
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(rating == null ? 'Chi tiết phản hồi' : 'Chi tiết đánh giá'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _detail(colors, 'Sinh viên', '${item['studentName'] ?? item['studentId'] ?? 'Sinh viên'} · ${item['studentId'] ?? ''}'),
+                if (contextName.isNotEmpty) _detail(colors, 'Sự kiện / lớp', contextName),
+                if (rating != null) _detail(colors, 'Đánh giá', '$rating / 5 sao'),
+                _detail(colors, 'Gửi lúc', _formatDate(item['sentAt'])),
+                const SizedBox(height: 12),
+                Text(item['content']?.toString().trim().isNotEmpty == true ? item['content'].toString() : 'Không có nội dung.', style: AppTextStyles.bodySm(colors.foreground)),
+              ],
+            ),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Đóng'))],
+        ),
+      ),
+      child: _recordContainer(
+        colors,
+        leading: rating == null ? Icons.forum_outlined : Icons.star_outline,
+        title: contextName.isEmpty ? 'Phản hồi chung' : contextName,
+        subtitle: '${item['studentName'] ?? item['studentId'] ?? 'Sinh viên'} · ${item['studentId'] ?? ''}',
+        trailing: _statusLabel(colors, ratingText),
+        details: [
+          _detail(colors, 'Gửi lúc', _formatDate(item['sentAt'])),
+          if ((item['content']?.toString() ?? '').isNotEmpty)
+            _detail(colors, 'Nội dung', item['content'].toString()),
+        ],
+      ),
     );
   }
 
