@@ -736,6 +736,12 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
   const [importTarget, setImportTarget] = useState(null);
   const [studentIds, setStudentIds] = useState('');
   const [busyAction, setBusyAction] = useState('');
+  const [certificateTarget, setCertificateTarget] = useState(null);
+  const [certificateStudents, setCertificateStudents] = useState([]);
+  const [selectedCertificateStudents, setSelectedCertificateStudents] = useState(new Set());
+  const [certificateLoading, setCertificateLoading] = useState(false);
+  const [certificateBusy, setCertificateBusy] = useState('');
+  const [certificateError, setCertificateError] = useState('');
   const [imagePreview, setImagePreview] = useState('');
   const [imageInputVersion, setImageInputVersion] = useState(0);
   const events = itemsOf(data).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
@@ -872,7 +878,96 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     setDetailLoading(false);
   };
 
+  const refreshCertificateStudents = async (item) => {
+    const result = await api(`/api/organizer/events/${encodeURIComponent(item.id)}/students`);
+    const attendees = itemsOf(result).filter((student) => student.checkedInAt);
+    setCertificateStudents(attendees.filter((student) => (
+      student.certificateStatus !== 'Đã cấp' || student.emailStatus !== 'Đã gửi'
+    )));
+    return attendees;
+  };
+
+  const openCertificateManager = async (item) => {
+    setCertificateTarget(item);
+    setCertificateStudents([]);
+    setSelectedCertificateStudents(new Set());
+    setCertificateError('');
+    setCertificateLoading(true);
+    try {
+      await refreshCertificateStudents(item);
+    } catch (exception) {
+      setCertificateError(exception instanceof Error ? exception.message : 'Không tải được danh sách cấp chứng nhận.');
+    } finally {
+      setCertificateLoading(false);
+    }
+  };
+
+  const issueSelectedCertificates = async (channel) => {
+    if (!certificateTarget || selectedCertificateStudents.size === 0) return;
+    const selectedIds = [...selectedCertificateStudents].filter((studentId) => {
+      const student = certificateStudents.find((item) => item.studentId === studentId);
+      if (!student) return false;
+      return channel === 'app'
+        ? student.certificateStatus !== 'Đã cấp'
+        : student.emailStatus !== 'Đã gửi' && student.emailStatus !== 'Đang gửi';
+    });
+    if (selectedIds.length === 0) return;
+    const channelLabel = channel === 'app' ? 'cấp trong app' : 'gửi qua Gmail';
+    if (!window.confirm(`Thực hiện ${channelLabel} cho ${selectedIds.length} sinh viên đã chọn?`)) return;
+    setCertificateBusy(channel + '-selected');
+    setCertificateError('');
+    let completed = 0;
+    const failures = [];
+    const endpointAction = channel === 'app' ? 'issue' : 'send';
+    const resultField = channel === 'app' ? 'issued' : 'sent';
+    try {
+      for (const studentId of selectedIds) {
+        try {
+          const result = await api(`/api/organizer/events/${encodeURIComponent(certificateTarget.id)}/certificates/${endpointAction}`, {
+            method: 'POST', body: { studentId },
+          });
+          completed += Number(result[resultField] || 0);
+          for (const failure of result.failures || []) failures.push(failure.message || studentId);
+        } catch (exception) {
+          failures.push(`${studentId}: ${exception instanceof Error ? exception.message : 'Action failed.'}`);
+        }
+      }
+      await refreshCertificateStudents(certificateTarget);
+      setSelectedCertificateStudents(new Set());
+      showNotice(failures.length ? 'error' : 'success', `Đã ${channelLabel} ${completed}/${selectedIds.length} chứng nhận.${failures.length ? ' Lỗi: ' + failures.join('; ') : ''}`);
+    } catch (exception) {
+      setCertificateError(exception instanceof Error ? exception.message : 'Không tải lại được danh sách chứng nhận.');
+    } finally {
+      setCertificateBusy('');
+    }
+  };
+
+  const issueAllCertificates = async (channel) => {
+    if (!certificateTarget) return;
+    const channelLabel = channel === 'app' ? 'cấp trong app' : 'gửi qua Gmail';
+    if (!window.confirm(`Thực hiện ${channelLabel} cho toàn bộ sinh viên đủ điều kiện của sự kiện "${certificateTarget.name}"?`)) return;
+    setCertificateBusy(channel + '-all');
+    setCertificateError('');
+    try {
+      const endpointAction = channel === 'app' ? 'issue' : 'send';
+      const result = await api(`/api/organizer/events/${encodeURIComponent(certificateTarget.id)}/certificates/${endpointAction}`, { method: 'POST' });
+      const completed = Number(result[channel === 'app' ? 'issued' : 'sent'] || 0);
+      const failures = (result.failures || []).map((failure) => failure.message || failure.studentId);
+      await refreshCertificateStudents(certificateTarget);
+      setSelectedCertificateStudents(new Set());
+      showNotice(failures.length ? 'error' : 'success', `Đã ${channelLabel} ${completed} chứng nhận${result.skipped ? ', bỏ qua ' + result.skipped : ''}.${failures.length ? ' Lỗi: ' + failures.join('; ') : result.message ? ' ' + result.message : ''}`);
+    } catch (exception) {
+      setCertificateError(exception instanceof Error ? exception.message : 'Không cấp được chứng nhận.');
+    } finally {
+      setCertificateBusy('');
+    }
+  };
+
   const runEventAction = async (item, action) => {
+    if (action === 'certificates') {
+      await openCertificateManager(item);
+      return;
+    }
     const labels = { close: 'đóng', delete: 'xóa', certificates: 'gửi chứng nhận' };
     if (!window.confirm(`Bạn có chắc muốn ${labels[action]} cho sự kiện "${item.name}"?`)) return;
     setBusyAction(`${item.id}:${action}`);
@@ -925,7 +1020,41 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     }
   };
 
+  const certificateEventEnded = certificateTarget && (
+    certificateTarget.status === 'Đã đóng'
+    || certificateTarget.status === 'Đã kết thúc'
+    || new Date(certificateTarget.endTime) <= new Date()
+  );
+  const appPendingCertificateStudents = certificateStudents.filter((student) => student.certificateStatus !== 'Đã cấp');
+  const emailPendingCertificateStudents = certificateStudents.filter((student) => student.emailStatus !== 'Đã gửi' && student.emailStatus !== 'Đang gửi');
+
   return <>
+    {certificateTarget && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !certificateBusy) setCertificateTarget(null); }}>
+      <section className="rp-modal rp-form-modal" role="dialog" aria-modal="true">
+        <header><div><h2>{'Ch\u1ee9ng nh\u1eadn s\u1ef1 ki\u1ec7n'}</h2><p>{certificateTarget.name}</p></div><button className="rp-icon-button" onClick={() => setCertificateTarget(null)} aria-label={'\u0110\u00f3ng'} disabled={Boolean(certificateBusy)}><X size={18} /></button></header>
+        {certificateError && <ErrorPanel message={certificateError} />}
+        {!certificateEventEnded && <div className="rp-detail-error" role="status">{'Ch\u1ec9 c\u00f3 th\u1ec3 c\u1ea5p ho\u1eb7c g\u1eedi ch\u1ee9ng nh\u1eadn sau khi s\u1ef1 ki\u1ec7n k\u1ebft th\u00fac ho\u1eb7c \u0111\u00e3 \u0111\u00f3ng.'}</div>}
+        {certificateLoading ? <LoadingPanel /> : certificateStudents.length ? <>
+          <p className="rp-modal-muted">{'Ch\u1ecdn sinh vi\u00ean \u0111\u00e3 \u0111i\u1ec3m danh. C\u1ea5p qua app v\u00e0 g\u1eedi qua Gmail \u0111\u01b0\u1ee3c theo d\u00f5i ri\u00eang.'}</p>
+          <div className="rp-table-wrap"><table className="rp-table"><thead><tr><th>{'Ch\u1ecdn'}</th><th>{'M\u00e3 sinh vi\u00ean'}</th><th>{'H\u1ecd t\u00ean'}</th><th>{'Tr\u1ea1ng th\u00e1i app'}</th><th>{'Tr\u1ea1ng th\u00e1i Gmail'}</th></tr></thead><tbody>
+            {certificateStudents.map((student) => {
+              const appDone = student.certificateStatus === '\u0110\u00e3 c\u1ea5p';
+              const emailDone = student.emailStatus === '\u0110\u00e3 g\u1eedi';
+              const emailPending = student.emailStatus === '\u0110ang g\u1eedi';
+              const canSelect = certificateEventEnded && (!appDone || (!emailDone && !emailPending));
+              return <tr key={student.studentId}><td><input type="checkbox" aria-label={'Ch\u1ecdn ' + student.studentName} checked={selectedCertificateStudents.has(student.studentId)} disabled={!canSelect || Boolean(certificateBusy)} onChange={(event) => setSelectedCertificateStudents((current) => { const next = new Set(current); if (event.target.checked) next.add(student.studentId); else next.delete(student.studentId); return next; })} /></td><td>{student.studentId}</td><td>{student.studentName}</td><td>{student.certificateStatus || 'Ch\u01b0a c\u1ea5p'}</td><td>{student.emailStatus || 'Ch\u01b0a g\u1eedi'}</td></tr>;
+            })}
+          </tbody></table></div>
+        </> : !certificateError && <EmptyPanel title={'Ch\u01b0a c\u00f3 sinh vi\u00ean c\u1ea7n x\u1eed l\u00fd'} message={'Ch\u1ec9 sinh vi\u00ean \u0111\u00e3 \u0111i\u1ec3m danh s\u1ef1 ki\u1ec7n m\u1edbi \u0111\u1ee7 \u0111i\u1ec1u ki\u1ec7n.'} />}
+        <footer>
+          <button type="button" className="rp-secondary-button" onClick={() => setCertificateTarget(null)} disabled={Boolean(certificateBusy)}>{'\u0110\u00f3ng'}</button>
+          <button type="button" className="rp-secondary-button" onClick={() => issueSelectedCertificates('app')} disabled={!certificateEventEnded || Boolean(certificateBusy) || selectedCertificateStudents.size === 0}>{certificateBusy === 'app-selected' ? '...': 'C\u1ea5p \u0111\u00e3 ch\u1ecdn qua app'}</button>
+          <button type="button" className="rp-secondary-button" onClick={() => issueAllCertificates('app')} disabled={!certificateEventEnded || Boolean(certificateBusy) || appPendingCertificateStudents.length === 0}>{certificateBusy === 'app-all' ? '...': 'C\u1ea5p h\u1ebft qua app (' + appPendingCertificateStudents.length + ')'}</button>
+          <button type="button" className="rp-secondary-button" onClick={() => issueSelectedCertificates('gmail')} disabled={!certificateEventEnded || Boolean(certificateBusy) || selectedCertificateStudents.size === 0}>{certificateBusy === 'gmail-selected' ? '...': 'G\u1eedi \u0111\u00e3 ch\u1ecdn qua Gmail'}</button>
+          <button type="button" className="rp-secondary-button" onClick={() => issueAllCertificates('gmail')} disabled={!certificateEventEnded || Boolean(certificateBusy) || emailPendingCertificateStudents.length === 0}>{certificateBusy === 'gmail-all' ? '...': 'G\u1eedi h\u1ebft qua Gmail (' + emailPendingCertificateStudents.length + ')'}</button>
+        </footer>
+      </section>
+    </div>}
     <PageTitle title="Quản lý sự kiện" subtitle="Sự kiện và đăng ký được đồng bộ trực tiếp từ hệ thống HUIT." onRefresh={onRefresh} loading={loading} action={canManage && <button className="rp-secondary-button" onClick={() => openForm()}><Plus size={16} /> Tạo sự kiện</button>} />
     <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên sự kiện, địa điểm, trạng thái..." />
     {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : events.length ? <div className="rp-event-grid">{events.map((item) => {

@@ -241,4 +241,11 @@ class EventRepository {
       receiveTimeout: const Duration(minutes: 10),
     );
   }
+
+  Future<Map<String, dynamic>> issueEventCertificates(String eventId) {
+    return _client.post(
+      ApiEndpoints.issueEventCertificates(eventId),
+      receiveTimeout: const Duration(minutes: 2),
+    );
+  }
 }

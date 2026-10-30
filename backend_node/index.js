@@ -180,6 +180,34 @@ async function ensureEventCertificateColumn() {
   }
 }
 
+async function ensureCertificateEmailColumns() {
+  const [statusColumns] = await pool.query(
+    "SHOW COLUMNS FROM ChungNhan LIKE 'EmailTrangthai'",
+  );
+  const isNewEmailStatus = statusColumns.length === 0;
+  if (isNewEmailStatus) {
+    await pool.query(
+      "ALTER TABLE ChungNhan ADD COLUMN EmailTrangthai VARCHAR(20) NOT NULL DEFAULT 'Chưa gửi'",
+    );
+  }
+  const [sentAtColumns] = await pool.query(
+    "SHOW COLUMNS FROM ChungNhan LIKE 'EmailNgaygui'",
+  );
+  if (sentAtColumns.length === 0) {
+    await pool.query(
+      'ALTER TABLE ChungNhan ADD COLUMN EmailNgaygui DATETIME NULL',
+    );
+  }
+  // Các chứng nhận cũ được cấp qua luồng Gmail gộp trước đây.
+  if (isNewEmailStatus) {
+    await pool.query(
+      `UPDATE ChungNhan
+       SET EmailTrangthai = 'Đã gửi', EmailNgaygui = COALESCE(Ngaycap, NOW())
+       WHERE Trangthaichungnhan = 'Đã cấp' AND Ngaycap IS NOT NULL`,
+    );
+  }
+}
+
 async function ensureEventStatusColumn() {
   const [columns] = await pool.query(
     "SHOW COLUMNS FROM SuKien LIKE 'Trangthaisukien'",
@@ -3997,6 +4025,115 @@ app.post('/api/organizer/events/:eventId/attendance/sessions/:sessionId/close', 
   }
 });
 
+app.post('/api/organizer/events/:eventId/certificates/issue', requireAuth, requireRole(...eventManagerRoles, 'organizer', 'staff', 'employee'), async (request, response) => {
+  const isAdmin = ['quản trị viên', 'admin'].includes(
+    String(request.auth.role || '').trim().toLowerCase(),
+  );
+  const requestedStudentId = request.body?.studentId;
+  if (requestedStudentId !== undefined
+      && (typeof requestedStudentId !== 'string' || !requestedStudentId.trim())) {
+    return response.status(400).json({ message: 'Mã sinh viên cần cấp chứng nhận không hợp lệ.' });
+  }
+  const studentId = typeof requestedStudentId === 'string' ? requestedStudentId.trim() : null;
+  let connection;
+  try {
+    const [[event]] = await pool.execute(
+      `SELECT sk.Masukien AS id, sk.Tensukien AS name,
+              sk.Thoigianketthuc AS endTime, sk.Trangthaisukien AS status,
+              COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,
+              EXISTS (SELECT 1 FROM DonVi dv
+                      WHERE dv.Madv = sk.Madv AND dv.Manv = ?) AS isOrganizer
+       FROM SuKien sk WHERE sk.Masukien = ? LIMIT 1`,
+      [request.auth.sub, request.params.eventId],
+    );
+    if (!event) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    if (!isAdmin && !Number(event.isOrganizer)) {
+      return response.status(403).json({ message: 'Bạn không phụ trách sự kiện này.' });
+    }
+    if (!Number(event.certificateEnabled)) {
+      return response.status(409).json({ message: 'Sự kiện này không đăng ký cấp chứng nhận.' });
+    }
+    const eventIsClosed = String(event.status || '').trim().toLowerCase() === 'đã đóng';
+    if (!eventIsClosed && new Date(event.endTime) > new Date()) {
+      return response.status(409).json({ message: 'Chỉ có thể cấp chứng nhận sau khi sự kiện kết thúc hoặc đã đóng.' });
+    }
+
+    const [attendees] = await pool.execute(
+      `SELECT checked_in.student_id AS studentId
+       FROM (
+         SELECT ea.event_id, ea.student_id FROM event_attendance ea
+         WHERE ea.event_id = ? GROUP BY ea.event_id, ea.student_id
+         UNION
+         SELECT ear.event_id, ear.student_id FROM event_attendance_records ear
+         WHERE ear.event_id = ? GROUP BY ear.event_id, ear.student_id
+       ) checked_in
+       WHERE (? IS NULL OR checked_in.student_id = ?)
+       ORDER BY checked_in.student_id`,
+      [event.id, event.id, studentId, studentId],
+    );
+    if (attendees.length === 0) {
+      if (studentId) return response.status(409).json({ message: 'Sinh viên chưa điểm danh sự kiện.' });
+      return response.json({ eventId: event.id, issued: 0, skipped: 0, failures: [], message: 'Chưa có sinh viên điểm danh đủ điều kiện.' });
+    }
+
+    let issued = 0;
+    let skipped = 0;
+    const failures = [];
+    for (const attendee of attendees) {
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const [certificates] = await connection.execute(
+          `SELECT Machungnhan AS id, Trangthaichungnhan AS status
+           FROM ChungNhan WHERE Masv = ? AND Masukien = ?
+           ORDER BY Ngaycap DESC, Machungnhan DESC FOR UPDATE`,
+          [attendee.studentId, event.id],
+        );
+        const alreadyIssued = certificates.find((certificate) =>
+          String(certificate.status || '').trim().toLowerCase() === 'đã cấp');
+        if (alreadyIssued) {
+          await connection.commit();
+          skipped += 1;
+          continue;
+        }
+        const certificateId = certificates[0]?.id
+          || `GCN-${new Date().getFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+        if (certificates.length) {
+          await connection.execute(
+            `UPDATE ChungNhan SET Trangthaichungnhan = 'Đã cấp', Ngaycap = ?
+             WHERE Machungnhan = ?`,
+            [event.endTime, certificateId],
+          );
+        } else {
+          await connection.execute(
+            `INSERT INTO ChungNhan
+             (Machungnhan, Masv, Masukien, Ngaycap, Noidung, Trangthaichungnhan, EmailTrangthai)
+             VALUES (?, ?, ?, ?, ?, 'Đã cấp', 'Chưa gửi')`,
+            [certificateId, attendee.studentId, event.id, event.endTime,
+              `Giấy chứng nhận tham gia sự kiện ${event.name}`],
+          );
+        }
+        await connection.commit();
+        issued += 1;
+      } catch (error) {
+        if (connection) await connection.rollback();
+        failures.push({ studentId: attendee.studentId, message: error.message });
+      } finally {
+        if (connection) connection.release();
+        connection = null;
+      }
+    }
+    return response.json({ eventId: event.id, issued, skipped, failures });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Issue in-app certificates error:', error.message);
+    return response.status(500).json({ message: 'Không thể cấp chứng nhận trong ứng dụng.' });
+  }
+});
+
 app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requireRole(...eventManagerRoles, 'organizer', 'staff', 'employee'), async (request, response) => {
   const isAdmin = ['quản trị viên', 'admin'].includes(
     String(request.auth.role || '').trim().toLowerCase(),
@@ -4076,11 +4213,10 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
        LEFT JOIN NguoiDung nd ON nd.Mand = checked_in.student_id
        WHERE NOT EXISTS (
          SELECT 1
-         FROM ChungNhan issued
-         WHERE issued.Masv = checked_in.student_id
-           AND issued.Masukien = checked_in.event_id
-           AND issued.Trangthaichungnhan = 'Đã cấp'
-           AND issued.Ngaycap IS NOT NULL
+         FROM ChungNhan mailed
+         WHERE mailed.Masv = checked_in.student_id
+           AND mailed.Masukien = checked_in.event_id
+           AND mailed.EmailTrangthai = 'Đã gửi'
        )
          AND (? IS NULL OR checked_in.student_id = ?)
        ORDER BY checked_in.checkedInAt, checked_in.student_id`,
@@ -4148,7 +4284,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         );
         const [existingCertificates] = await connection.execute(
           `SELECT Machungnhan AS id, Ngaycap AS issuedAt,
-                  Trangthaichungnhan AS status
+                  Trangthaichungnhan AS status, EmailTrangthai AS emailStatus
            FROM ChungNhan
            WHERE Masv = ? AND Masukien = ?
            ORDER BY Ngaycap DESC, Machungnhan DESC
@@ -4158,8 +4294,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         if (
           existingCertificates.some(
             (certificate) =>
-              String(certificate.status).trim().toLowerCase() === 'đã cấp'
-              && certificate.issuedAt != null,
+              String(certificate.emailStatus || '').trim().toLowerCase() === 'đã gửi',
           )
         ) {
           await connection.commit();
@@ -4171,7 +4306,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         if (
           existingCertificates.some(
             (certificate) =>
-              String(certificate.status).trim().toLowerCase() === 'đang gửi',
+              String(certificate.emailStatus || '').trim().toLowerCase() === 'đang gửi',
           )
         ) {
           await connection.commit();
@@ -4188,22 +4323,22 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           certificateId = `GCN-${year}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
           await connection.execute(
             `INSERT INTO ChungNhan
-              (Machungnhan, Masv, Masukien, Ngaycap, Noidung, Trangthaichungnhan)
-             VALUES (?, ?, ?, ?, ?, 'Đang gửi')`,
+              (Machungnhan, Masv, Masukien, Ngaycap, Noidung,
+               Trangthaichungnhan, EmailTrangthai)
+             VALUES (?, ?, ?, NULL, ?, 'Chưa cấp', 'Đang gửi')`,
             [
               certificateId,
               attendee.studentId,
               event.id,
-              event.endTime,
               `Giấy chứng nhận tham gia sự kiện ${event.name}`,
             ],
           );
         } else {
           await connection.execute(
             `UPDATE ChungNhan
-             SET Trangthaichungnhan = 'Đang gửi', Ngaycap = ?
+             SET EmailTrangthai = 'Đang gửi'
              WHERE Machungnhan = ?`,
-            [event.endTime, certificateId],
+            [certificateId],
           );
         }
         const issuedAt = event.endTime;
@@ -4234,9 +4369,19 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         });
         await connection.execute(
           `UPDATE ChungNhan
-           SET Trangthaichungnhan = 'Đã cấp', Ngaycap = ?
+           SET EmailTrangthai = 'Đã gửi', EmailNgaygui = NOW(),
+               Trangthaichungnhan = CASE
+                 WHEN Trangthaichungnhan = 'Đã cấp' AND Ngaycap IS NOT NULL
+                   THEN Trangthaichungnhan
+                 ELSE 'Chưa cấp'
+               END,
+               Ngaycap = CASE
+                 WHEN Trangthaichungnhan = 'Đã cấp' AND Ngaycap IS NOT NULL
+                   THEN Ngaycap
+                 ELSE NULL
+               END
            WHERE Machungnhan = ?`,
-          [event.endTime, certificateId],
+          [certificateId],
         );
         await connection.commit();
         connection.release();
@@ -4312,6 +4457,7 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
       [request.params.eventId],
     );
     const attendanceByStudent = new Map();
+    const certificateByStudent = new Map();
     let warning = '';
     try {
       const [legacyAttendance] = await pool.execute(
@@ -4348,6 +4494,33 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
       console.error('Organizer event attendance status error:', error.message);
     }
 
+    const [certificates] = await pool.execute(
+      `SELECT Masv AS studentId, Ngaycap AS issuedAt,
+              Trangthaichungnhan AS status, EmailTrangthai AS emailStatus
+       FROM ChungNhan
+       WHERE Masukien = ?
+       ORDER BY Ngaycap DESC, Machungnhan DESC`,
+      [request.params.eventId],
+    );
+    for (const certificate of certificates) {
+      const key = String(certificate.studentId);
+      const current = certificateByStudent.get(key) || {};
+      const issued = String(certificate.status || '').trim().toLowerCase() === 'đã cấp'
+        && certificate.issuedAt != null;
+      const emailSent = String(certificate.emailStatus || '').trim().toLowerCase() === 'đã gửi';
+      const emailPending = String(certificate.emailStatus || '').trim().toLowerCase() === 'đang gửi';
+      certificateByStudent.set(key, {
+        certificateStatus: issued || current.certificateStatus === 'Đã cấp'
+          ? 'Đã cấp'
+          : certificate.status || current.certificateStatus || 'Chưa cấp',
+        emailStatus: emailSent || current.emailStatus === 'Đã gửi'
+          ? 'Đã gửi'
+          : emailPending || current.emailStatus === 'Đang gửi'
+            ? 'Đang gửi'
+            : 'Chưa gửi',
+      });
+    }
+
     const eventEnded = event.status === 'Đã đóng'
       || new Date(event.endTime) <= new Date();
     const items = rows.map((row) => {
@@ -4367,6 +4540,8 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
         ...row,
         attendanceStatus,
         checkedInAt: attendance?.checkedInAt || null,
+        certificateStatus: certificateByStudent.get(String(row.studentId))?.certificateStatus || 'Chưa cấp',
+        emailStatus: certificateByStudent.get(String(row.studentId))?.emailStatus || 'Chưa gửi',
       };
     });
     return response.json({ items, ...(warning ? { warning } : {}) });
@@ -4866,7 +5041,12 @@ app.get('/api/certificates/:certificateId', async (request, response) => {
       `SELECT cn.Machungnhan AS certificateId,
               COALESCE(nd.Hoten, cn.Masv) AS studentName,
               cn.Masv AS studentId, sk.Tensukien AS eventName,
-              sk.Thoigianketthuc AS issuedAt, cn.Trangthaichungnhan AS status
+              sk.Thoigianketthuc AS issuedAt, cn.EmailTrangthai AS emailStatus,
+              CASE
+                WHEN cn.Trangthaichungnhan = 'Đã cấp' AND cn.Ngaycap IS NOT NULL THEN 'Đã cấp'
+                WHEN cn.EmailTrangthai = 'Đã gửi' THEN 'Đã gửi Gmail'
+                ELSE cn.Trangthaichungnhan
+              END AS status
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
        LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
@@ -4970,8 +5150,8 @@ app.get('/api/staff/certificates/:certificateId/pdf', requireAuth, requireRole('
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
        LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
        WHERE cn.Machungnhan = ?
-         AND cn.Trangthaichungnhan = 'Đã cấp'
-         AND cn.Ngaycap IS NOT NULL
+         AND ((cn.Trangthaichungnhan = 'Đã cấp' AND cn.Ngaycap IS NOT NULL)
+           OR cn.EmailTrangthai = 'Đã gửi')
          AND (? = 1 OR EXISTS (
            SELECT 1 FROM DonVi dv
            WHERE dv.Madv = sk.Madv AND dv.Manv = ?
@@ -5014,11 +5194,14 @@ app.get('/api/staff/certificates', requireAuth, requireRole('Quản trị viên'
               sk.Thoigianketthuc AS endTime, sk.Diadiem AS location,
               sk.Thoigianketthuc AS issuedAt,
               COALESCE(cn.Noidung, CONCAT('Giấy chứng nhận tham gia sự kiện ', sk.Tensukien)) AS content,
+              cn.EmailTrangthai AS emailStatus,
               CASE
                 WHEN LOWER(TRIM(COALESCE(cn.Trangthaichungnhan, ''))) = 'đã cấp'
                   AND cn.Ngaycap IS NOT NULL THEN 'Đã cấp'
+                WHEN cn.EmailTrangthai = 'Đã gửi' THEN 'Đã gửi Gmail'
+                WHEN cn.EmailTrangthai = 'Đang gửi' THEN 'Đang gửi Gmail'
                 WHEN LOWER(TRIM(COALESCE(cn.Trangthaichungnhan, ''))) = 'đang gửi'
-                  THEN 'Đang gửi'
+                  THEN 'Đang xử lý'
                 ELSE 'Chưa cấp'
               END AS status
        FROM (
@@ -5586,6 +5769,7 @@ ensureAttendanceLocationColumns()
     await ensureEventStatusColumn();
     await ensureEventImageColumn();
     await ensureEventCertificateColumn();
+    await ensureCertificateEmailColumns();
     await ensurePasswordResetChallengesTable();
     await ensureAttendanceDeviceClaimsTable();
     await ensureEventAttendanceTable();

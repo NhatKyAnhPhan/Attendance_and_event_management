@@ -69,6 +69,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
   bool _sendingCertificates = false;
+  bool _issuingCertificatesInApp = false;
   DateTimeRange? _dateRange;
   final Set<String> _importingEventIds = {};
   final Map<String, String> _activeQrSessionIds = {};
@@ -765,6 +766,22 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               event.certificateEnabled &&
               (event.isClosed || !event.endTime.isAfter(DateTime.now())))
             FilledButton.icon(
+              onPressed: _issuingCertificatesInApp
+                  ? null
+                  : () => _confirmIssueCertificatesInApp(
+                      dialogContext,
+                      controller,
+                      event,
+                    ),
+              icon: const Icon(Icons.workspace_premium_outlined),
+              label: Text(
+                _issuingCertificatesInApp ? 'Đang cấp...' : 'Cấp qua app',
+              ),
+            ),
+          if (Get.find<AuthController>().canManageEvents &&
+              event.certificateEnabled &&
+              (event.isClosed || !event.endTime.isAfter(DateTime.now())))
+            FilledButton.icon(
               onPressed: _sendingCertificates
                   ? null
                   : () => _confirmSendCertificates(
@@ -1165,6 +1182,71 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       );
     } finally {
       if (mounted) setState(() => _sendingCertificates = false);
+    }
+  }
+
+  Future<void> _confirmIssueCertificatesInApp(
+    BuildContext context,
+    OrganizerEventsController controller,
+    OrganizerEventSummary event,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Cấp chứng nhận trong ứng dụng?'),
+        content: Text(
+          'Chứng nhận sẽ xuất hiện trong mục chứng nhận của sinh viên thuộc sự kiện “${event.name}”. Email sẽ không được gửi.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Cấp qua app'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    setState(() => _issuingCertificatesInApp = true);
+    try {
+      final result = await controller.issueCertificatesInApp(event.id);
+      if (!context.mounted) return;
+      final issued = result['issued'] as int? ?? 0;
+      final skipped = result['skipped'] as int? ?? 0;
+      final failures = result['failures'] is List
+          ? (result['failures'] as List)
+                .whereType<Map>()
+                .map((item) => item['message']?.toString() ?? '')
+                .where((message) => message.isNotEmpty)
+                .toList()
+          : const <String>[];
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Kết quả cấp trong app'),
+          content: Text(
+            'Đã cấp: $issued\nĐã có trước đó: $skipped\nThất bại: ${failures.length}${failures.isEmpty ? '' : '\n${failures.join('\n')}'}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+      await controller.load();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không cấp được chứng nhận trong app: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _issuingCertificatesInApp = false);
     }
   }
 

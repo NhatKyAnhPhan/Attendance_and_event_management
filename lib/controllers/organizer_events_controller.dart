@@ -180,4 +180,8 @@ class OrganizerEventsController extends GetxController {
   Future<Map<String, dynamic>> sendCertificates(String eventId) {
     return _repository.sendEventCertificates(eventId);
   }
+
+  Future<Map<String, dynamic>> issueCertificatesInApp(String eventId) {
+    return _repository.issueEventCertificates(eventId);
+  }
 }

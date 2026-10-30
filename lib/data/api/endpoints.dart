@@ -34,6 +34,8 @@ class ApiEndpoints {
       '${Uri.encodeComponent(sessionId)}/close';
   static String sendEventCertificates(String eventId) =>
       '/api/organizer/events/${Uri.encodeComponent(eventId)}/certificates/send';
+  static String issueEventCertificates(String eventId) =>
+      '/api/organizer/events/${Uri.encodeComponent(eventId)}/certificates/issue';
   static const reports = '/api/reports';
   static const attendanceReport = '/api/reports/attendance';
   static const attendanceReportClasses = '$attendanceReport/classes';
