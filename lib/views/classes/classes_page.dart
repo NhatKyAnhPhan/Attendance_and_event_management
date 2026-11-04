@@ -28,7 +28,9 @@ class _ClassesPageState extends State<ClassesPage> {
   @override
   Widget build(BuildContext context) {
     final controller = Get.put(AdminClassesController());
-    final canManage = Get.find<AuthController>().role.value == Role.admin;
+    final role = Get.find<AuthController>().role.value;
+    final canManage = role == Role.admin;
+    final canImportStudents = canManage || role == Role.lecturer;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final c = AppColors.of(isDark);
 
@@ -56,14 +58,38 @@ class _ClassesPageState extends State<ClassesPage> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Expanded(
+                SizedBox(
+                  width: MediaQuery.sizeOf(context).width > 800
+                      ? MediaQuery.sizeOf(context).width - 360
+                      : MediaQuery.sizeOf(context).width - 56,
                   child: Text(
                     'Quản lý lớp học',
                     style: AppTextStyles.displayLg(c.foreground),
                   ),
                 ),
+                if (canImportStudents)
+                  OutlinedButton.icon(
+                    onPressed: _importingClassIds.contains('__excel__')
+                        ? null
+                        : () => _importRosterFromExcel(context, controller),
+                    icon: _importingClassIds.contains('__excel__')
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload_file_outlined),
+                    label: Text(
+                      _importingClassIds.contains('__excel__')
+                          ? 'Đang nhập...'
+                          : 'Thêm sinh viên Excel',
+                    ),
+                  ),
                 if (canManage)
                   FilledButton.icon(
                     onPressed: () => _showClassDialog(context, controller),
@@ -234,7 +260,7 @@ class _ClassesPageState extends State<ClassesPage> {
                                   ),
                                 ),
                               )
-                            else if (canManage)
+                            else if (canImportStudents || canManage)
                               PopupMenuButton<String>(
                                 tooltip: 'Thao tác lớp',
                                 onSelected: (action) {
@@ -440,6 +466,131 @@ class _ClassesPageState extends State<ClassesPage> {
           .showSnackBar(SnackBar(content: Text(exception.toString())));
     } finally {
       if (mounted) setState(() => _importingClassIds.remove(item.id));
+    }
+  }
+
+  Future<void> _importRosterFromExcel(
+    BuildContext context,
+    AdminClassesController controller,
+  ) async {
+    FilePickerResult? selection;
+    try {
+      selection = await FilePicker.pickFiles(
+        dialogTitle: 'Chọn file Excel có cột MSSV và MaLop',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        allowMultiple: false,
+        withData: true,
+      );
+    } on Exception catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể mở file Excel: $exception')),
+      );
+      return;
+    }
+    if (selection == null || selection.files.isEmpty || !context.mounted) {
+      return;
+    }
+
+    final bytes = selection.files.single.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không đọc được nội dung file Excel.')),
+      );
+      return;
+    }
+
+    setState(() => _importingClassIds.add('__excel__'));
+    try {
+      final groups = extractStudentRosterGroups(
+        decodeExcelWorkbook(bytes),
+        targetIdHeaders: const {'MaLop', 'Mã lớp', 'classId', 'classCode'},
+        targetNameHeaders: const {'TenLop', 'Tên lớp', 'className'},
+      );
+      var importedCount = 0;
+      var alreadyMemberCount = 0;
+      var unknownStudentCount = 0;
+      var duplicateRows = 0;
+      final skipped = <String>[];
+
+      for (final group in groups) {
+        final matchingClasses = controller.items.where(
+          (item) =>
+              item.id.toUpperCase() == group.targetId.toUpperCase() ||
+              item.code.toUpperCase() == group.targetId.toUpperCase(),
+        );
+        if (matchingClasses.isEmpty) {
+          skipped.add(
+            '${group.targetName.isEmpty ? group.targetId : group.targetName} '
+            '(${group.targetId}): không có trong danh sách lớp bạn phụ trách.',
+          );
+          continue;
+        }
+        final item = matchingClasses.first;
+        if (item.isArchived) {
+          skipped.add('${item.name} (${item.code}): lớp đã đóng/lưu trữ.');
+          continue;
+        }
+        if (group.studentIds.length > 2000) {
+          skipped.add(
+            '${item.name} (${item.code}): vượt giới hạn 2.000 sinh viên.',
+          );
+          continue;
+        }
+
+        try {
+          final result = await controller.importStudents(
+            classId: item.id,
+            studentIds: group.studentIds,
+          );
+          importedCount += result.importedCount;
+          alreadyMemberCount += result.alreadyMemberCount;
+          unknownStudentCount += result.unknownStudentIds.length;
+          duplicateRows += group.duplicateRows;
+        } catch (exception) {
+          skipped.add('${item.name} (${item.code}): $exception');
+        }
+      }
+
+      await controller.load();
+      if (!context.mounted) return;
+      final details = <String>[
+        'Đã thêm: $importedCount sinh viên.',
+        'Đã có trong lớp: $alreadyMemberCount sinh viên.',
+        if (unknownStudentCount > 0)
+          'Không tìm thấy $unknownStudentCount mã sinh viên trong hệ thống.',
+        if (duplicateRows > 0)
+          'Mã sinh viên trùng trong file: $duplicateRows dòng.',
+        if (skipped.isNotEmpty) ...[
+          'Không nhập được ${skipped.length} lớp:',
+          ...skipped.take(10),
+          if (skipped.length > 10) '... và ${skipped.length - 10} lớp khác.',
+        ],
+      ];
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Kết quả nhập sinh viên'),
+          content: SingleChildScrollView(child: Text(details.join('\n'))),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+    } on FormatException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+    } catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(exception.toString())));
+    } finally {
+      if (mounted) setState(() => _importingClassIds.remove('__excel__'));
     }
   }
 

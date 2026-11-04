@@ -70,6 +70,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   bool _showArchived = false;
   bool _sendingCertificates = false;
   bool _issuingCertificatesInApp = false;
+  bool _importingEventsFromExcel = false;
+  bool _importingStudentsFromExcel = false;
   DateTimeRange? _dateRange;
   final Set<String> _importingEventIds = {};
   final Map<String, String> _activeQrSessionIds = {};
@@ -88,6 +90,366 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       setState(() => _dateRange = selected);
     }
   }
+
+  Future<void> _importEventsFromExcel(
+    BuildContext context,
+    OrganizerEventsController controller,
+  ) async {
+    FilePickerResult? selection;
+    try {
+      selection = await FilePicker.pickFiles(
+        dialogTitle: 'Chọn file Excel danh sách sự kiện',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        allowMultiple: false,
+        withData: true,
+      );
+    } on Exception catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể mở file Excel: $exception')),
+      );
+      return;
+    }
+    if (selection == null || selection.files.isEmpty || !context.mounted) {
+      return;
+    }
+    final bytes = selection.files.single.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không đọc được nội dung file Excel.')),
+      );
+      return;
+    }
+
+    try {
+      final events = extractEventsFromWorkbook(decodeExcelWorkbook(bytes));
+      await controller.loadUnits();
+      if (!context.mounted) return;
+      if (controller.unitsError.value.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(controller.unitsError.value)),
+        );
+        return;
+      }
+      if (controller.units.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tài khoản chưa được phân công đơn vị tổ chức.'),
+          ),
+        );
+        return;
+      }
+      final unitMappings = await _chooseEventUnits(context, events, controller);
+      if (unitMappings == null || !context.mounted) return;
+
+      setState(() => _importingEventsFromExcel = true);
+      var importedCount = 0;
+      var existingCount = 0;
+      final failures = <String>[];
+      for (final event in events) {
+        final normalizedName = _normalizeMatchText(event.name);
+        if (controller.items.any(
+          (existing) => _normalizeMatchText(existing.name) == normalizedName,
+        )) {
+          existingCount++;
+          continue;
+        }
+
+        final startTime = DateTime(
+          event.eventDate.year,
+          event.eventDate.month,
+          event.eventDate.day,
+        ).add(Duration(minutes: event.startMinutes ?? 9 * 60));
+        var endTime = event.endMinutes == null
+            ? startTime.add(const Duration(hours: 2))
+            : DateTime(
+                event.eventDate.year,
+                event.eventDate.month,
+                event.eventDate.day,
+              ).add(Duration(minutes: event.endMinutes!));
+        if (!endTime.isAfter(startTime)) {
+          endTime = endTime.add(const Duration(days: 1));
+        }
+
+        try {
+          await controller.createEvent(
+            name: event.name,
+            organizerId: unitMappings[event.organizerName]!,
+            startTime: startTime,
+            endTime: endTime,
+            location: event.location,
+            capacity: 2000,
+            certificateEnabled: false,
+            description: event.description,
+            benefits: const [],
+            rules: const [],
+            attendancePeriods: const [],
+            allowHistoricalImport: true,
+          );
+          importedCount++;
+        } catch (exception) {
+          failures.add('${event.name}: $exception');
+        }
+      }
+
+      if (!context.mounted) return;
+      final details = <String>[
+        'Đã thêm: $importedCount sự kiện.',
+        if (existingCount > 0) 'Đã có sẵn: $existingCount sự kiện.',
+        if (failures.isNotEmpty) ...[
+          'Không nhập được ${failures.length} sự kiện:',
+          ...failures.take(10),
+          if (failures.length > 10) '... và ${failures.length - 10} sự kiện khác.',
+        ],
+        'Giờ bắt đầu mặc định là 09:00; nếu thiếu giờ kết thúc, dùng thời lượng 2 giờ. '
+            'Sĩ số tối đa mặc định là 2.000.',
+      ];
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Kết quả nhập sự kiện'),
+          content: SingleChildScrollView(child: Text(details.join('\n\n'))),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+    } on FormatException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+    } catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(exception.toString())));
+    } finally {
+      if (mounted) setState(() => _importingEventsFromExcel = false);
+    }
+  }
+
+  Future<Map<String, String>?> _chooseEventUnits(
+    BuildContext context,
+    List<ExcelEventImportRow> events,
+    OrganizerEventsController controller,
+  ) {
+    final organizerNames = events
+        .map((event) => event.organizerName)
+        .toSet()
+        .toList();
+    final selectedUnits = <String, String?>{};
+    for (final name in organizerNames) {
+      final matches = controller.units
+          .where(
+            (unit) =>
+                _normalizeMatchText(unit.name) == _normalizeMatchText(name),
+          )
+          .toList();
+      selectedUnits[name] = matches.length == 1 ? matches.single.id : null;
+    }
+    var missingSelection = false;
+    return showDialog<Map<String, String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Chọn đơn vị tổ chức'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final name in organizerNames) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 12, bottom: 4),
+                        child: Text(name),
+                      ),
+                    ),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedUnits[name],
+                      decoration: const InputDecoration(
+                        labelText: 'Đơn vị trong hệ thống',
+                      ),
+                      items: [
+                        for (final unit in controller.units)
+                          DropdownMenuItem(
+                            value: unit.id,
+                            child: Text(unit.name),
+                          ),
+                      ],
+                      onChanged: (value) => setDialogState(() {
+                        selectedUnits[name] = value;
+                        missingSelection = false;
+                      }),
+                    ),
+                  ],
+                  if (missingSelection)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: Text(
+                        'Hãy chọn đơn vị tổ chức cho từng tên trong file.',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Hủy'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (selectedUnits.values.any((value) => value == null)) {
+                  setDialogState(() => missingSelection = true);
+                  return;
+                }
+                Navigator.pop(
+                  dialogContext,
+                  selectedUnits.map((key, value) => MapEntry(key, value!)),
+                );
+              },
+              child: const Text('Tiếp tục'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _importStudentRosterFromExcel(
+    BuildContext context,
+    OrganizerEventsController controller,
+  ) async {
+    FilePickerResult? selection;
+    try {
+      selection = await FilePicker.pickFiles(
+        dialogTitle: 'Chọn file Excel có cột MSSV và MaSuKien',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        allowMultiple: false,
+        withData: true,
+      );
+    } on Exception catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể mở file Excel: $exception')),
+      );
+      return;
+    }
+    if (selection == null || selection.files.isEmpty || !context.mounted) {
+      return;
+    }
+    final bytes = selection.files.single.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không đọc được nội dung file Excel.')),
+      );
+      return;
+    }
+
+    setState(() => _importingStudentsFromExcel = true);
+    try {
+      final groups = extractStudentRosterGroups(
+        decodeExcelWorkbook(bytes),
+        targetIdHeaders: const {
+          'MaSuKien',
+          'Mã sự kiện',
+          'eventId',
+          'eventCode',
+        },
+        targetNameHeaders: const {'TenSuKien', 'Tên sự kiện', 'eventName'},
+      );
+      var importedCount = 0;
+      var alreadyRegisteredCount = 0;
+      var unknownStudentCount = 0;
+      var duplicateRows = 0;
+      final skipped = <String>[];
+      for (final group in groups) {
+        final matches = controller.items.where(
+          (event) =>
+              event.id.toUpperCase() == group.targetId.toUpperCase() ||
+              (group.targetName.isNotEmpty &&
+                  _normalizeMatchText(event.name) ==
+                      _normalizeMatchText(group.targetName)),
+        );
+        if (matches.isEmpty) {
+          skipped.add(
+            '${group.targetName.isEmpty ? group.targetId : group.targetName} '
+            '(${group.targetId}): chưa có sự kiện tương ứng trong hệ thống.',
+          );
+          continue;
+        }
+        final event = matches.first;
+        if (group.studentIds.length > 2000) {
+          skipped.add('${event.name}: vượt giới hạn 2.000 sinh viên.');
+          continue;
+        }
+        try {
+          final result = await controller.importEventStudents(
+            eventId: event.id,
+            studentIds: group.studentIds,
+            allowHistoricalImport: true,
+          );
+          importedCount += result.importedCount;
+          alreadyRegisteredCount += result.alreadyRegisteredCount;
+          unknownStudentCount += result.unknownStudentIds.length;
+          duplicateRows += group.duplicateRows;
+        } catch (exception) {
+          skipped.add('${event.name}: $exception');
+        }
+      }
+      await controller.load();
+      if (!context.mounted) return;
+      final details = <String>[
+        'Đã thêm: $importedCount sinh viên.',
+        'Đã đăng ký trước đó: $alreadyRegisteredCount sinh viên.',
+        if (unknownStudentCount > 0)
+          'Không tìm thấy $unknownStudentCount mã sinh viên trong hệ thống.',
+        if (duplicateRows > 0)
+          'Mã sinh viên trùng trong file: $duplicateRows dòng.',
+        if (skipped.isNotEmpty) ...[
+          'Không nhập được ${skipped.length} danh sách:',
+          ...skipped.take(10),
+          if (skipped.length > 10)
+            '... và ${skipped.length - 10} danh sách khác.',
+        ],
+      ];
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Kết quả nhập sinh viên'),
+          content: SingleChildScrollView(child: Text(details.join('\n'))),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+          ],
+        ),
+      );
+    } on FormatException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+    } catch (exception) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(exception.toString())));
+    } finally {
+      if (mounted) setState(() => _importingStudentsFromExcel = false);
+    }
+  }
+
+  String _normalizeMatchText(String value) =>
+      value.toLowerCase().trim().replaceAll(RegExp(r'\s+'), ' ');
 
   // Hiển thị danh sách sự kiện cùng các thao tác theo vai trò.
   @override
@@ -142,26 +504,78 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Expanded(
+                SizedBox(
+                  width: MediaQuery.sizeOf(context).width > 800
+                      ? MediaQuery.sizeOf(context).width - 560
+                      : MediaQuery.sizeOf(context).width - 56,
                   child: Text(
                     'Quản lý sự kiện',
                     style: AppTextStyles.displayLg(colors.foreground),
                   ),
                 ),
                 if (canManageEvents)
+                  OutlinedButton.icon(
+                    onPressed: _importingEventsFromExcel ||
+                            _importingStudentsFromExcel
+                        ? null
+                        : () => _importEventsFromExcel(context, controller),
+                    icon: _importingEventsFromExcel
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload_file_outlined),
+                    label: Text(
+                      _importingEventsFromExcel
+                          ? 'Đang nhập sự kiện...'
+                          : 'Thêm sự kiện Excel',
+                    ),
+                  ),
+                if (canManageEvents)
+                  OutlinedButton.icon(
+                    onPressed: _importingStudentsFromExcel ||
+                            _importingEventsFromExcel
+                        ? null
+                        : () => _importStudentRosterFromExcel(
+                            context,
+                            controller,
+                          ),
+                    icon: _importingStudentsFromExcel
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.group_add_outlined),
+                    label: Text(
+                      _importingStudentsFromExcel
+                          ? 'Đang nhập sinh viên...'
+                          : 'Thêm sinh viên Excel',
+                    ),
+                  ),
+                if (canManageEvents)
                   FilledButton.icon(
-                    onPressed: () async {
-                      await controller.loadUnits();
-                      if (!context.mounted) return;
-                      if (controller.unitsError.value.isNotEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(controller.unitsError.value)),
-                        );
-                      }
-                      await _showEventDialog(context, controller);
-                    },
+                    onPressed: _importingEventsFromExcel ||
+                            _importingStudentsFromExcel
+                        ? null
+                        : () async {
+                            await controller.loadUnits();
+                            if (!context.mounted) return;
+                            if (controller.unitsError.value.isNotEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(controller.unitsError.value),
+                                ),
+                              );
+                            }
+                            await _showEventDialog(context, controller);
+                          },
                     icon: const Icon(Icons.add),
                     label: const Text('Tạo sự kiện'),
                   ),

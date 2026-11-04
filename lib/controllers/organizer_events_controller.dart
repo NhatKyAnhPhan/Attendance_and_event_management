@@ -79,10 +79,12 @@ class OrganizerEventsController extends GetxController {
   Future<EventStudentImportResult> importEventStudents({
     required String eventId,
     required List<String> studentIds,
+    bool allowHistoricalImport = false,
   }) {
     return _repository.importEventStudents(
       eventId: eventId,
       studentIds: studentIds,
+      allowHistoricalImport: allowHistoricalImport,
     );
   }
 
@@ -99,6 +101,7 @@ class OrganizerEventsController extends GetxController {
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
     required List<Map<String, dynamic>> attendancePeriods,
+    bool allowHistoricalImport = false,
   }) async {
     await _repository.createOrganizerEvent(
       name: name,
@@ -112,6 +115,7 @@ class OrganizerEventsController extends GetxController {
       benefits: benefits,
       rules: rules,
       attendancePeriods: attendancePeriods,
+      allowHistoricalImport: allowHistoricalImport,
     );
     await load();
   }

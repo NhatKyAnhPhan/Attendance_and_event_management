@@ -44,10 +44,14 @@ class EventRepository {
   Future<EventStudentImportResult> importEventStudents({
     required String eventId,
     required List<String> studentIds,
+    bool allowHistoricalImport = false,
   }) async {
     final body = await _client.post(
       ApiEndpoints.importEventStudents(eventId),
-      data: {'studentIds': studentIds},
+      data: {
+        'studentIds': studentIds,
+        if (allowHistoricalImport) 'allowHistoricalImport': true,
+      },
     );
     return EventStudentImportResult.fromJson(body);
   }
@@ -135,6 +139,7 @@ class EventRepository {
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
     required List<Map<String, dynamic>> attendancePeriods,
+    bool allowHistoricalImport = false,
   }) async {
     await _client.post(
       '/api/organizer/events',
@@ -150,6 +155,7 @@ class EventRepository {
         'benefits': benefits,
         'rules': rules,
         'attendancePeriods': attendancePeriods,
+        if (allowHistoricalImport) 'allowHistoricalImport': true,
       },
     );
   }

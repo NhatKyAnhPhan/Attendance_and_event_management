@@ -4560,6 +4560,7 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
 
 app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const { studentIds } = request.body || {};
+  const allowHistoricalImport = request.body?.allowHistoricalImport === true;
   if (!Array.isArray(studentIds) || studentIds.length === 0 || studentIds.length > 2000) {
     return response.status(400).json({
       message: 'Danh sách mã sinh viên phải có từ 1 đến 2.000 mã.',
@@ -4596,7 +4597,8 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
       await connection.rollback();
       return response.status(403).json({ message: 'Bạn không phụ trách sự kiện này.' });
     }
-    if (event.status === 'Đã đóng' || new Date(event.endTime) <= new Date()) {
+    if (event.status === 'Đã đóng'
+        || (!allowHistoricalImport && new Date(event.endTime) <= new Date())) {
       await connection.rollback();
       return response.status(409).json({
         message: 'Sự kiện đã đóng hoặc đã kết thúc, không thể nhập sinh viên.',
@@ -4690,6 +4692,7 @@ app.get('/api/organizer/units', requireAuth, requireRole(...eventManagerRoles), 
 app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles), async (request, response) => {
   const body = request.body || {};
   const { name, organizerId, startTime, endTime, location, capacity } = body;
+  const allowHistoricalImport = body.allowHistoricalImport === true;
   if (body.certificateEnabled !== undefined
       && typeof body.certificateEnabled !== 'boolean') {
     return response.status(400).json({
@@ -4710,7 +4713,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
 
   if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
       || parsedCapacity <= 0
-      || !isValidEventTimeRange(parsedStart, parsedEnd, { requireNonPastStart: true })) {
+      || !isValidEventTimeRange(parsedStart, parsedEnd, {
+        requireNonPastStart: !allowHistoricalImport,
+      })) {
     return response.status(400).json({
       message: 'Thời gian bắt đầu không được ở quá khứ và thời gian kết thúc phải sau thời gian bắt đầu.',
     });
@@ -5387,7 +5392,7 @@ app.get('/api/admin/classes/:classId/students', requireAuth, requireRole('Quản
 });
 
 // Nhập danh sách sinh viên đã có trong hệ thống vào một lớp học phần.
-app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer'), async (request, response) => {
   const { studentIds } = request.body || {};
   if (!Array.isArray(studentIds) || studentIds.length === 0 || studentIds.length > 2000) {
     return response.status(400).json({
@@ -5413,7 +5418,7 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
     await connection.beginTransaction();
 
     const [[classInfo]] = await connection.execute(
-      `SELECT Malop, Trangthailop AS status,
+      `SELECT Malop, Magv AS lecturerId, Trangthailop AS status,
               (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
        FROM LopHocPhan WHERE Malop = ? FOR UPDATE`,
       [request.params.classId],
@@ -5421,6 +5426,13 @@ app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole
     if (!classInfo) {
       await connection.rollback();
       return response.status(404).json({ message: 'Không tìm thấy lớp.' });
+    }
+    if (!['Quản trị viên', 'admin'].includes(request.auth.role)
+        && String(classInfo.lecturerId) !== String(request.auth.sub)) {
+      await connection.rollback();
+      return response.status(403).json({
+        message: 'Bạn chỉ được thêm sinh viên vào lớp mình phụ trách.',
+      });
     }
     if (classInfo.status === 'Đã đóng' || Number(classInfo.isArchived)) {
       await connection.rollback();
