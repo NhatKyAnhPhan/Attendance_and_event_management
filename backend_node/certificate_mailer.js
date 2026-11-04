@@ -122,6 +122,7 @@ async function createCertificatePdf({
   issuedAt,
   verificationUrl,
   isSample = false,
+  signatureImage = null,
 }) {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Không tìm thấy mẫu chứng nhận: ${templatePath}`);
@@ -245,14 +246,13 @@ async function createCertificatePdf({
     { width: 260, align: 'right', lineBreak: false, ellipsis: true },
   );
 
-  document
-    .fontSize(11)
-    .fillColor('#164b85')
-    .text('ĐÃ KÝ', 627, 502, {
-      width: 136,
+  if (signatureImage) {
+    document.image(signatureImage, 627, 490, {
+      fit: [136, 36],
       align: 'center',
-      lineBreak: false,
+      valign: 'center',
     });
+  }
 
   if (isSample) {
     document

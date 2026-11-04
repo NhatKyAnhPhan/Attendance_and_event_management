@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Activity, Award, BarChart3, Bell, BookOpen, Building2, CalendarDays, Download,
+  Activity, Award, BarChart3, Bell, BookOpen, Building2, CalendarDays, Download, Eye,
   ChevronLeft, ChevronRight, ClipboardCheck, Home, LogOut,
-  Menu, MessageSquare, Moon, Plus, RefreshCw, Search, Settings, ShieldCheck,
+  Menu, MessageSquare, Moon, Plus, RefreshCw, RotateCcw, Save, Search, Settings, ShieldCheck,
   QrCode, Sun, Trash2, Upload, Users, X,
 } from 'lucide-react';
 import { api } from './api.js';
@@ -134,6 +134,7 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
   const [detailError, setDetailError] = useState('');
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [certificateTemplateOpen, setCertificateTemplateOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!config) return;
@@ -193,6 +194,9 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
   };
   const rows = itemsOf(data).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
   const canImportAdminMasterData = isAdminRole(role) && ['users', 'orgUnits'].includes(page);
+  const certificateTemplateAction = page === 'certificates'
+    ? <button className="rp-secondary-button" onClick={() => setCertificateTemplateOpen(true)}><Eye size={16} /> Xem mẫu</button>
+    : null;
   return (
     <>
       <PageTitle
@@ -202,7 +206,7 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
         loading={loading}
         action={canImportAdminMasterData
           ? <AdminMasterDataImport kind={page === 'orgUnits' ? 'units' : 'users'} onImported={load} showNotice={showNotice} />
-          : null}
+          : certificateTemplateAction}
       />
       {page !== 'notifications' && <SearchBox value={query} onChange={setQuery} placeholder={`Tìm trong ${(titles[page] || '').toLowerCase()}...`} />}
       {error ? <ErrorPanel message={error} onRetry={load} /> : loading ? <LoadingPanel /> : (
@@ -211,6 +215,7 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
             : page === 'certificates' ? <StaffCertificateTable items={rows} showNotice={showNotice} />
             : <GenericTable page={page} items={rows} />
       )}
+      {certificateTemplateOpen && <CertificateSignatureDialog onClose={() => setCertificateTemplateOpen(false)} showNotice={showNotice} />}
     </>
   );
 }
@@ -2434,6 +2439,215 @@ function StaffCertificateTable({ items, showNotice }) {
     }
   };
   return <>{items.length ? <div className="rp-table-wrap"><table className="rp-table"><thead><tr>{['Mã chứng nhận', 'Sinh viên', 'Sự kiện', 'Ngày cấp', 'Trạng thái', ''].map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>{items.map((item) => <tr key={item.id} className="rp-clickable-row" onClick={() => openDetails(item)}><td>{item.id}</td><td>{item.studentName || item.studentId || '—'}</td><td>{item.eventName || '—'}</td><td>{formatDate(item.issuedAt)}</td><td>{item.status || '—'}</td><td><button className="rp-secondary-button" onClick={(event) => { event.stopPropagation(); download(item); }} disabled={downloading === item.id}><Download size={15} />{downloading === item.id ? 'Đang tải...' : 'Tải PDF'}</button></td></tr>)}</tbody></table></div> : <EmptyPanel title="Chưa có chứng nhận" message="Danh sách chứng nhận sẽ hiển thị khi có dữ liệu." />}{selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal rp-certificate-modal" role="dialog" aria-modal="true"><header><div><h2>Chi tiết chứng nhận</h2><p>{selected.studentName || selected.studentId} · {selected.eventName}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header><div className="rp-detail-grid"><div><small>Mã chứng nhận</small><strong>{selected.id}</strong></div><div><small>Ngày cấp</small><strong>{formatDate(selected.issuedAt)}</strong></div><div><small>Trạng thái</small><strong>{selected.status || 'Đã cấp'}</strong></div></div>{previewLoading ? <LoadingPanel /> : previewUrl ? <iframe className="rp-certificate-preview" src={previewUrl} title={`Chứng nhận ${selected.id}`} /> : <ErrorPanel message="Không thể hiển thị chứng nhận." />}</section></div>}</>;
+}
+
+function CertificateSignatureDialog({ onClose, showNotice }) {
+  const [signatureData, setSignatureData] = useState('');
+  const [draftSignature, setDraftSignature] = useState('');
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [previewError, setPreviewError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const canvasRef = useRef(null);
+  const fileRef = useRef(null);
+  const previewUrlRef = useRef('');
+  const drawingRef = useRef(false);
+
+  const replacePreview = (blob) => {
+    const nextUrl = URL.createObjectURL(blob);
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    previewUrlRef.current = nextUrl;
+    setPreviewUrl(nextUrl);
+  };
+
+  const refreshPreview = async () => {
+    setPreviewLoading(true);
+    setPreviewError('');
+    try {
+      const blob = await api('/api/staff/certificates/template/preview', { responseType: 'blob' });
+      replacePreview(blob);
+    } catch (exception) {
+      const message = exception instanceof Error ? exception.message : 'Không thể xem mẫu chứng nhận.';
+      setPreviewError(message);
+      showNotice('error', message);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const [settings, blob] = await Promise.all([
+          api('/api/staff/certificate-signature'),
+          api('/api/staff/certificates/template/preview', { responseType: 'blob' }),
+        ]);
+        if (!active) return;
+        const savedSignature = settings.signatureData || '';
+        setSignatureData(savedSignature);
+        setDraftSignature(savedSignature);
+        replacePreview(blob);
+      } catch (exception) {
+        if (active) {
+          setPreviewError(exception instanceof Error ? exception.message : 'Không thể tải mẫu chứng nhận.');
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, []);
+
+  const uploadSignature = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      showNotice('error', 'Vui lòng chọn ảnh PNG hoặc JPEG.');
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      showNotice('error', 'Ảnh chữ ký không được vượt quá 1 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => showNotice('error', 'Không thể đọc tệp ảnh chữ ký.');
+    reader.onload = () => {
+      if (typeof reader.result === 'string') setDraftSignature(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const pointOnCanvas = (event) => {
+    const canvas = canvasRef.current;
+    const bounds = canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - bounds.left) * (canvas.width / bounds.width),
+      y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
+    };
+  };
+
+  const startDrawing = (event) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    event.preventDefault();
+    canvas.setPointerCapture(event.pointerId);
+    const context = canvas.getContext('2d');
+    const point = pointOnCanvas(event);
+    context.strokeStyle = '#173c6b';
+    context.lineWidth = 4;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.fillStyle = '#173c6b';
+    context.arc(point.x, point.y, 2, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+    drawingRef.current = true;
+    setDraftSignature('');
+  };
+
+  const drawSignature = (event) => {
+    if (!drawingRef.current) return;
+    const context = canvasRef.current?.getContext('2d');
+    if (!context) return;
+    const point = pointOnCanvas(event);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+  };
+
+  const finishDrawing = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    setDraftSignature(canvasRef.current.toDataURL('image/png'));
+  };
+
+  const clearDrawing = () => {
+    const canvas = canvasRef.current;
+    if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    setDraftSignature('');
+  };
+
+  const saveSignature = async () => {
+    if (!draftSignature) {
+      showNotice('error', 'Hãy tải ảnh lên hoặc vẽ chữ ký trước khi xác nhận.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api('/api/staff/certificate-signature', {
+        method: 'PUT',
+        body: { imageData: draftSignature },
+      });
+      setSignatureData(draftSignature);
+      await refreshPreview();
+      showNotice('success', 'Đã xác nhận chữ ký dùng làm mẫu chứng nhận.');
+    } catch (exception) {
+      showNotice('error', exception instanceof Error ? exception.message : 'Không thể lưu chữ ký mẫu.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetSignature = async () => {
+    if (!signatureData || !window.confirm('Đặt lại và xóa chữ ký mẫu hiện tại?')) return;
+    setSaving(true);
+    try {
+      await api('/api/staff/certificate-signature', { method: 'DELETE' });
+      setSignatureData('');
+      setDraftSignature('');
+      clearDrawing();
+      await refreshPreview();
+      showNotice('success', 'Đã đặt lại chữ ký mẫu.');
+    } catch (exception) {
+      showNotice('error', exception instanceof Error ? exception.message : 'Không thể đặt lại chữ ký mẫu.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="rp-modal rp-template-modal" role="dialog" aria-modal="true" aria-labelledby="certificate-template-title">
+      <header>
+        <div><h2 id="certificate-template-title">Mẫu chứng nhận</h2><p>Xem trước chứng nhận và thiết lập chữ ký trưởng khoa cho các lần cấp sau.</p></div>
+        <button className="rp-icon-button" onClick={onClose} aria-label="Đóng"><X size={18} /></button>
+      </header>
+      {previewLoading || loading ? <LoadingPanel /> : previewError ? <ErrorPanel message={previewError} onRetry={refreshPreview} /> : previewUrl && <iframe className="rp-certificate-preview rp-template-preview" src={previewUrl} title="Mẫu chứng nhận" />}
+      <section className="rp-signature-editor">
+        <div className="rp-signature-heading">
+          <div><h3>Chữ ký trưởng khoa</h3><p>{signatureData ? 'Đã có chữ ký mẫu. Tải ảnh mới hoặc vẽ để thay thế.' : 'Chưa thiết lập chữ ký mẫu.'}</p></div>
+          {draftSignature && <img className="rp-signature-current" src={draftSignature} alt="Chữ ký đang chọn" />}
+        </div>
+        <div className="rp-signature-actions">
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg" hidden onChange={uploadSignature} />
+          <button className="rp-secondary-button" onClick={() => fileRef.current?.click()}><Upload size={15} /> Tải ảnh chữ ký</button>
+          <button className="rp-secondary-button" onClick={clearDrawing}><RotateCcw size={15} /> Xóa nét vẽ</button>
+        </div>
+        <canvas
+          ref={canvasRef}
+          className="rp-signature-canvas"
+          width={680}
+          height={150}
+          aria-label="Vùng vẽ chữ ký"
+          onPointerDown={startDrawing}
+          onPointerMove={drawSignature}
+          onPointerUp={finishDrawing}
+          onPointerCancel={finishDrawing}
+        />
+        <p className="rp-signature-help">Vẽ chữ ký trong khung hoặc tải ảnh PNG/JPEG (tối đa 1 MB), sau đó xác nhận để áp dụng cho chứng nhận mới.</p>
+        <footer className="rp-signature-footer">
+          <button className="rp-secondary-button" onClick={resetSignature} disabled={!signatureData || saving}><RotateCcw size={15} /> Đặt lại chữ ký</button>
+          <button className="rp-secondary-button rp-signature-save" onClick={saveSignature} disabled={!draftSignature || saving}><Save size={15} />{saving ? 'Đang lưu...' : 'Xác nhận dùng làm mẫu'}</button>
+        </footer>
+      </section>
+    </section>
+  </div>;
 }
 
 function DataTable({ items, columns }) {

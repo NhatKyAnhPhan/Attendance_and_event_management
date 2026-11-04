@@ -471,6 +471,19 @@
 .rp-clickable-row { cursor: pointer; }
 .rp-clickable-row:hover { background: color-mix(in srgb, var(--rp-primary) 7%, var(--rp-card)); }
 .rp-certificate-preview { display: block; width: 100%; height: min(68vh, 760px); margin-top: 14px; border: 1px solid var(--rp-border); border-radius: 10px; background: #f8fafc; }
+.rp-template-modal { width: min(100%, 1040px); }
+.rp-template-preview { height: min(42vh, 480px); margin-top: 0; }
+.rp-signature-editor { display: grid; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--rp-border); }
+.rp-signature-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rp-signature-heading h3 { margin: 0; font-family: Nunito, sans-serif; font-size: 15px; }
+.rp-signature-heading p,.rp-signature-help { margin: 4px 0 0; color: var(--rp-muted); font-size: 12px; line-height: 1.5; }
+.rp-signature-current { width: 145px; height: 54px; object-fit: contain; border: 1px solid var(--rp-border); border-radius: 7px; background: #fff; }
+.rp-signature-actions,.rp-signature-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rp-signature-canvas { display: block; width: 100%; height: auto; border: 1px dashed var(--rp-border); border-radius: 8px; background: #fff; cursor: crosshair; touch-action: none; }
+.rp-signature-help { margin: -5px 0 0; }
+.rp-signature-footer { justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--rp-border); }
+.rp-signature-save { border-color: var(--rp-primary); background: var(--rp-primary); color: #fff; }
+.rp-signature-save:hover:not(:disabled) { background: color-mix(in srgb, var(--rp-primary) 88%, #000); color: #fff; }
 .rp-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0; }
 .rp-detail-grid > div { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--rp-border); border-radius: 9px; background: var(--rp-card); }
 .rp-detail-grid small { color: var(--rp-muted); font-size: 12px; }
@@ -521,6 +534,10 @@
   .rp-period-row > input:first-child { grid-column: 1 / -1; }
   .rp-modal-backdrop { padding: 10px; }
   .rp-modal { max-height: 92vh; padding: 14px; }
+  .rp-template-preview { height: 34vh; }
+  .rp-signature-heading { align-items: flex-start; }
+  .rp-signature-current { width: 100px; height: 46px; }
+  .rp-signature-footer .rp-secondary-button { flex: 1 1 150px; }
   .rp-event-detail-cover { min-height: 120px; }
   .rp-detail-intro { padding: 12px; }
   .rp-inline-actions { align-items: stretch; }

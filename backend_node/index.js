@@ -94,7 +94,7 @@ function createCertificatePdfForRequest(request, certificate) {
   const verificationUrl =
     `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificate.certificateId)}`;
 
-  return createCertificatePdf({
+  return getCertificateSignatureImage().then((signatureImage) => createCertificatePdf({
     studentName: certificate.studentName,
     studentId: certificate.studentId,
     eventName: certificate.eventName,
@@ -107,7 +107,43 @@ function createCertificatePdfForRequest(request, certificate) {
     isSample: String(certificate.content || '').startsWith(
       '[MẪU KIỂM THỬ]',
     ),
-  });
+    signatureImage,
+  }));
+}
+
+async function getCertificateSignatureImage() {
+  const [[settings]] = await pool.query(
+    'SELECT signature_image FROM certificate_signature_settings WHERE setting_id = 1',
+  );
+  return settings?.signature_image ? Buffer.from(settings.signature_image) : null;
+}
+
+function decodeCertificateSignature(imageData) {
+  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+    String(imageData || ''),
+  );
+  if (!match) {
+    throw new Error('Chữ ký phải là ảnh PNG hoặc JPEG hợp lệ.');
+  }
+  const image = Buffer.from(match[2], 'base64');
+  if (
+    image.length === 0
+    || image.length > 1024 * 1024
+    || image.toString('base64') !== match[2]
+  ) {
+    throw new Error('Ảnh chữ ký không hợp lệ hoặc vượt quá 1 MB.');
+  }
+  const isPng = match[1] === 'png'
+    && image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = match[1] === 'jpeg'
+    && image[0] === 0xff
+    && image[1] === 0xd8
+    && image[image.length - 2] === 0xff
+    && image[image.length - 1] === 0xd9;
+  if (!isPng && !isJpeg) {
+    throw new Error('Nội dung ảnh chữ ký không đúng định dạng PNG hoặc JPEG.');
+  }
+  return image;
 }
 const passwordResetHandlers = createPasswordResetHandlers({
   pool,
@@ -556,6 +592,19 @@ async function ensureSystemParametersTable() {
         event_registration_lock_hours, qr_duration_minutes,
         attendance_threshold_percent)
      VALUES ('global', '', 100, 24, 15, 100)`,
+  );
+}
+
+async function ensureCertificateSignatureTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS certificate_signature_settings (
+       setting_id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+       signature_image MEDIUMBLOB NOT NULL,
+       signature_mime VARCHAR(16) NOT NULL,
+       updated_by VARCHAR(30) NULL,
+       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+         ON UPDATE CURRENT_TIMESTAMP
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
 }
 
@@ -4861,6 +4910,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           certificateId,
           issuedAt,
           verificationUrl,
+          signatureImage: await getCertificateSignatureImage(),
         });
         await mailTransport.sendMail({
           from: process.env.MAIL_FROM || process.env.SMTP_FROM,
@@ -5727,6 +5777,94 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
     return response.status(500).json({
       message: 'Không thể tải chứng nhận.',
     });
+  }
+});
+
+app.get('/api/staff/certificate-signature', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (_request, response) => {
+  try {
+    const [[settings]] = await pool.query(
+      'SELECT signature_image, signature_mime FROM certificate_signature_settings WHERE setting_id = 1',
+    );
+    const signatureData = settings
+      ? `data:${settings.signature_mime};base64,${Buffer.from(settings.signature_image).toString('base64')}`
+      : '';
+    return response.json({ signatureData });
+  } catch (error) {
+    console.error('Load certificate signature error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải chữ ký mẫu.' });
+  }
+});
+
+app.put('/api/staff/certificate-signature', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (request, response) => {
+  let signatureImage;
+  try {
+    signatureImage = decodeCertificateSignature(request.body?.imageData);
+  } catch (error) {
+    return response.status(400).json({ message: error.message });
+  }
+  const signatureMime = request.body.imageData.startsWith('data:image/jpeg;')
+    ? 'image/jpeg'
+    : 'image/png';
+  try {
+    await pool.execute(
+      `INSERT INTO certificate_signature_settings
+         (setting_id, signature_image, signature_mime, updated_by)
+       VALUES (1, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         signature_image = VALUES(signature_image),
+         signature_mime = VALUES(signature_mime),
+         updated_by = VALUES(updated_by)`,
+      [signatureImage, signatureMime, request.auth.sub],
+    );
+    return response.json({ message: 'Đã lưu chữ ký mẫu.' });
+  } catch (error) {
+    console.error('Save certificate signature error:', error.message);
+    return response.status(500).json({ message: 'Không thể lưu chữ ký mẫu.' });
+  }
+});
+
+app.delete('/api/staff/certificate-signature', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (_request, response) => {
+  try {
+    await pool.execute(
+      'DELETE FROM certificate_signature_settings WHERE setting_id = 1',
+    );
+    return response.json({ message: 'Đã đặt lại chữ ký mẫu.' });
+  } catch (error) {
+    console.error('Reset certificate signature error:', error.message);
+    return response.status(500).json({ message: 'Không thể đặt lại chữ ký mẫu.' });
+  }
+});
+
+app.get('/api/staff/certificates/template/preview', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (request, response) => {
+  try {
+    const now = new Date();
+    const publicBaseUrl = (
+      process.env.PUBLIC_API_BASE_URL
+      || `${request.protocol}://${request.get('host')}`
+    ).replace(/\/+$/, '');
+    const pdf = await createCertificatePdf({
+      studentName: 'Nguyễn Văn Mẫu',
+      studentId: '2000000000',
+      eventName: 'Tên sự kiện mẫu',
+      startTime: now,
+      endTime: now,
+      location: 'TP. Hồ Chí Minh',
+      certificateId: 'GCN-MAU',
+      issuedAt: now,
+      verificationUrl: `${publicBaseUrl}/api/certificates/GCN-MAU`,
+      isSample: true,
+      signatureImage: await getCertificateSignatureImage(),
+    });
+    response.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'inline; filename="mau-chung-nhan.pdf"',
+      'Content-Length': pdf.length,
+      'Cache-Control': 'private, no-store',
+    });
+    return response.send(pdf);
+  } catch (error) {
+    console.error('Preview certificate template error:', error.message);
+    return response.status(500).json({ message: 'Không thể xem mẫu chứng nhận.' });
   }
 });
 
@@ -6683,6 +6821,7 @@ app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị
 ensureAttendanceLocationColumns()
   .then(async () => {
     await ensureSystemParametersTable();
+    await ensureCertificateSignatureTable();
     await ensureEventStatusColumn();
     await ensureEventImageColumn();
     await ensureEventRegistrationFormColumn();

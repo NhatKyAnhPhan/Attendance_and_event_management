@@ -25,6 +25,11 @@ can preview an issued certificate as a PDF from the list; the preview endpoint
 only serves certificates for events within the staff member's unit (admins can
 preview all certificates).
 
+Admins and staff can open **Xem mẫu** from the certificate list to preview the
+certificate template, upload a PNG/JPEG signature, or draw one. Confirmed
+signatures are stored in the database and applied to certificates generated
+afterward. **Đặt lại chữ ký** removes the saved signature.
+
 For SMTP, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` and,
 when required by the provider, `SMTP_USER` / `SMTP_PASSWORD`. On hosts that
 block SMTP egress, use Resend's HTTPS API instead: set `MAIL_PROVIDER=resend`,
