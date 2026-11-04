@@ -269,7 +269,7 @@ async function createCertificatePdf({
         .font(fontPath)
         .fontSize(10)
         .fillColor('#10274d')
-        .text(name, x, 530, {
+        .text(name, x, 541, {
           width: 136,
           height: 14,
           align: 'center',

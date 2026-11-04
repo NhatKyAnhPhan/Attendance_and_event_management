@@ -2593,6 +2593,7 @@ function SignerSignatureEditor({ title, value, savedValue, onChange, disabled, s
   const canvasRef = useRef(null);
   const fileRef = useRef(null);
   const drawingRef = useRef(false);
+  const drawingHasStrokesRef = useRef(false);
   const [signatureColor, setSignatureColor] = useState('#173c6b');
 
   const pointOnCanvas = (event) => {
@@ -2622,6 +2623,7 @@ function SignerSignatureEditor({ title, value, savedValue, onChange, disabled, s
       if (typeof reader.result === 'string') {
         const canvas = canvasRef.current;
         if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        drawingHasStrokesRef.current = false;
         onChange({ ...value, imageData: reader.result });
       }
     };
@@ -2635,7 +2637,10 @@ function SignerSignatureEditor({ title, value, savedValue, onChange, disabled, s
     canvas.setPointerCapture(event.pointerId);
     const context = canvas.getContext('2d');
     const point = pointOnCanvas(event);
-    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!drawingHasStrokesRef.current) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      drawingHasStrokesRef.current = true;
+    }
     context.beginPath();
     context.strokeStyle = signatureColor;
     context.lineWidth = 4;
@@ -2669,6 +2674,7 @@ function SignerSignatureEditor({ title, value, savedValue, onChange, disabled, s
   const clearSignature = () => {
     const canvas = canvasRef.current;
     if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    drawingHasStrokesRef.current = false;
     onChange({ ...value, imageData: '' });
   };
 
