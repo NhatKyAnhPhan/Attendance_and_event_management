@@ -26,9 +26,14 @@ only serves certificates for events within the staff member's unit (admins can
 preview all certificates).
 
 Admins and staff can open **Xem mẫu** from the certificate list to preview the
-certificate template, upload a PNG/JPEG signature, or draw one. Confirmed
-signatures are stored in the database and applied to certificates generated
-afterward. **Đặt lại chữ ký** removes the saved signature.
+certificate template and independently upload or draw signatures and set names
+for both the organizer and dean. Confirmed signatures and names are applied to
+certificates generated afterward. Each issued certificate stores its own
+signature and name snapshots, so changing or resetting the template never
+changes previously issued PDFs. Existing certificates retain their saved dean
+signature during migration; the current template is used to initialize the
+organizer signature and signer names. **Đặt lại cả hai** removes both saved
+signatures and names without changing issued certificates.
 
 For SMTP, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` and,
 when required by the provider, `SMTP_USER` / `SMTP_PASSWORD`. On hosts that

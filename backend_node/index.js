@@ -94,7 +94,7 @@ function createCertificatePdfForRequest(request, certificate) {
   const verificationUrl =
     `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificate.certificateId)}`;
 
-  return getCertificateSignatureImage().then((signatureImage) => createCertificatePdf({
+  return createCertificatePdf({
     studentName: certificate.studentName,
     studentId: certificate.studentId,
     eventName: certificate.eventName,
@@ -107,35 +107,67 @@ function createCertificatePdfForRequest(request, certificate) {
     isSample: String(certificate.content || '').startsWith(
       '[MẪU KIỂM THỬ]',
     ),
-    signatureImage,
-  }));
+    organizerSignatureImage: certificate.organizerSignatureImage
+      ? Buffer.from(certificate.organizerSignatureImage)
+      : null,
+    organizerName: certificate.organizerName || '',
+    deanSignatureImage: certificate.signatureImage
+      ? Buffer.from(certificate.signatureImage)
+      : null,
+    deanName: certificate.deanName || '',
+  });
 }
 
-async function getCertificateSignatureImage() {
-  const [[settings]] = await pool.query(
-    'SELECT signature_image FROM certificate_signature_settings WHERE setting_id = 1',
+function certificateSignatureSnapshot(certificate) {
+  return {
+    signatureImage: certificate.signatureImage
+      ? Buffer.from(certificate.signatureImage)
+      : null,
+    signatureName: certificate.signatureName || '',
+    organizerSignatureImage: certificate.organizerSignatureImage
+      ? Buffer.from(certificate.organizerSignatureImage)
+      : null,
+    organizerSignatureName: certificate.organizerSignatureName || '',
+  };
+}
+
+async function getCertificateSignatureSettings(database = pool) {
+  const [[settings]] = await database.query(
+    `SELECT signature_image, signature_mime, signature_name,
+            organizer_signature_image, organizer_signature_mime,
+            organizer_signature_name
+     FROM certificate_signature_settings WHERE setting_id = 1`,
   );
-  return settings?.signature_image ? Buffer.from(settings.signature_image) : null;
+  return {
+    signatureImage: settings?.signature_image ? Buffer.from(settings.signature_image) : null,
+    signatureName: settings?.signature_name || '',
+    organizerSignatureImage: settings?.organizer_signature_image
+      ? Buffer.from(settings.organizer_signature_image)
+      : null,
+    organizerSignatureName: settings?.organizer_signature_name || '',
+  };
 }
 
 function decodeCertificateSignature(imageData) {
-  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
-    String(imageData || ''),
+  const match = /^data:image\/(png|jpe?g)(?:;[a-z0-9!#$&^_.+-]+=[^;,]*)*;base64,([A-Za-z0-9+/=\s]+)$/i.exec(
+    String(imageData || '').trim(),
   );
   if (!match) {
-    throw new Error('Chữ ký phải là ảnh PNG hoặc JPEG hợp lệ.');
+    throw new Error('Dữ liệu chữ ký không phải ảnh PNG hoặc JPEG hợp lệ.');
   }
-  const image = Buffer.from(match[2], 'base64');
+  const encodedImage = match[2].replace(/\s/g, '');
+  const image = Buffer.from(encodedImage, 'base64');
   if (
     image.length === 0
     || image.length > 1024 * 1024
-    || image.toString('base64') !== match[2]
+    || image.toString('base64') !== encodedImage
   ) {
     throw new Error('Ảnh chữ ký không hợp lệ hoặc vượt quá 1 MB.');
   }
-  const isPng = match[1] === 'png'
+  const mimeType = match[1].toLowerCase();
+  const isPng = mimeType === 'png'
     && image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-  const isJpeg = match[1] === 'jpeg'
+  const isJpeg = (mimeType === 'jpeg' || mimeType === 'jpg')
     && image[0] === 0xff
     && image[1] === 0xd8
     && image[image.length - 2] === 0xff
@@ -599,12 +631,97 @@ async function ensureCertificateSignatureTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS certificate_signature_settings (
        setting_id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
-       signature_image MEDIUMBLOB NOT NULL,
-       signature_mime VARCHAR(16) NOT NULL,
+       signature_image MEDIUMBLOB NULL,
+       signature_mime VARCHAR(16) NULL,
+       signature_name VARCHAR(120) NOT NULL DEFAULT '',
+       organizer_signature_image MEDIUMBLOB NULL,
+       organizer_signature_mime VARCHAR(16) NULL,
+       organizer_signature_name VARCHAR(120) NOT NULL DEFAULT '',
        updated_by VARCHAR(30) NULL,
        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
          ON UPDATE CURRENT_TIMESTAMP
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+  const [columns] = await pool.query(
+    `SELECT COLUMN_NAME AS name, IS_NULLABLE AS isNullable
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'certificate_signature_settings'`,
+  );
+  const existingColumns = new Set(columns.map((column) => column.name));
+  const additions = [
+    ['signature_name', "VARCHAR(120) NOT NULL DEFAULT ''"],
+    ['organizer_signature_image', 'MEDIUMBLOB NULL'],
+    ['organizer_signature_mime', 'VARCHAR(16) NULL'],
+    ['organizer_signature_name', "VARCHAR(120) NOT NULL DEFAULT ''"],
+  ];
+  for (const [name, definition] of additions) {
+    if (!existingColumns.has(name)) {
+      await pool.query(
+        `ALTER TABLE certificate_signature_settings ADD COLUMN ${name} ${definition}`,
+      );
+    }
+  }
+  const deanImage = columns.find((column) => column.name === 'signature_image');
+  const deanMime = columns.find((column) => column.name === 'signature_mime');
+  if (deanImage?.isNullable === 'NO' || deanMime?.isNullable === 'NO') {
+    await pool.query(
+      `ALTER TABLE certificate_signature_settings
+         MODIFY signature_image MEDIUMBLOB NULL,
+         MODIFY signature_mime VARCHAR(16) NULL`,
+    );
+  }
+}
+
+async function ensureCertificateSignatureSnapshots() {
+  const [columns] = await pool.query(
+    `SELECT COLUMN_NAME AS name
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ChungNhan'`,
+  );
+  const existingColumns = new Set(columns.map((column) => column.name));
+  const additions = [
+    ['SignatureSnapshot', 'MEDIUMBLOB NULL'],
+    ['SignatureSnapshotCaptured', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['OrganizerSignatureSnapshot', 'MEDIUMBLOB NULL'],
+    ['SignatureNameSnapshot', "VARCHAR(120) NOT NULL DEFAULT ''"],
+    ['OrganizerSignatureNameSnapshot', "VARCHAR(120) NOT NULL DEFAULT ''"],
+    ['SignatureSnapshotVersion', 'TINYINT UNSIGNED NOT NULL DEFAULT 0'],
+  ];
+  for (const [name, definition] of additions) {
+    if (!existingColumns.has(name)) {
+      await pool.query(
+        `ALTER TABLE ChungNhan ADD COLUMN ${name} ${definition}`,
+      );
+    }
+  }
+  await pool.query(
+    `UPDATE ChungNhan cn
+     INNER JOIN certificate_signature_settings settings
+       ON settings.setting_id = 1
+     SET cn.SignatureSnapshot = CASE
+           WHEN cn.SignatureSnapshotCaptured = 1 THEN cn.SignatureSnapshot
+           ELSE settings.signature_image
+         END,
+         cn.OrganizerSignatureSnapshot = settings.organizer_signature_image,
+         cn.SignatureNameSnapshot = settings.signature_name,
+         cn.OrganizerSignatureNameSnapshot = settings.organizer_signature_name,
+         cn.SignatureSnapshotCaptured = 1,
+         cn.SignatureSnapshotVersion = 1
+     WHERE cn.SignatureSnapshotVersion = 0
+       AND (
+         (cn.Trangthaichungnhan = 'Đã cấp' AND cn.Ngaycap IS NOT NULL)
+         OR cn.EmailTrangthai = 'Đã gửi'
+       )`,
+  );
+  await pool.query(
+    `UPDATE ChungNhan
+     SET SignatureSnapshotVersion = 1
+     WHERE SignatureSnapshotVersion = 0
+       AND (
+         (Trangthaichungnhan = 'Đã cấp' AND Ngaycap IS NOT NULL)
+         OR EmailTrangthai = 'Đã gửi'
+       )`,
   );
 }
 
@@ -1041,7 +1158,7 @@ app.use('/uploads/event-registration-forms', express.static(eventRegistrationFor
     response.setHeader('Content-Disposition', 'inline');
   },
 }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '4mb' }));
 
 app.get('/', (_request, response) => {
   response.json({
@@ -4666,7 +4783,12 @@ app.post('/api/organizer/events/:eventId/certificates/issue', requireAuth, requi
         connection = await pool.getConnection();
         await connection.beginTransaction();
         const [certificates] = await connection.execute(
-          `SELECT Machungnhan AS id, Trangthaichungnhan AS status
+          `SELECT Machungnhan AS id, Trangthaichungnhan AS status,
+                  SignatureSnapshot AS signatureImage,
+                  SignatureSnapshotCaptured AS signatureSnapshotCaptured,
+                  OrganizerSignatureSnapshot AS organizerSignatureImage,
+                  SignatureNameSnapshot AS signatureName,
+                  OrganizerSignatureNameSnapshot AS organizerSignatureName
            FROM ChungNhan WHERE Masv = ? AND Masukien = ?
            ORDER BY Ngaycap DESC, Machungnhan DESC FOR UPDATE`,
           [attendee.studentId, event.id],
@@ -4678,21 +4800,39 @@ app.post('/api/organizer/events/:eventId/certificates/issue', requireAuth, requi
           skipped += 1;
           continue;
         }
+        const signatureSnapshot = Number(certificates[0]?.signatureSnapshotCaptured)
+          ? certificateSignatureSnapshot(certificates[0])
+          : await getCertificateSignatureSettings(connection);
         const certificateId = certificates[0]?.id
           || `GCN-${new Date().getFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
         if (certificates.length) {
           await connection.execute(
-            `UPDATE ChungNhan SET Trangthaichungnhan = 'Đã cấp', Ngaycap = ?
+            `UPDATE ChungNhan
+             SET Trangthaichungnhan = 'Đã cấp', Ngaycap = ?,
+                 SignatureSnapshot = ?, OrganizerSignatureSnapshot = ?,
+                 SignatureNameSnapshot = ?, OrganizerSignatureNameSnapshot = ?,
+                 SignatureSnapshotCaptured = 1, SignatureSnapshotVersion = 1
              WHERE Machungnhan = ?`,
-            [event.endTime, certificateId],
+            [event.endTime, signatureSnapshot.signatureImage,
+              signatureSnapshot.organizerSignatureImage,
+              signatureSnapshot.signatureName,
+              signatureSnapshot.organizerSignatureName, certificateId],
           );
         } else {
           await connection.execute(
             `INSERT INTO ChungNhan
-             (Machungnhan, Masv, Masukien, Ngaycap, Noidung, Trangthaichungnhan, EmailTrangthai)
-             VALUES (?, ?, ?, ?, ?, 'Đã cấp', 'Chưa gửi')`,
+             (Machungnhan, Masv, Masukien, Ngaycap, Noidung,
+              Trangthaichungnhan, EmailTrangthai, SignatureSnapshot,
+              SignatureSnapshotCaptured, OrganizerSignatureSnapshot,
+              SignatureNameSnapshot, OrganizerSignatureNameSnapshot,
+              SignatureSnapshotVersion)
+             VALUES (?, ?, ?, ?, ?, 'Đã cấp', 'Chưa gửi', ?, 1, ?, ?, ?, 1)`,
             [certificateId, attendee.studentId, event.id, event.endTime,
-              `Giấy chứng nhận tham gia sự kiện ${event.name}`],
+              `Giấy chứng nhận tham gia sự kiện ${event.name}`,
+              signatureSnapshot.signatureImage,
+              signatureSnapshot.organizerSignatureImage,
+              signatureSnapshot.signatureName,
+              signatureSnapshot.organizerSignatureName],
           );
         }
         await connection.commit();
@@ -4857,7 +4997,12 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         );
         const [existingCertificates] = await connection.execute(
           `SELECT Machungnhan AS id, Ngaycap AS issuedAt,
-                  Trangthaichungnhan AS status, EmailTrangthai AS emailStatus
+                  Trangthaichungnhan AS status, EmailTrangthai AS emailStatus,
+                  SignatureSnapshot AS signatureImage,
+                  SignatureSnapshotCaptured AS signatureSnapshotCaptured,
+                  OrganizerSignatureSnapshot AS organizerSignatureImage,
+                  SignatureNameSnapshot AS signatureName,
+                  OrganizerSignatureNameSnapshot AS organizerSignatureName
            FROM ChungNhan
            WHERE Masv = ? AND Masukien = ?
            ORDER BY Ngaycap DESC, Machungnhan DESC
@@ -4915,6 +5060,9 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           );
         }
         const issuedAt = event.endTime;
+        const signatureSnapshot = Number(existingCertificates[0]?.signatureSnapshotCaptured)
+          ? certificateSignatureSnapshot(existingCertificates[0])
+          : await getCertificateSignatureSettings(connection);
 
         const verificationUrl =
           `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificateId)}`;
@@ -4928,7 +5076,10 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           certificateId,
           issuedAt,
           verificationUrl,
-          signatureImage: await getCertificateSignatureImage(),
+          organizerSignatureImage: signatureSnapshot.organizerSignatureImage,
+          organizerName: signatureSnapshot.organizerSignatureName,
+          deanSignatureImage: signatureSnapshot.signatureImage,
+          deanName: signatureSnapshot.signatureName,
         });
         await mailTransport.sendMail({
           from: process.env.MAIL_FROM || process.env.SMTP_FROM,
@@ -4944,6 +5095,9 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
         await connection.execute(
           `UPDATE ChungNhan
            SET EmailTrangthai = 'Đã gửi', EmailNgaygui = NOW(),
+               SignatureSnapshot = ?, OrganizerSignatureSnapshot = ?,
+               SignatureNameSnapshot = ?, OrganizerSignatureNameSnapshot = ?,
+               SignatureSnapshotCaptured = 1, SignatureSnapshotVersion = 1,
                Trangthaichungnhan = CASE
                  WHEN Trangthaichungnhan = 'Đã cấp' AND Ngaycap IS NOT NULL
                    THEN Trangthaichungnhan
@@ -4955,7 +5109,10 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
                  ELSE NULL
                END
            WHERE Machungnhan = ?`,
-          [certificateId],
+          [signatureSnapshot.signatureImage,
+            signatureSnapshot.organizerSignatureImage,
+            signatureSnapshot.signatureName,
+            signatureSnapshot.organizerSignatureName, certificateId],
         );
         await connection.commit();
         connection.release();
@@ -5741,7 +5898,8 @@ app.get('/api/student/certificates', requireAuth, requireRole('Sinh viên', 'stu
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
               sk.Diadiem AS location, sk.Thoigianketthuc AS issuedAt,
-              cn.Noidung AS content, cn.Trangthaichungnhan AS status
+              cn.Noidung AS content,
+              cn.Trangthaichungnhan AS status
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
        WHERE cn.Masv = ? AND cn.Trangthaichungnhan = 'Đã cấp'
@@ -5767,7 +5925,11 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
               sk.Diadiem AS location, sk.Thoigianketthuc AS issuedAt,
-              cn.Noidung AS content
+              cn.Noidung AS content,
+              cn.SignatureSnapshot AS signatureImage,
+              cn.OrganizerSignatureSnapshot AS organizerSignatureImage,
+              cn.SignatureNameSnapshot AS signatureName,
+              cn.OrganizerSignatureNameSnapshot AS organizerSignatureName
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
        LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
@@ -5801,12 +5963,23 @@ app.get('/api/student/certificates/:certificateId/pdf', requireAuth, requireRole
 app.get('/api/staff/certificate-signature', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (_request, response) => {
   try {
     const [[settings]] = await pool.query(
-      'SELECT signature_image, signature_mime FROM certificate_signature_settings WHERE setting_id = 1',
+      `SELECT signature_image, signature_mime, signature_name,
+              organizer_signature_image, organizer_signature_mime,
+              organizer_signature_name
+       FROM certificate_signature_settings WHERE setting_id = 1`,
     );
-    const signatureData = settings
-      ? `data:${settings.signature_mime};base64,${Buffer.from(settings.signature_image).toString('base64')}`
+    const imageData = (image, mime) => image
+      ? `data:${mime};base64,${Buffer.from(image).toString('base64')}`
       : '';
-    return response.json({ signatureData });
+    return response.json({
+      signatureData: imageData(settings?.signature_image, settings?.signature_mime),
+      signatureName: settings?.signature_name || '',
+      organizerSignatureData: imageData(
+        settings?.organizer_signature_image,
+        settings?.organizer_signature_mime,
+      ),
+      organizerSignatureName: settings?.organizer_signature_name || '',
+    });
   } catch (error) {
     console.error('Load certificate signature error:', error.message);
     return response.status(500).json({ message: 'Không thể tải chữ ký mẫu.' });
@@ -5814,25 +5987,60 @@ app.get('/api/staff/certificate-signature', requireAuth, requireRole('Quản tr�
 });
 
 app.put('/api/staff/certificate-signature', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (request, response) => {
-  let signatureImage;
+  const dean = request.body?.dean || { imageData: request.body?.imageData || '' };
+  const organizer = request.body?.organizer || {};
+  let deanSignatureImage;
+  let organizerSignatureImage;
   try {
-    signatureImage = decodeCertificateSignature(request.body?.imageData);
+    deanSignatureImage = dean.imageData
+      ? decodeCertificateSignature(dean.imageData)
+      : null;
+    organizerSignatureImage = organizer.imageData
+      ? decodeCertificateSignature(organizer.imageData)
+      : null;
   } catch (error) {
     return response.status(400).json({ message: error.message });
   }
-  const signatureMime = request.body.imageData.startsWith('data:image/jpeg;')
-    ? 'image/jpeg'
-    : 'image/png';
+  const normalizeName = (value) => {
+    if (value === undefined || value === null || value === '') return '';
+    if (
+      typeof value !== 'string'
+      || value.trim().length > 120
+      || /[\u0000-\u001f\u007f]/.test(value)
+    ) {
+      throw new Error('Tên người ký không hợp lệ (tối đa 120 ký tự).');
+    }
+    return value.trim();
+  };
+  let deanName;
+  let organizerName;
+  try {
+    deanName = normalizeName(dean.name);
+    organizerName = normalizeName(organizer.name);
+  } catch (error) {
+    return response.status(400).json({ message: error.message });
+  }
+  const mimeType = (imageData) => imageData
+    ? /^data:image\/jpe?g;/i.test(imageData) ? 'image/jpeg' : 'image/png'
+    : null;
   try {
     await pool.execute(
       `INSERT INTO certificate_signature_settings
-         (setting_id, signature_image, signature_mime, updated_by)
-       VALUES (1, ?, ?, ?)
+         (setting_id, signature_image, signature_mime, signature_name,
+          organizer_signature_image, organizer_signature_mime,
+          organizer_signature_name, updated_by)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          signature_image = VALUES(signature_image),
          signature_mime = VALUES(signature_mime),
+         signature_name = VALUES(signature_name),
+         organizer_signature_image = VALUES(organizer_signature_image),
+         organizer_signature_mime = VALUES(organizer_signature_mime),
+         organizer_signature_name = VALUES(organizer_signature_name),
          updated_by = VALUES(updated_by)`,
-      [signatureImage, signatureMime, request.auth.sub],
+      [deanSignatureImage, mimeType(dean.imageData), deanName,
+        organizerSignatureImage, mimeType(organizer.imageData),
+        organizerName, request.auth.sub],
     );
     return response.json({ message: 'Đã lưu chữ ký mẫu.' });
   } catch (error) {
@@ -5856,6 +6064,7 @@ app.delete('/api/staff/certificate-signature', requireAuth, requireRole('Quản 
 app.get('/api/staff/certificates/template/preview', requireAuth, requireRole('Quản trị viên', 'admin', 'Ban tổ chức', 'Nhân viên', 'Cán bộ', 'organizer', 'staff', 'employee'), async (request, response) => {
   try {
     const now = new Date();
+    const signatures = await getCertificateSignatureSettings();
     const publicBaseUrl = (
       process.env.PUBLIC_API_BASE_URL
       || `${request.protocol}://${request.get('host')}`
@@ -5871,7 +6080,10 @@ app.get('/api/staff/certificates/template/preview', requireAuth, requireRole('Qu
       issuedAt: now,
       verificationUrl: `${publicBaseUrl}/api/certificates/GCN-MAU`,
       isSample: true,
-      signatureImage: await getCertificateSignatureImage(),
+      deanSignatureImage: signatures.signatureImage,
+      deanName: signatures.signatureName,
+      organizerSignatureImage: signatures.organizerSignatureImage,
+      organizerName: signatures.organizerSignatureName,
     });
     response.set({
       'Content-Type': 'application/pdf',
@@ -5899,7 +6111,11 @@ app.get('/api/staff/certificates/:certificateId/pdf', requireAuth, requireRole('
               sk.Thoigianbatdau AS startTime,
               sk.Thoigianketthuc AS endTime,
               sk.Diadiem AS location, sk.Thoigianketthuc AS issuedAt,
-              cn.Noidung AS content
+              cn.Noidung AS content,
+              cn.SignatureSnapshot AS signatureImage,
+              cn.OrganizerSignatureSnapshot AS organizerSignatureImage,
+              cn.SignatureNameSnapshot AS signatureName,
+              cn.OrganizerSignatureNameSnapshot AS organizerSignatureName
        FROM ChungNhan cn
        INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
        LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
@@ -6845,6 +7061,7 @@ ensureAttendanceLocationColumns()
     await ensureEventRegistrationFormColumn();
     await ensureEventCertificateColumn();
     await ensureCertificateEmailColumns();
+    await ensureCertificateSignatureSnapshots();
     await ensurePasswordResetChallengesTable();
     await ensureUserFcmTokensTable();
     await ensureAttendanceDeviceClaimsTable();

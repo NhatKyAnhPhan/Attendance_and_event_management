@@ -122,7 +122,10 @@ async function createCertificatePdf({
   issuedAt,
   verificationUrl,
   isSample = false,
-  signatureImage = null,
+  organizerSignatureImage = null,
+  organizerName = '',
+  deanSignatureImage = null,
+  deanName = '',
 }) {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Không tìm thấy mẫu chứng nhận: ${templatePath}`);
@@ -246,12 +249,34 @@ async function createCertificatePdf({
     { width: 260, align: 'right', lineBreak: false, ellipsis: true },
   );
 
-  if (signatureImage) {
-    document.image(signatureImage, 627, 490, {
+  if (organizerSignatureImage) {
+    document.image(organizerSignatureImage, 454, 485, {
       fit: [136, 36],
       align: 'center',
       valign: 'center',
     });
+  }
+  if (deanSignatureImage) {
+    document.image(deanSignatureImage, 627, 485, {
+      fit: [136, 36],
+      align: 'center',
+      valign: 'center',
+    });
+  }
+  for (const [name, x] of [[organizerName, 454], [deanName, 627]]) {
+    if (name) {
+      document
+        .font(fontPath)
+        .fontSize(10)
+        .fillColor('#10274d')
+        .text(name, x, 530, {
+          width: 136,
+          height: 14,
+          align: 'center',
+          lineBreak: false,
+          ellipsis: true,
+        });
+    }
   }
 
   if (isSample) {

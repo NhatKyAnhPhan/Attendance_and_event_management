@@ -474,11 +474,16 @@
 .rp-template-modal { width: min(100%, 1040px); }
 .rp-template-preview { height: min(42vh, 480px); margin-top: 0; }
 .rp-signature-editor { display: grid; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--rp-border); }
+.rp-signer-editor { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--rp-border); border-radius: 10px; background: color-mix(in srgb, var(--rp-secondary) 20%, var(--rp-card)); }
 .rp-signature-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .rp-signature-heading h3 { margin: 0; font-family: Nunito, sans-serif; font-size: 15px; }
 .rp-signature-heading p,.rp-signature-help { margin: 4px 0 0; color: var(--rp-muted); font-size: 12px; line-height: 1.5; }
 .rp-signature-current { width: 145px; height: 54px; object-fit: contain; border: 1px solid var(--rp-border); border-radius: 7px; background: #fff; }
+.rp-signature-name { display: grid; max-width: 520px; gap: 5px; color: var(--rp-muted); font-size: 12px; font-weight: 600; }
+.rp-signature-name input { min-height: 38px; padding: 8px 10px; border: 1px solid var(--rp-border); border-radius: 7px; background: var(--rp-bg); color: var(--rp-text); font: inherit; }
 .rp-signature-actions,.rp-signature-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rp-signature-color { display: inline-flex; min-height: 38px; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--rp-border); border-radius: 9px; color: var(--rp-text); font-size: 12px; font-weight: 600; }
+.rp-signature-color input { width: 30px; height: 28px; padding: 2px; border: 0; background: transparent; cursor: pointer; }
 .rp-signature-canvas { display: block; width: 100%; height: auto; border: 1px dashed var(--rp-border); border-radius: 8px; background: #fff; cursor: crosshair; touch-action: none; }
 .rp-signature-help { margin: -5px 0 0; }
 .rp-signature-footer { justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--rp-border); }
