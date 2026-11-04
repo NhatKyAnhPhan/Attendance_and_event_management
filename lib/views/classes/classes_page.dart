@@ -30,7 +30,7 @@ class _ClassesPageState extends State<ClassesPage> {
     final controller = Get.put(AdminClassesController());
     final role = Get.find<AuthController>().role.value;
     final canManage = role == Role.admin;
-    final canImportStudents = canManage || role == Role.lecturer;
+    final canImportStudents = canManage;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final c = AppColors.of(isDark);
 
@@ -87,7 +87,7 @@ class _ClassesPageState extends State<ClassesPage> {
                     label: Text(
                       _importingClassIds.contains('__excel__')
                           ? 'Đang nhập...'
-                          : 'Thêm sinh viên Excel',
+                          : 'Thêm lớp Excel',
                     ),
                   ),
                 if (canManage)
@@ -260,7 +260,7 @@ class _ClassesPageState extends State<ClassesPage> {
                                   ),
                                 ),
                               )
-                            else if (canImportStudents || canManage)
+                            else if (canImportStudents)
                               PopupMenuButton<String>(
                                 tooltip: 'Thao tác lớp',
                                 onSelected: (action) {

@@ -4693,6 +4693,10 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
   const body = request.body || {};
   const { name, organizerId, startTime, endTime, location, capacity } = body;
   const allowHistoricalImport = body.allowHistoricalImport === true;
+  const sourceId = body.sourceId === undefined ? '' : String(body.sourceId).trim();
+  if (sourceId && (!allowHistoricalImport || !/^[A-Za-z0-9_-]{1,32}$/.test(sourceId))) {
+    return response.status(400).json({ message: 'Mã sự kiện trong file Excel không hợp lệ.' });
+  }
   if (body.certificateEnabled !== undefined
       && typeof body.certificateEnabled !== 'boolean') {
     return response.status(400).json({
@@ -4738,8 +4742,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
         message: 'Bạn chỉ được tạo sự kiện cho đơn vị mình phụ trách.',
       });
     }
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const id = generateRecordId('EV');
+    const attempts = sourceId ? 1 : 3;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const id = sourceId || generateRecordId('EV');
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
@@ -4772,14 +4777,18 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
         return response.status(201).json({ id, message: 'Tạo sự kiện thành công.' });
       } catch (error) {
         await connection.rollback();
-        if (error.code !== 'ER_DUP_ENTRY' || attempt === 2) throw error;
+        if (error.code !== 'ER_DUP_ENTRY' || attempt === attempts - 1) throw error;
       } finally {
         connection.release();
       }
     }
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') {
-      return response.status(409).json({ message: 'Không thể tạo mã sự kiện duy nhất.' });
+      return response.status(409).json({
+        message: sourceId
+          ? 'Mã sự kiện trong file Excel đã tồn tại.'
+          : 'Không thể tạo mã sự kiện duy nhất.',
+      });
     }
     if (error.code === 'ER_NO_REFERENCED_ROW_2') {
       return response.status(400).json({ message: 'Đơn vị tổ chức không tồn tại.' });
@@ -5392,7 +5401,7 @@ app.get('/api/admin/classes/:classId/students', requireAuth, requireRole('Quản
 });
 
 // Nhập danh sách sinh viên đã có trong hệ thống vào một lớp học phần.
-app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer'), async (request, response) => {
+app.post('/api/admin/classes/:classId/students/import', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const { studentIds } = request.body || {};
   if (!Array.isArray(studentIds) || studentIds.length === 0 || studentIds.length > 2000) {
     return response.status(400).json({

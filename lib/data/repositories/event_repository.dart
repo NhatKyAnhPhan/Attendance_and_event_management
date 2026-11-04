@@ -128,6 +128,7 @@ class EventRepository {
 
   // Tạo sự kiện mới bằng dữ liệu từ biểu mẫu ban tổ chức.
   Future<void> createOrganizerEvent({
+    String? sourceId,
     required String name,
     required String organizerId,
     required DateTime startTime,
@@ -144,6 +145,7 @@ class EventRepository {
     await _client.post(
       '/api/organizer/events',
       data: {
+        if (sourceId != null && sourceId.isNotEmpty) 'sourceId': sourceId,
         'name': name,
         'organizerId': organizerId,
         'startTime': startTime.toIso8601String(),

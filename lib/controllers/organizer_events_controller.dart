@@ -90,6 +90,7 @@ class OrganizerEventsController extends GetxController {
 
   // Gọi repository để tạo, sửa hoặc xóa rồi tải lại danh sách.
   Future<void> createEvent({
+    String? sourceId,
     required String name,
     required String organizerId,
     required DateTime startTime,
@@ -104,6 +105,7 @@ class OrganizerEventsController extends GetxController {
     bool allowHistoricalImport = false,
   }) async {
     await _repository.createOrganizerEvent(
+      sourceId: sourceId,
       name: name,
       organizerId: organizerId,
       startTime: startTime,

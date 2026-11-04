@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity, Award, BarChart3, Bell, BookOpen, Building2, CalendarDays, Download,
   ChevronLeft, ChevronRight, ClipboardCheck, Home, LogOut,
@@ -31,6 +31,7 @@ const EMPLOYEE_ITEMS = [
 const PAGE_TITLES = { ...Object.fromEntries([...ADMIN_ITEMS, ...LECTURER_ITEMS, ...EMPLOYEE_ITEMS].map(([id, title]) => [id, title])), profile: 'Hồ sơ cá nhân' };
 const isAdminRole = (role) => ['admin', 'administrator', 'quản trị viên'].includes(String(role || '').trim().toLowerCase());
 const isLecturerRole = (role) => ['lecturer', 'teacher', 'giảng viên'].includes(String(role || '').trim().toLowerCase());
+const isEmployeeRole = (role) => ['organizer', 'event_organizer', 'ban tổ chức', 'cán bộ', 'nhân viên', 'công nhân viên', 'staff', 'employee'].includes(String(role || '').trim().toLowerCase());
 const nameOf = (user) => user?.name || user?.fullName || user?.id || 'Người dùng';
 const initialsOf = (name) => String(name || 'H').trim().split(/\s+/).slice(-2).map((part) => part[0]).join('').toUpperCase();
 const itemsOf = (result) => Array.isArray(result?.items) ? result.items : [];
@@ -549,12 +550,82 @@ function weekdayName(value) {
 }
 
 function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelect, selectedId, detail, detailError, detailLoading, onCloseDetail, role, showNotice }) {
-  const classes = itemsOf(data).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
+  const allClasses = itemsOf(data);
+  const classes = allClasses.filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
   const canManage = isAdminRole(role);
+  const [importingWorkbook, setImportingWorkbook] = useState(false);
+  const workbookInput = useRef(null);
   const selectedClass = classes.find((item) => String(item.id) === String(selectedId));
+
+  const importClassWorkbook = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setImportingWorkbook(true);
+    try {
+      const groups = await readStudentRosterGroupsFromWorkbook(file, {
+        targetIdHeaders: ['MaLop', 'Mã lớp', 'classId', 'classCode'],
+        targetNameHeaders: ['TenLop', 'Tên lớp', 'className'],
+      });
+      let imported = 0;
+      let alreadyMember = 0;
+      let unknown = 0;
+      let duplicates = 0;
+      const skipped = [];
+      for (const group of groups) {
+        if (group.studentIds.length > 2000) {
+          skipped.push(`${group.targetName || group.targetId}: vượt giới hạn 2.000 sinh viên.`);
+          continue;
+        }
+        const matches = allClasses.filter((item) =>
+          String(item.id || item.code).trim().toLowerCase() === group.targetId.toLowerCase());
+        if (matches.length !== 1) {
+          skipped.push(`${group.targetName || group.targetId} (${group.targetId}): ${matches.length ? 'mã lớp bị trùng' : 'không có trong danh sách lớp'}.`);
+          continue;
+        }
+        const item = matches[0];
+        const start = item.startTime ? new Date(item.startTime) : null;
+        const archived = item.status === 'Đã đóng'
+          || (start && !Number.isNaN(start.valueOf()) && start < new Date(Date.now() - 365 * 86400000));
+        if (archived) {
+          skipped.push(`${item.name || item.id}: lớp đã đóng hoặc lưu trữ.`);
+          continue;
+        }
+        try {
+          const result = await api(`/api/admin/classes/${encodeURIComponent(item.id)}/students/import`, {
+            method: 'POST',
+            body: { studentIds: group.studentIds },
+          });
+          imported += Number(result.importedCount || 0);
+          alreadyMember += Number(result.alreadyMemberCount || 0);
+          unknown += result.unknownStudentIds?.length || 0;
+          duplicates += group.duplicateRows;
+        } catch (exception) {
+          skipped.push(`${item.name || item.id}: ${exception instanceof Error ? exception.message : 'không thể nhập.'}`);
+        }
+      }
+      await onRefresh();
+      const summary = `Đã thêm ${imported} sinh viên; ${alreadyMember} sinh viên đã có trong lớp.`
+        + (unknown ? ` Không tìm thấy ${unknown} mã sinh viên.` : '')
+        + (duplicates ? ` Có ${duplicates} dòng mã trùng trong file.` : '')
+        + (skipped.length ? ` Không nhập được ${skipped.length} lớp: ${skipped.slice(0, 5).join(' | ')}${skipped.length > 5 ? ' | ...' : ''}` : '');
+      showNotice(skipped.length ? 'error' : 'success', summary);
+    } catch (exception) {
+      showNotice('error', exception instanceof Error ? exception.message : 'Không thể đọc file Excel.');
+    } finally {
+      setImportingWorkbook(false);
+    }
+  };
+
   return (
     <>
-      <PageTitle title="Quản lý lớp học" subtitle="Lớp được phân quyền theo tài khoản đang đăng nhập." onRefresh={onRefresh} loading={loading} action={canManage && <ClassAdminActions createOnly onRefresh={onRefresh} showNotice={showNotice} />} />
+      <PageTitle title="Quản lý lớp học" subtitle="Lớp được phân quyền theo tài khoản đang đăng nhập." onRefresh={onRefresh} loading={loading} action={canManage && <>
+        <input ref={workbookInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={importClassWorkbook} hidden />
+        <button className="rp-secondary-button" onClick={() => workbookInput.current?.click()} disabled={importingWorkbook}>
+          <Upload size={16} /> {importingWorkbook ? 'Đang nhập...' : 'Thêm lớp Excel'}
+        </button>
+        <ClassAdminActions createOnly onRefresh={onRefresh} showNotice={showNotice} />
+      </>} />
       <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên lớp, mã lớp, giảng viên..." />
       {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : classes.length ? (
         <div className="rp-class-grid">{classes.map((item) => <article className="rp-card rp-class-card" key={item.id}><button className="rp-class-open" onClick={() => onSelect(item)}><span className="rp-class-code">{item.code || item.id}</span><h2>{item.name || 'Lớp học phần'}</h2><p>{item.subjectName || item.subjectCode || 'Môn học'} · {item.lecturerName || 'Giảng viên'}</p><div className="rp-class-meta"><span><Users size={15} /> {item.studentCount ?? 0} sinh viên</span><span>{item.status || item.semester || 'Đang mở'}</span></div></button>{canManage && <ClassAdminActions item={item} onRefresh={onRefresh} showNotice={showNotice} />}</article>)}</div>
@@ -721,6 +792,137 @@ async function readStudentIdsFromWorkbook(file) {
   return [...new Set(rows.slice(headerIndex + 1).map((row) => String(row[columnIndex] ?? '').trim()).filter(Boolean))];
 }
 
+function normalizeWorkbookHeader(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+async function readWorkbookRows(file) {
+  const { default: readExcelFile } = await import('read-excel-file/universal');
+  const workbook = await readExcelFile(file);
+  const rows = Array.isArray(workbook[0]) ? workbook : workbook[0]?.data;
+  if (!Array.isArray(rows) || !rows.length) throw new Error('Không tìm thấy dữ liệu trong file Excel.');
+  return rows;
+}
+
+async function readStudentRosterGroupsFromWorkbook(file, { targetIdHeaders, targetNameHeaders }) {
+  const rows = await readWorkbookRows(file);
+  const studentHeaders = new Set(['mssv', 'masv', 'masinhvien', 'studentid', 'studentcode']);
+  const targetHeaders = new Set(targetIdHeaders.map(normalizeWorkbookHeader));
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeWorkbookHeader);
+    return headers.some((header) => studentHeaders.has(header))
+      && headers.some((header) => targetHeaders.has(header));
+  });
+  if (headerIndex < 0) throw new Error('File cần có cột MSSV và mã sự kiện/lớp.');
+  const headers = rows[headerIndex].map(normalizeWorkbookHeader);
+  const studentIndex = headers.findIndex((header) => studentHeaders.has(header));
+  const targetIndex = headers.findIndex((header) => targetHeaders.has(header));
+  const targetNameSet = new Set(targetNameHeaders.map(normalizeWorkbookHeader));
+  const targetNameIndex = headers.findIndex((header) => targetNameSet.has(header));
+  const groups = new Map();
+  for (const [offset, row] of rows.slice(headerIndex + 1).entries()) {
+    const studentId = String(row[studentIndex] ?? '').trim();
+    if (!studentId) continue;
+    const targetId = String(row[targetIndex] ?? '').trim();
+    if (!targetId) throw new Error(`Thiếu mã sự kiện/lớp ở dòng ${headerIndex + offset + 2}.`);
+    const key = targetId.toLocaleLowerCase();
+    const group = groups.get(key) || {
+      targetId,
+      targetName: targetNameIndex < 0 ? '' : String(row[targetNameIndex] ?? '').trim(),
+      studentIds: [],
+      seen: new Set(),
+      duplicateRows: 0,
+    };
+    const studentKey = studentId.toLocaleUpperCase();
+    if (group.seen.has(studentKey)) group.duplicateRows += 1;
+    else {
+      group.seen.add(studentKey);
+      group.studentIds.push(studentId);
+    }
+    groups.set(key, group);
+  }
+  if (!groups.size) throw new Error('Không tìm thấy sinh viên có mã sự kiện/lớp trong file Excel.');
+  return [...groups.values()];
+}
+
+function excelTimeMinutes(value) {
+  if (value instanceof Date) return value.getHours() * 60 + value.getMinutes();
+  if (typeof value === 'number' && value >= 0 && value < 1) return Math.round(value * 1440);
+  const match = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(String(value ?? '').trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours < 24 && minutes < 60 ? hours * 60 + minutes : null;
+}
+
+function excelDateString(value) {
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  const text = String(value ?? '').trim();
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (isoDate) return `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`;
+  const date = new Date(text);
+  if (Number.isNaN(date.valueOf())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+async function readEventsFromWorkbook(file) {
+  const rows = await readWorkbookRows(file);
+  const headersWanted = {
+    id: new Set(['masukien']),
+    name: new Set(['tensukien']),
+    organizer: new Set(['donvitochuc']),
+    location: new Set(['diadiem']),
+    date: new Set(['ngaytochuc']),
+    start: new Set(['giobatdau']),
+    end: new Set(['gioketthuc']),
+    description: new Set(['mota']),
+  };
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeWorkbookHeader);
+    return headers.some((header) => headersWanted.id.has(header))
+      && headers.some((header) => headersWanted.name.has(header));
+  });
+  if (headerIndex < 0) throw new Error('File cần có cột MaSuKien và TenSuKien.');
+  const headers = rows[headerIndex].map(normalizeWorkbookHeader);
+  const column = (key) => headers.findIndex((header) => headersWanted[key].has(header));
+  const result = [];
+  for (const [offset, row] of rows.slice(headerIndex + 1).entries()) {
+    const name = String(row[column('name')] ?? '').trim();
+    const sourceId = String(row[column('id')] ?? '').trim();
+    if (!name && !sourceId) continue;
+    if (!name || !sourceId) throw new Error(`Thiếu mã hoặc tên sự kiện ở dòng ${headerIndex + offset + 2}.`);
+    const eventDate = excelDateString(row[column('date')]);
+    const organizerName = String(row[column('organizer')] ?? '').trim();
+    const location = String(row[column('location')] ?? '').trim();
+    if (!eventDate || !organizerName || !location) {
+      throw new Error(`Sự kiện "${name}" thiếu ngày, đơn vị tổ chức hoặc địa điểm.`);
+    }
+    result.push({
+      sourceId,
+      name,
+      organizerName,
+      location,
+      eventDate,
+      startMinutes: excelTimeMinutes(row[column('start')]),
+      endMinutes: excelTimeMinutes(row[column('end')]),
+      description: String(row[column('description')] ?? '').trim(),
+    });
+  }
+  if (!result.length) throw new Error('Không tìm thấy sự kiện nào trong file Excel.');
+  return result;
+}
+
+function normalizeMatchText(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+
 function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, role, showNotice }) {
   const [form, setForm] = useState(null);
   const [units, setUnits] = useState([]);
@@ -735,6 +937,12 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
   const [detailLoading, setDetailLoading] = useState(false);
   const [importTarget, setImportTarget] = useState(null);
   const [studentIds, setStudentIds] = useState('');
+  const [eventWorkbookDraft, setEventWorkbookDraft] = useState(null);
+  const [eventUnitMappings, setEventUnitMappings] = useState({});
+  const [eventWorkbookBusy, setEventWorkbookBusy] = useState(false);
+  const [studentWorkbookBusy, setStudentWorkbookBusy] = useState(false);
+  const eventWorkbookInput = useRef(null);
+  const studentWorkbookInput = useRef(null);
   const [busyAction, setBusyAction] = useState('');
   const [certificateTarget, setCertificateTarget] = useState(null);
   const [certificateStudents, setCertificateStudents] = useState([]);
@@ -746,6 +954,7 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
   const [imageInputVersion, setImageInputVersion] = useState(0);
   const events = itemsOf(data).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
   const canManage = !isLecturerRole(role);
+  const canImportExcel = isAdminRole(role) || isEmployeeRole(role);
   const selectedImageFile = form?.imageFile || null;
 
   useEffect(() => {
@@ -1020,6 +1229,155 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     }
   };
 
+  const prepareEventWorkbook = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setBusyAction('reading-events');
+    try {
+      const importedEvents = await readEventsFromWorkbook(file);
+      const unitResult = await api('/api/organizer/units');
+      const availableUnits = itemsOf(unitResult);
+      if (!availableUnits.length) throw new Error('Không có đơn vị tổ chức được phân công cho tài khoản này.');
+      const mappings = {};
+      for (const organizerName of new Set(importedEvents.map((item) => item.organizerName))) {
+        const matches = availableUnits.filter((unit) =>
+          normalizeMatchText(unit.name) === normalizeMatchText(organizerName));
+        mappings[organizerName] = matches.length === 1 ? String(matches[0].id) : '';
+      }
+      setEventUnitMappings(mappings);
+      setEventWorkbookDraft({ events: importedEvents, units: availableUnits });
+    } catch (exception) {
+      showNotice('error', exception instanceof Error ? exception.message : 'Không thể đọc file sự kiện.');
+    } finally {
+      setBusyAction('');
+    }
+  };
+
+  const importEventWorkbook = async (event) => {
+    event.preventDefault();
+    if (!eventWorkbookDraft) return;
+    const organizerNames = [...new Set(eventWorkbookDraft.events.map((item) => item.organizerName))];
+    if (organizerNames.some((name) => !eventUnitMappings[name])) {
+      showNotice('error', 'Hãy chọn đơn vị tổ chức cho từng tên đơn vị trong file.');
+      return;
+    }
+    setEventWorkbookBusy(true);
+    let imported = 0;
+    let alreadyExists = 0;
+    const failures = [];
+    const existingNames = new Set(itemsOf(data).map((item) => normalizeMatchText(item.name)));
+    try {
+      for (const item of eventWorkbookDraft.events) {
+        const nameKey = normalizeMatchText(item.name);
+        if (existingNames.has(nameKey)) {
+          alreadyExists += 1;
+          continue;
+        }
+        try {
+          const startMinutes = item.startMinutes ?? 9 * 60;
+          const start = new Date(`${item.eventDate}T${String(Math.floor(startMinutes / 60)).padStart(2, '0')}:${String(startMinutes % 60).padStart(2, '0')}:00`);
+          let durationMinutes = (item.endMinutes ?? startMinutes + 120) - startMinutes;
+          if (durationMinutes <= 0) durationMinutes += 1440;
+          const end = new Date(start.getTime() + durationMinutes * 60000);
+          const result = await api('/api/organizer/events', {
+            method: 'POST',
+            body: {
+              sourceId: item.sourceId,
+              name: item.name,
+              organizerId: eventUnitMappings[item.organizerName],
+              startTime: start.toISOString(),
+              endTime: end.toISOString(),
+              location: item.location,
+              capacity: 2000,
+              certificateEnabled: false,
+              description: item.description,
+              benefits: [],
+              rules: [],
+              attendancePeriods: [],
+              allowHistoricalImport: true,
+            },
+          });
+          imported += 1;
+          existingNames.add(nameKey);
+          if (result?.message) existingNames.add(nameKey);
+        } catch (exception) {
+          failures.push(`${item.name}: ${exception instanceof Error ? exception.message : 'không thể tạo sự kiện.'}`);
+        }
+      }
+      setEventWorkbookDraft(null);
+      await onRefresh();
+      const summary = `Đã thêm ${imported} sự kiện.${alreadyExists ? ` Đã có sẵn: ${alreadyExists}.` : ''}`
+        + (failures.length ? ` Không nhập được ${failures.length}: ${failures.slice(0, 5).join(' | ')}${failures.length > 5 ? ' | ...' : ''}` : '')
+        + ' Giờ mặc định 09:00, thời lượng 2 giờ nếu thiếu, sức chứa 2.000.';
+      showNotice(failures.length ? 'error' : 'success', summary);
+    } finally {
+      setEventWorkbookBusy(false);
+    }
+  };
+
+  const importStudentWorkbook = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setStudentWorkbookBusy(true);
+    try {
+      const groups = await readStudentRosterGroupsFromWorkbook(file, {
+        targetIdHeaders: ['MaSuKien', 'Mã sự kiện', 'eventId', 'eventCode'],
+        targetNameHeaders: ['TenSuKien', 'Tên sự kiện', 'eventName'],
+      });
+      const allEvents = itemsOf(data);
+      let imported = 0;
+      let alreadyRegistered = 0;
+      let unknown = 0;
+      let duplicates = 0;
+      const skipped = [];
+      for (const group of groups) {
+        if (group.studentIds.length > 2000) {
+          skipped.push(`${group.targetName || group.targetId}: vượt giới hạn 2.000 sinh viên.`);
+          continue;
+        }
+        let matches = allEvents.filter((item) =>
+          String(item.id || '').trim().toLowerCase() === group.targetId.toLowerCase());
+        if (!matches.length && group.targetName) {
+          const targetName = normalizeMatchText(group.targetName);
+          matches = allEvents.filter((item) => {
+            const existingName = normalizeMatchText(item.name);
+            return existingName === targetName
+              || existingName.includes(targetName)
+              || targetName.includes(existingName);
+          });
+        }
+        if (matches.length !== 1) {
+          skipped.push(`${group.targetName || group.targetId}: ${matches.length ? 'có nhiều sự kiện trùng tên' : 'chưa có sự kiện tương ứng'}.`);
+          continue;
+        }
+        try {
+          const result = await api(`/api/organizer/events/${encodeURIComponent(matches[0].id)}/students/import`, {
+            method: 'POST',
+            body: { studentIds: group.studentIds, allowHistoricalImport: true },
+          });
+          imported += Number(result.importedCount || 0);
+          alreadyRegistered += Number(result.alreadyRegisteredCount || 0);
+          unknown += result.unknownStudentIds?.length || 0;
+          duplicates += group.duplicateRows;
+        } catch (exception) {
+          skipped.push(`${matches[0].name}: ${exception instanceof Error ? exception.message : 'không thể nhập.'}`);
+        }
+      }
+      await onRefresh();
+      const summary = `Đã thêm ${imported} sinh viên; ${alreadyRegistered} đã đăng ký trước đó.`
+        + (unknown ? ` Không tìm thấy ${unknown} mã sinh viên.` : '')
+        + (duplicates ? ` Có ${duplicates} dòng trùng trong file.` : '')
+        + (skipped.length ? ` Không nhập được ${skipped.length} danh sách: ${skipped.slice(0, 5).join(' | ')}${skipped.length > 5 ? ' | ...' : ''}` : '');
+      showNotice(skipped.length ? 'error' : 'success', summary);
+    } catch (exception) {
+      showNotice('error', exception instanceof Error ? exception.message : 'Không thể đọc file sinh viên.');
+    } finally {
+      setStudentWorkbookBusy(false);
+    }
+  };
+
   const certificateEventEnded = certificateTarget && (
     certificateTarget.status === 'Đã đóng'
     || certificateTarget.status === 'Đã kết thúc'
@@ -1055,11 +1413,31 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
         </footer>
       </section>
     </div>}
-    <PageTitle title="Quản lý sự kiện" subtitle="Sự kiện và đăng ký được đồng bộ trực tiếp từ hệ thống HUIT." onRefresh={onRefresh} loading={loading} action={canManage && <button className="rp-secondary-button" onClick={() => openForm()}><Plus size={16} /> Tạo sự kiện</button>} />
+    <PageTitle title="Quản lý sự kiện" subtitle="Sự kiện và đăng ký được đồng bộ trực tiếp từ hệ thống HUIT." onRefresh={onRefresh} loading={loading} action={<>
+      {canImportExcel && <>
+        <input ref={eventWorkbookInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={prepareEventWorkbook} hidden />
+        <input ref={studentWorkbookInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={importStudentWorkbook} hidden />
+        <button className="rp-secondary-button" onClick={() => eventWorkbookInput.current?.click()} disabled={busyAction === 'reading-events' || eventWorkbookBusy}>
+          <Upload size={16} /> Thêm sự kiện Excel
+        </button>
+        <button className="rp-secondary-button" onClick={() => studentWorkbookInput.current?.click()} disabled={studentWorkbookBusy}>
+          <Upload size={16} /> {studentWorkbookBusy ? 'Đang nhập sinh viên...' : 'Import sinh viên Excel'}
+        </button>
+      </>}
+      {canManage && <button className="rp-secondary-button" onClick={() => openForm()}><Plus size={16} /> Tạo sự kiện</button>}
+    </>} />
+    {eventWorkbookDraft && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !eventWorkbookBusy) setEventWorkbookDraft(null); }}>
+      <form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importEventWorkbook}>
+        <header><div><h2>Thêm sự kiện từ Excel</h2><p>{eventWorkbookDraft.events.length} sự kiện được đọc từ file. Có thể ghép sinh viên bằng mã hoặc tên sự kiện.</p></div><button type="button" className="rp-icon-button" onClick={() => setEventWorkbookDraft(null)} aria-label="Đóng" disabled={eventWorkbookBusy}><X size={18} /></button></header>
+        <div className="rp-form-grid">{[...new Set(eventWorkbookDraft.events.map((item) => item.organizerName))].map((name) =>
+          <label key={name}>{name}<select required value={eventUnitMappings[name] || ''} onChange={(event) => setEventUnitMappings({ ...eventUnitMappings, [name]: event.target.value })}><option value="">Chọn đơn vị tổ chức</option>{eventWorkbookDraft.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>)}</div>
+        <footer><button type="button" className="rp-secondary-button" onClick={() => setEventWorkbookDraft(null)} disabled={eventWorkbookBusy}>Hủy</button><button className="rp-secondary-button" disabled={eventWorkbookBusy}>{eventWorkbookBusy ? 'Đang nhập...' : 'Thêm sự kiện'}</button></footer>
+      </form>
+    </div>}
     <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên sự kiện, địa điểm, trạng thái..." />
     {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : events.length ? <div className="rp-event-grid">{events.map((item) => {
       const eventEnded = item.status === 'Đã đóng' || item.status === 'Đã kết thúc' || (item.endTime && new Date(item.endTime) <= new Date());
-      return <article className="rp-card rp-event-card" key={item.id}><button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className="rp-tag">{item.status || 'Sự kiện'}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><Award size={15} />{Number(item.certificateEnabled) === 1 || item.certificateEnabled === true ? 'Có cấp chứng nhận' : 'Không cấp chứng nhận'}</div><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions"><button className="rp-secondary-button" onClick={() => openForm(item)}><Settings size={15} /> Sửa</button><button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button>{(Number(item.certificateEnabled) === 1 || item.certificateEnabled === true) && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>}{item.status !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}<button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button></div>}</article>;
+      return <article className="rp-card rp-event-card" key={item.id}><button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className="rp-tag">{item.status || 'Sự kiện'}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><Award size={15} />{Number(item.certificateEnabled) === 1 || item.certificateEnabled === true ? 'Có cấp chứng nhận' : 'Không cấp chứng nhận'}</div><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions">{canImportExcel && <button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button>}{(Number(item.certificateEnabled) === 1 || item.certificateEnabled === true) && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>}{item.status !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}<button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button></div>}</article>;
     })}</div> : <EmptyPanel title="Chưa có sự kiện" message="Không tìm thấy sự kiện phù hợp." />}
     {form && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setForm(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={saveEvent}><header><div><h2>{form.id ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện'}</h2><p>{form.id || 'Nhập thông tin hoạt động.'}</p></div><button type="button" className="rp-icon-button" onClick={() => setForm(null)} aria-label="Đóng"><X size={18} /></button></header>{formError && <ErrorPanel message={formError} />}<div className="rp-form-grid"><label>Tên sự kiện<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>Đơn vị tổ chức<select required value={form.organizerId} onChange={(event) => setForm({ ...form, organizerId: event.target.value })}><option value="">Chọn đơn vị</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label>Bắt đầu<input type="datetime-local" required value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} /></label><label>Kết thúc<input type="datetime-local" required value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} /></label><label>Địa điểm<input required value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></label><label>Sức chứa<input type="number" min="1" required value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /></label><label className="rp-form-wide rp-checkbox-field"><input type="checkbox" checked={form.certificateEnabled === true} onChange={(event) => setForm({ ...form, certificateEnabled: event.target.checked })} /><span>Cấp chứng nhận cho người tham dự</span><small>Chỉ bật nếu sự kiện này sẽ phát hành giấy chứng nhận.</small></label><label className="rp-form-wide">Chọn ảnh từ máy<input key={imageInputVersion} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const imageFile = event.target.files?.[0] || null; setForm({ ...form, imageFile, ...(imageFile ? { imageUrl: '' } : {}) }); }} /><small className="rp-image-help">JPEG, PNG hoặc WebP, tối đa 5 MB. Ảnh sẽ tải lên khi lưu sự kiện.</small></label><label className="rp-form-wide">Hoặc dùng URL ảnh<input type="url" maxLength="1000" value={form.imageUrl} onChange={(event) => { if (form.imageFile) setImageInputVersion((version) => version + 1); setForm({ ...form, imageUrl: event.target.value, imageFile: null }); }} placeholder="https://..." /><small className="rp-image-help">Để trống cả hai trường để tự chọn ảnh theo chủ đề sự kiện.</small>{(imagePreview || form.imageUrl) && <img key={imagePreview || form.imageUrl} className="rp-event-image-preview" src={imagePreview || form.imageUrl} alt="Xem trước ảnh sự kiện" onError={(event) => { event.currentTarget.hidden = true; }} />}</label><label className="rp-form-wide">Mô tả<textarea rows="3" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Quyền lợi</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, benefits: [...form.benefits, { type: 'Khác', points: '0', content: '' }] })} disabled={form.benefits.length >= 20}><Plus size={15} /> Thêm quyền lợi</button></div>{form.benefits.map((benefit, index) => <div className="rp-editor-row rp-benefit-row" key={`benefit-${index}`}><select aria-label={`Loại quyền lợi ${index + 1}`} value={benefit.type} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value } : item) })}>{['Điểm rèn luyện', 'Điểm công tác xã hội', 'Chứng nhận', 'Khác'].map((type) => <option key={type} value={type}>{type}</option>)}</select><input aria-label={`Số điểm quyền lợi ${index + 1}`} type="number" min="0" step="1" required value={benefit.points} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, points: event.target.value } : item) })} placeholder="Số điểm" /><input aria-label={`Nội dung quyền lợi ${index + 1}`} maxLength="500" required value={benefit.content} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, content: event.target.value } : item) })} placeholder="Nội dung quyền lợi" /><button type="button" className="rp-icon-button" aria-label={`Xóa quyền lợi ${index + 1}`} onClick={() => setForm({ ...form, benefits: form.benefits.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section><label className="rp-form-wide">Nội quy<textarea rows="3" value={form.rules} onChange={(event) => setForm({ ...form, rules: event.target.value })} placeholder="Mỗi dòng một nội quy" /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Khung giờ điểm danh</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, periods: [...form.periods, { name: `Đợt ${form.periods.length + 1}`, startTime: form.startTime, endTime: form.endTime }] })} disabled={form.periods.length >= 12}><Plus size={15} /> Thêm khung giờ</button></div><small>Chọn ngày giờ trên lịch; để trống danh sách nếu điểm danh trong toàn bộ thời gian sự kiện.</small>{form.periods.map((period, index) => <div className="rp-editor-row rp-period-row" key={`period-${index}`}><input aria-label={`Tên khung điểm danh ${index + 1}`} required maxLength="60" value={period.name} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} placeholder="Tên khung, ví dụ: Đợt 1" /><label>Bắt đầu<input aria-label={`Bắt đầu khung ${index + 1}`} type="datetime-local" required value={period.startTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, startTime: event.target.value } : item) })} /></label><label>Kết thúc<input aria-label={`Kết thúc khung ${index + 1}`} type="datetime-local" required value={period.endTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, endTime: event.target.value } : item) })} /></label><button type="button" className="rp-icon-button" aria-label={`Xóa khung điểm danh ${index + 1}`} onClick={() => setForm({ ...form, periods: form.periods.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section></div><footer><button type="button" className="rp-secondary-button" onClick={() => setForm(null)} disabled={saving}>Hủy</button><button className="rp-secondary-button" disabled={saving}>{saving ? 'Đang lưu...' : form.id ? 'Lưu thay đổi' : 'Tạo sự kiện'}</button></footer></form></div>}
     {importTarget && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) setImportTarget(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importStudents}><header><div><h2>Nhập sinh viên đăng ký</h2><p>{importTarget.name}</p></div><button type="button" className="rp-icon-button" onClick={() => setImportTarget(null)} aria-label="Đóng"><X size={18} /></button></header><label>Chọn file Excel (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={readEventStudentWorkbook} disabled={Boolean(busyAction)} />{busyAction === 'reading-import' && <small role="status">Đang đọc file Excel...</small>}</label><label>Mã sinh viên<textarea rows="7" required value={studentIds} onChange={(event) => setStudentIds(event.target.value)} placeholder="Mỗi dòng một mã sinh viên; có thể phân tách bằng dấu phẩy hoặc dấu chấm phẩy." /></label><footer><button type="button" className="rp-secondary-button" onClick={() => setImportTarget(null)} disabled={busyAction === 'import'}>Hủy</button><button className="rp-secondary-button" disabled={busyAction === 'import'}>{busyAction === 'import' ? 'Đang nhập...' : 'Nhập sinh viên'}</button></footer></form></div>}

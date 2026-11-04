@@ -7,6 +7,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/organizer_events_controller.dart';
+import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/utils/excel_file_decoder.dart';
@@ -127,9 +128,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       await controller.loadUnits();
       if (!context.mounted) return;
       if (controller.unitsError.value.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(controller.unitsError.value)),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(controller.unitsError.value)));
         return;
       }
       if (controller.units.isEmpty) {
@@ -174,6 +174,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
 
         try {
           await controller.createEvent(
+            sourceId: event.sourceId,
             name: event.name,
             organizerId: unitMappings[event.organizerName]!,
             startTime: startTime,
@@ -200,7 +201,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         if (failures.isNotEmpty) ...[
           'Không nhập được ${failures.length} sự kiện:',
           ...failures.take(10),
-          if (failures.length > 10) '... và ${failures.length - 10} sự kiện khác.',
+          if (failures.length > 10)
+            '... và ${failures.length - 10} sự kiện khác.',
         ],
         'Giờ bắt đầu mặc định là 09:00; nếu thiếu giờ kết thúc, dùng thời lượng 2 giờ. '
             'Sĩ số tối đa mặc định là 2.000.',
@@ -373,17 +375,31 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       var duplicateRows = 0;
       final skipped = <String>[];
       for (final group in groups) {
-        final matches = controller.items.where(
-          (event) =>
-              event.id.toUpperCase() == group.targetId.toUpperCase() ||
-              (group.targetName.isNotEmpty &&
-                  _normalizeMatchText(event.name) ==
-                      _normalizeMatchText(group.targetName)),
-        );
+        var matches = controller.items
+            .where(
+              (event) => event.id.toUpperCase() == group.targetId.toUpperCase(),
+            )
+            .toList();
+        if (matches.isEmpty && group.targetName.isNotEmpty) {
+          matches = controller.items
+              .where(
+                (event) =>
+                    _normalizeMatchText(event.name) ==
+                    _normalizeMatchText(group.targetName),
+              )
+              .toList();
+        }
         if (matches.isEmpty) {
           skipped.add(
             '${group.targetName.isEmpty ? group.targetId : group.targetName} '
             '(${group.targetId}): chưa có sự kiện tương ứng trong hệ thống.',
+          );
+          continue;
+        }
+        if (matches.length > 1) {
+          skipped.add(
+            '${group.targetName.isEmpty ? group.targetId : group.targetName}: '
+            'có nhiều sự kiện trùng thông tin.',
           );
           continue;
         }
@@ -463,6 +479,11 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       controller.statusRefreshTick.value;
       final auth = Get.find<AuthController>();
       final canManageEvents = auth.canManageEvents;
+      final currentRole = auth.currentUser.value?['role']?.toString() ?? '';
+      final canImportExcel =
+          auth.role.value == Role.admin ||
+          auth.role.value == Role.organizer ||
+          RoleX.isEmployee(currentRole);
       final canDeleteEvents = canManageEvents;
       final query = _query.trim().toLowerCase();
       final filteredItems = controller.items.where((event) {
@@ -518,10 +539,10 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                     style: AppTextStyles.displayLg(colors.foreground),
                   ),
                 ),
-                if (canManageEvents)
+                if (canImportExcel)
                   OutlinedButton.icon(
-                    onPressed: _importingEventsFromExcel ||
-                            _importingStudentsFromExcel
+                    onPressed:
+                        _importingEventsFromExcel || _importingStudentsFromExcel
                         ? null
                         : () => _importEventsFromExcel(context, controller),
                     icon: _importingEventsFromExcel
@@ -537,10 +558,10 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                           : 'Thêm sự kiện Excel',
                     ),
                   ),
-                if (canManageEvents)
+                if (canImportExcel)
                   OutlinedButton.icon(
-                    onPressed: _importingStudentsFromExcel ||
-                            _importingEventsFromExcel
+                    onPressed:
+                        _importingStudentsFromExcel || _importingEventsFromExcel
                         ? null
                         : () => _importStudentRosterFromExcel(
                             context,
@@ -561,8 +582,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   ),
                 if (canManageEvents)
                   FilledButton.icon(
-                    onPressed: _importingEventsFromExcel ||
-                            _importingStudentsFromExcel
+                    onPressed:
+                        _importingEventsFromExcel || _importingStudentsFromExcel
                         ? null
                         : () async {
                             await controller.loadUnits();
@@ -1162,7 +1183,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         ),
         actionsAlignment: MainAxisAlignment.end,
         actions: [
-          if (Get.find<AuthController>().canManageEvents &&
+          if ((Get.find<AuthController>().role.value == Role.admin ||
+                  Get.find<AuthController>().role.value == Role.organizer ||
+                  RoleX.isEmployee(
+                    Get.find<AuthController>().currentUser.value?['role']
+                            ?.toString() ??
+                        '',
+                  )) &&
               !event.isClosed &&
               event.endTime.isAfter(DateTime.now()))
             OutlinedButton.icon(
