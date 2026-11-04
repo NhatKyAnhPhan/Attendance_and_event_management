@@ -665,10 +665,28 @@ async function ensurePasswordResetChallengesTable() {
 }
 
 async function ensureUserFcmTokensTable() {
+  const [[userIdDefinition]] = await pool.query(
+    `SELECT COLUMN_TYPE AS columnType,
+            CHARACTER_SET_NAME AS characterSet,
+            COLLATION_NAME AS collation
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'NguoiDung'
+       AND COLUMN_NAME = 'MaND'`,
+  );
+  if (
+    !userIdDefinition
+    || !/^(?:varchar|char)\(\d+\)$/i.test(userIdDefinition.columnType)
+    || !/^[a-z0-9_]+$/i.test(userIdDefinition.characterSet || '')
+    || !/^[a-z0-9_]+$/i.test(userIdDefinition.collation || '')
+  ) {
+    throw new Error('Không thể xác định kiểu dữ liệu tương thích cho NguoiDung.MaND.');
+  }
+  const userIdColumn = `${userIdDefinition.columnType} CHARACTER SET ${userIdDefinition.characterSet} COLLATE ${userIdDefinition.collation}`;
   await pool.query(
     `CREATE TABLE IF NOT EXISTS user_fcm_tokens (
        token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-       user_id VARCHAR(30) NOT NULL,
+       user_id ${userIdColumn} NOT NULL,
        token TEXT NOT NULL,
        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
          ON UPDATE CURRENT_TIMESTAMP,
