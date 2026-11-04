@@ -685,6 +685,8 @@ class _StudentAttendanceTable extends StatelessWidget {
                 DataColumn(label: Text('Đi muộn')),
                 DataColumn(label: Text('Vắng')),
                 DataColumn(label: Text('Vắng có phép')),
+                DataColumn(label: Text('Tỷ lệ đi học')),
+                DataColumn(label: Text('Kết quả')),
               ],
               rows: students.indexed.map((entry) {
                 final index = entry.$1;
@@ -726,6 +728,16 @@ class _StudentAttendanceTable extends StatelessWidget {
                         style: TextStyle(color: colors.primary),
                       ),
                     ),
+                    DataCell(Text('${_number(student['attendancePercent'])}%')),
+                    DataCell(Text(
+                      student['attendanceResult']?.toString() ?? 'Chưa xác định',
+                      style: TextStyle(
+                        color: student['attendanceEligible'] == true
+                            ? colors.success
+                            : colors.danger,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    )),
                   ],
                 );
               }).toList(),

@@ -19,6 +19,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   final _gpsController = TextEditingController();
   final _lockController = TextEditingController();
   final _qrController = TextEditingController();
+  final _attendanceThresholdController = TextEditingController();
   List<Map<String, dynamic>> _classes = [];
   List<Map<String, dynamic>> _events = [];
   String _scopeType = 'global';
@@ -26,9 +27,13 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   bool _inheritGps = false;
   bool _inheritLock = false;
   bool _inheritQr = false;
+  bool _inheritAttendanceThreshold = false;
   bool _loading = true;
   bool _saving = false;
   String? _error;
+
+  bool get _isSpecificScope => _scopeType == 'class' || _scopeType == 'event';
+  bool get _isClassScope => _scopeType == 'class' || _scopeType == 'all_classes';
 
   @override
   void initState() {
@@ -41,6 +46,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     _gpsController.dispose();
     _lockController.dispose();
     _qrController.dispose();
+    _attendanceThresholdController.dispose();
     super.dispose();
   }
 
@@ -67,7 +73,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       : [];
 
   Future<void> _loadConfiguration() async {
-    if (_scopeType != 'global' && _scopeId.isEmpty) {
+    if (_isSpecificScope && _scopeId.isEmpty) {
       setState(() => _loading = false);
       return;
     }
@@ -76,9 +82,9 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       _error = null;
     });
     try {
-      final query = _scopeType == 'global'
-          ? '?scopeType=global'
-          : '?scopeType=$_scopeType&scopeId=${Uri.encodeQueryComponent(_scopeId)}';
+      final query = _isSpecificScope
+          ? '?scopeType=$_scopeType&scopeId=${Uri.encodeQueryComponent(_scopeId)}'
+          : '?scopeType=$_scopeType';
       final body = await _client.get('${ApiEndpoints.adminParameters}$query');
       if (!mounted) return;
       final overrides = Map<String, dynamic>.from(body['overrides'] as Map);
@@ -88,6 +94,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         _inheritLock = _scopeType != 'global' &&
             overrides['eventRegistrationLockHours'] == null;
         _inheritQr = _scopeType != 'global' && overrides['qrDurationMinutes'] == null;
+        _inheritAttendanceThreshold = _scopeType != 'global' &&
+            overrides['attendanceThresholdPercent'] == null;
         _gpsController.text = (overrides['gpsRadiusMeters'] ??
                 effective['gpsRadiusMeters'])
             .toString();
@@ -97,6 +105,10 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         _qrController.text = (overrides['qrDurationMinutes'] ??
                 effective['qrDurationMinutes'])
             .toString();
+        _attendanceThresholdController.text =
+            (overrides['attendanceThresholdPercent'] ??
+                    effective['attendanceThresholdPercent'])
+                .toString();
         _loading = false;
       });
     } on ApiException catch (error) {
@@ -112,7 +124,9 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     final gps = int.tryParse(_gpsController.text.trim());
     final lock = int.tryParse(_lockController.text.trim());
     final qr = int.tryParse(_qrController.text.trim());
-    if (gps == null || qr == null || (_scopeType != 'class' && lock == null)) {
+    final attendanceThreshold = int.tryParse(_attendanceThresholdController.text.trim());
+    if (gps == null || qr == null || attendanceThreshold == null ||
+        (!_isClassScope && lock == null)) {
       _showMessage('Vui lòng nhập tham số bằng số nguyên.');
       return;
     }
@@ -125,14 +139,18 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         ApiEndpoints.adminParameters,
         data: {
           'scopeType': _scopeType,
-          if (_scopeType != 'global') 'scopeId': _scopeId,
+          if (_isSpecificScope) 'scopeId': _scopeId,
           'gpsRadiusMeters': _scopeType != 'global' && _inheritGps ? null : gps,
-          'eventRegistrationLockHours': _scopeType == 'class'
+          'eventRegistrationLockHours': _isClassScope
               ? null
               : _scopeType != 'global' && _inheritLock
                   ? null
                   : lock,
           'qrDurationMinutes': _scopeType != 'global' && _inheritQr ? null : qr,
+          'attendanceThresholdPercent': _scopeType != 'global' &&
+                  _inheritAttendanceThreshold
+              ? null
+              : attendanceThreshold,
         },
       );
       await _loadConfiguration();
@@ -155,7 +173,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     setState(() {
       _scopeType = value;
       final options = value == 'class' ? _classes : _events;
-      _scopeId = value == 'global' || options.isEmpty
+      _scopeId = (value != 'class' && value != 'event') || options.isEmpty
           ? ''
           : options.first['id']?.toString() ?? '';
     });
@@ -227,12 +245,16 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         child: CircularProgressIndicator(),
       ));
     }
-    final options = _scopeType == 'class' ? _classes : _events;
+    final options = _scopeType == 'class'
+        ? _classes
+        : _scopeType == 'event'
+            ? _events
+            : <Map<String, dynamic>>[];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Chọn phạm vi để xem và chỉnh tham số áp dụng. Tham số riêng sẽ ghi đè mặc định toàn hệ thống.',
+          'Chọn toàn hệ thống, toàn bộ lớp/sự kiện hoặc cấu hình riêng. Cấu hình riêng được ưu tiên hơn phạm vi rộng.',
           style: AppTextStyles.bodySm(colors.mutedForeground),
         ),
         const SizedBox(height: 14),
@@ -241,12 +263,14 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           decoration: const InputDecoration(labelText: 'Phạm vi cài đặt'),
           items: const [
             DropdownMenuItem(value: 'global', child: Text('Toàn hệ thống')),
+            DropdownMenuItem(value: 'all_classes', child: Text('Toàn bộ lớp học phần')),
             DropdownMenuItem(value: 'class', child: Text('Một lớp học phần')),
+            DropdownMenuItem(value: 'all_events', child: Text('Toàn bộ sự kiện')),
             DropdownMenuItem(value: 'event', child: Text('Một sự kiện')),
           ],
           onChanged: _changeScopeType,
         ),
-        if (_scopeType != 'global') ...[
+        if (_isSpecificScope) ...[
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             value: _scopeId.isEmpty ? null : _scopeId,
@@ -276,7 +300,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           const SizedBox(height: 12),
           Text(_error!, style: AppTextStyles.bodySm(Colors.red.shade700)),
         ],
-        if (_loading && _scopeId.isNotEmpty) ...[
+        if (_loading) ...[
           const SizedBox(height: 16),
           const LinearProgressIndicator(),
         ],
@@ -293,7 +317,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           minimum: 10,
           maximum: 5000,
         ),
-        if (_scopeType != 'class') ...[
+        if (!_isClassScope) ...[
           const SizedBox(height: 10),
           _parameterField(
             colors,
@@ -321,11 +345,31 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           minimum: 1,
           maximum: 180,
         ),
+        const SizedBox(height: 10),
+        _parameterField(
+          colors,
+          label: 'Tỷ lệ điểm danh tối thiểu để đạt',
+          unit: '%',
+          controller: _attendanceThresholdController,
+          inherited: _inheritAttendanceThreshold,
+          onInheritanceChanged: _scopeType == 'global'
+              ? null
+              : (value) => setState(() => _inheritAttendanceThreshold = value),
+          minimum: 0,
+          maximum: 100,
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'Có mặt và đi trễ được tính là tham dự; buổi vắng có phép vẫn tính là vắng.',
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+        ),
         const SizedBox(height: 16),
         Align(
           alignment: Alignment.centerRight,
           child: FilledButton.icon(
-            onPressed: _loading || _saving || (_scopeType != 'global' && _scopeId.isEmpty)
+            onPressed: _loading || _saving || (_isSpecificScope && _scopeId.isEmpty)
                 ? null
                 : _save,
             icon: _saving
@@ -380,7 +424,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
             contentPadding: EdgeInsets.zero,
             controlAffinity: ListTileControlAffinity.leading,
             title: Text(
-              'Dùng tham số toàn hệ thống',
+              'Dùng tham số từ phạm vi rộng hơn',
               style: AppTextStyles.bodyXs(colors.mutedForeground),
             ),
             onChanged: (value) => onInheritanceChanged(value ?? false),

@@ -16,6 +16,7 @@ const {
   isMailConfigured,
 } = require('./certificate_mailer');
 const { createPasswordResetHandlers } = require('./password_reset_handler');
+const { sendClassAttendancePush, tokenHash } = require('./push_notifications');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -23,12 +24,17 @@ const jwtSecret = process.env.JWT_SECRET || 'change-this-development-secret';
 const eventImagesDirectory = path.resolve(
   process.env.EVENT_IMAGES_DIRECTORY || path.join(__dirname, 'uploads', 'events'),
 );
+const eventRegistrationFormsDirectory = path.resolve(
+  process.env.EVENT_REGISTRATION_FORMS_DIRECTORY
+    || path.join(__dirname, 'uploads', 'event-registration-forms'),
+);
 const eventImageExtensions = new Map([
   ['image/jpeg', '.jpg'],
   ['image/png', '.png'],
   ['image/webp', '.webp'],
 ]);
 fs.mkdirSync(eventImagesDirectory, { recursive: true });
+fs.mkdirSync(eventRegistrationFormsDirectory, { recursive: true });
 
 const eventImageUpload = multer({
   storage: multer.diskStorage({
@@ -41,6 +47,22 @@ const eventImageUpload = multer({
   fileFilter: (_request, file, callback) => {
     if (!eventImageExtensions.has(file.mimetype)) {
       callback(new Error('Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP.'));
+      return;
+    }
+    callback(null, true);
+  },
+});
+const eventRegistrationFormUpload = multer({
+  storage: multer.diskStorage({
+    destination: eventRegistrationFormsDirectory,
+    filename: (_request, file, callback) => {
+      callback(null, `${crypto.randomUUID()}.pdf`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, callback) => {
+    if (file.mimetype !== 'application/pdf' || path.extname(file.originalname).toLowerCase() !== '.pdf') {
+      callback(new Error('Chỉ chấp nhận tệp PDF.'));
       return;
     }
     callback(null, true);
@@ -147,6 +169,25 @@ function validateEventImageUrl(value) {
   return { value: imageUrl };
 }
 
+function validateEventRegistrationFormUrl(value) {
+  if (value === undefined || value === null || value === '') {
+    return { value: '' };
+  }
+  if (typeof value !== 'string' || value.trim().length > 1000) {
+    return { message: 'Đường dẫn đơn đăng ký không hợp lệ (tối đa 1000 ký tự).' };
+  }
+  const formUrl = value.trim();
+  try {
+    const parsedUrl = new URL(formUrl);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
+      return { message: 'Đơn đăng ký phải dùng đường dẫn HTTP hoặc HTTPS hợp lệ.' };
+    }
+  } catch {
+    return { message: 'Đường dẫn đơn đăng ký không hợp lệ.' };
+  }
+  return { value: formUrl };
+}
+
 async function ensureEventImageColumn() {
   const [columns] = await pool.query("SHOW COLUMNS FROM SuKien LIKE 'HinhAnh'");
   if (!columns.length) {
@@ -168,6 +209,20 @@ async function ensureEventImageColumn() {
        WHERE Masukien = ? AND (HinhAnh IS NULL OR TRIM(HinhAnh) = '')`,
       [getEventImageUrl(event.name, event.description), event.id],
     );
+  }
+}
+
+async function ensureEventRegistrationFormColumn() {
+  const [columns] = await pool.query(
+    "SHOW COLUMNS FROM SuKien LIKE 'DonDangKy'",
+  );
+  if (columns.length) return;
+  try {
+    await pool.query(
+      'ALTER TABLE SuKien ADD COLUMN DonDangKy VARCHAR(1000) NULL',
+    );
+  } catch (error) {
+    if (error.code !== 'ER_DUP_FIELDNAME') throw error;
   }
 }
 
@@ -484,17 +539,23 @@ async function ensureSystemParametersTable() {
        gps_radius_meters INT NULL,
        event_registration_lock_hours INT NULL,
        qr_duration_minutes INT NULL,
+       attendance_threshold_percent INT NULL,
        updated_by VARCHAR(30) NULL,
        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
          ON UPDATE CURRENT_TIMESTAMP,
        PRIMARY KEY (scope_type, scope_id)
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
+  const [columns] = await pool.query('SHOW COLUMNS FROM system_parameters');
+  if (!columns.some((column) => column.Field === 'attendance_threshold_percent')) {
+    await pool.query('ALTER TABLE system_parameters ADD COLUMN attendance_threshold_percent INT NULL AFTER qr_duration_minutes');
+  }
   await pool.execute(
     `INSERT IGNORE INTO system_parameters
        (scope_type, scope_id, gps_radius_meters,
-        event_registration_lock_hours, qr_duration_minutes)
-     VALUES ('global', '', 100, 24, 15)`,
+        event_registration_lock_hours, qr_duration_minutes,
+        attendance_threshold_percent)
+     VALUES ('global', '', 100, 24, 15, 100)`,
   );
 }
 
@@ -548,6 +609,23 @@ async function ensurePasswordResetChallengesTable() {
        PRIMARY KEY (user_id),
        INDEX idx_password_reset_challenges_email (email),
        CONSTRAINT fk_password_reset_challenges_user
+         FOREIGN KEY (user_id) REFERENCES NguoiDung (MaND)
+         ON UPDATE CASCADE ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+}
+
+async function ensureUserFcmTokensTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS user_fcm_tokens (
+       token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       user_id VARCHAR(30) NOT NULL,
+       token TEXT NOT NULL,
+       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+         ON UPDATE CURRENT_TIMESTAMP,
+       PRIMARY KEY (token_hash),
+       INDEX idx_user_fcm_tokens_user (user_id),
+       CONSTRAINT fk_user_fcm_tokens_user
          FOREIGN KEY (user_id) REFERENCES NguoiDung (MaND)
          ON UPDATE CASCADE ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -886,6 +964,16 @@ app.use('/uploads/events', express.static(eventImagesDirectory, {
   maxAge: '1y',
   setHeaders: (response) => response.setHeader('X-Content-Type-Options', 'nosniff'),
 }));
+app.use('/uploads/event-registration-forms', express.static(eventRegistrationFormsDirectory, {
+  dotfiles: 'deny',
+  fallthrough: false,
+  index: false,
+  maxAge: '1y',
+  setHeaders: (response) => {
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Content-Disposition', 'inline');
+  },
+}));
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/', (_request, response) => {
@@ -957,12 +1045,23 @@ async function isValidEventImageFile(file) {
   }
 }
 
-async function removeEventImageFile(filePath) {
+async function isValidEventRegistrationFormFile(file) {
+  const handle = await fs.promises.open(file.path, 'r');
+  try {
+    const header = Buffer.alloc(5);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    return bytesRead === header.length && header.toString('ascii') === '%PDF-';
+  } finally {
+    await handle.close();
+  }
+}
+
+async function removeUploadedEventFile(filePath) {
   try {
     await fs.promises.unlink(filePath);
   } catch (error) {
     if (error.code !== 'ENOENT') {
-      console.error('Event image cleanup failed:', error.message);
+      console.error('Event upload cleanup failed:', error.message);
     }
   }
 }
@@ -986,7 +1085,7 @@ app.post(
     }
     try {
       if (!await isValidEventImageFile(request.file)) {
-        await removeEventImageFile(request.file.path);
+        await removeUploadedEventFile(request.file.path);
         return response.status(400).json({
           message: 'Nội dung tệp không khớp với ảnh JPEG, PNG hoặc WebP.',
         });
@@ -998,9 +1097,49 @@ app.post(
         imageUrl: `${publicBaseUrl}/uploads/events/${encodeURIComponent(request.file.filename)}`,
       });
     } catch (error) {
-      await removeEventImageFile(request.file.path);
+      await removeUploadedEventFile(request.file.path);
       console.error('Event image upload failed:', error.message);
       return response.status(500).json({ message: 'Không thể lưu ảnh sự kiện.' });
+    }
+  },
+);
+
+app.post(
+  '/api/organizer/event-registration-forms',
+  requireAuth,
+  requireRole(...eventManagerRoles),
+  (request, response, next) => {
+    eventRegistrationFormUpload.single('registrationForm')(request, response, (error) => {
+      if (!error) return next();
+      const status = error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE'
+        ? 413
+        : 400;
+      return response.status(status).json({
+        message: error.message || 'Không thể tải đơn đăng ký lên.',
+      });
+    });
+  },
+  async (request, response) => {
+    if (!request.file) {
+      return response.status(400).json({ message: 'Vui lòng chọn tệp đơn đăng ký PDF.' });
+    }
+    try {
+      if (!await isValidEventRegistrationFormFile(request.file)) {
+        await removeUploadedEventFile(request.file.path);
+        return response.status(400).json({
+          message: 'Nội dung tệp không đúng định dạng PDF.',
+        });
+      }
+      const publicBaseUrl = (
+        process.env.PUBLIC_API_BASE_URL || `${request.protocol}://${request.get('host')}`
+      ).replace(/\/+$/, '');
+      return response.status(201).json({
+        registrationFormUrl: `${publicBaseUrl}/uploads/event-registration-forms/${encodeURIComponent(request.file.filename)}`,
+      });
+    } catch (error) {
+      await removeUploadedEventFile(request.file.path);
+      console.error('Event registration form upload failed:', error.message);
+      return response.status(500).json({ message: 'Không thể lưu đơn đăng ký PDF.' });
     }
   },
 );
@@ -1120,6 +1259,38 @@ app.get('/api/me', requireAuth, async (request, response) => {
   }
 });
 app.put('/api/me', requireAuth, createUpdateProfileHandler(pool));
+app.post('/api/me/fcm-token', requireAuth, async (request, response) => {
+  const token = typeof request.body?.token === 'string' ? request.body.token.trim() : '';
+  if (!token || token.length > 4096) {
+    return response.status(400).json({ message: 'FCM token không hợp lệ.' });
+  }
+  try {
+    await pool.execute(
+      `INSERT INTO user_fcm_tokens (token_hash, user_id, token)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), token = VALUES(token)`,
+      [tokenHash(token), request.auth.sub, token],
+    );
+    return response.json({ ok: true });
+  } catch (error) {
+    console.error('FCM token registration failed:', error.message);
+    return response.status(500).json({ message: 'Không thể đăng ký thiết bị nhận thông báo.' });
+  }
+});
+app.post('/api/me/fcm-token/unregister', requireAuth, async (request, response) => {
+  const token = typeof request.body?.token === 'string' ? request.body.token.trim() : '';
+  if (!token) return response.status(400).json({ message: 'FCM token không hợp lệ.' });
+  try {
+    await pool.execute(
+      'DELETE FROM user_fcm_tokens WHERE token_hash = ? AND user_id = ?',
+      [tokenHash(token), request.auth.sub],
+    );
+    return response.json({ ok: true });
+  } catch (error) {
+    console.error('FCM token removal failed:', error.message);
+    return response.status(500).json({ message: 'Không thể hủy đăng ký thiết bị.' });
+  }
+});
 /*
 /*
 app.get('/api/notifications', requireAuth, async (request, response) => {
@@ -1540,6 +1711,10 @@ app.get('/api/events', requireAuth, async (request, response) => {
       [request.auth.sub],
     );
     const { effective: globalParameters } = await getEffectiveAttendanceParameters();
+    const [[allEventParameters]] = await pool.execute(
+      `SELECT event_registration_lock_hours AS eventRegistrationLockHours
+       FROM system_parameters WHERE scope_type = 'all_events' AND scope_id = '' LIMIT 1`,
+    );
     const eventParameterRows = rows.length > 0
       ? (await pool.execute(
         `SELECT scope_id AS scopeId,
@@ -1554,6 +1729,7 @@ app.get('/api/events', requireAuth, async (request, response) => {
     );
     for (const row of rows) {
       const lockHours = eventLockOverrides.get(String(row.id))
+        ?? allEventParameters?.eventRegistrationLockHours
         ?? globalParameters.eventRegistrationLockHours;
       const registrationLockAt = new Date(row.startTime).getTime()
         - Number(lockHours) * 60 * 60 * 1000;
@@ -1576,6 +1752,7 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
       [
         "SELECT sk.Masukien AS id, sk.Tensukien AS name,",
         "COALESCE(sk.HinhAnh, '') AS imageUrl,",
+        "COALESCE(sk.DonDangKy, '') AS registrationFormUrl,",
         "sk.Mota AS description, COALESCE(sk.Diadiem, '') AS location,",
         "sk.Thoigianbatdau AS startTime, sk.Thoigianketthuc AS endTime,",
         "COALESCE(sk.Soluongtoida, 0) AS capacity,",
@@ -2279,6 +2456,7 @@ const defaultAttendanceParameters = {
   gpsRadiusMeters: 100,
   eventRegistrationLockHours: 24,
   qrDurationMinutes: 15,
+  attendanceThresholdPercent: 100,
 };
 
 async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = '', executor = pool) {
@@ -2286,33 +2464,92 @@ async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = 
     const [rows] = await executor.execute(
       `SELECT gps_radius_meters AS gpsRadiusMeters,
               event_registration_lock_hours AS eventRegistrationLockHours,
-              qr_duration_minutes AS qrDurationMinutes
+              qr_duration_minutes AS qrDurationMinutes,
+              attendance_threshold_percent AS attendanceThresholdPercent
        FROM system_parameters WHERE scope_type = ? AND scope_id = ? LIMIT 1`,
       [type, id],
     );
     return rows[0] || null;
   };
   const globalRow = await selectParameters('global', '');
-  const global = { ...defaultAttendanceParameters, ...(globalRow || {}) };
+  const global = {
+    ...defaultAttendanceParameters,
+    ...(globalRow || {}),
+    attendanceThresholdPercent: Number(
+      globalRow?.attendanceThresholdPercent ?? defaultAttendanceParameters.attendanceThresholdPercent,
+    ),
+  };
+  const isGroupScope = ['all_classes', 'all_events'].includes(scopeType);
+  const entityGroupScope = scopeType === 'class'
+    ? 'all_classes'
+    : scopeType === 'event'
+      ? 'all_events'
+      : null;
+  const groupRow = isGroupScope
+    ? await selectParameters(scopeType, '')
+    : entityGroupScope
+      ? await selectParameters(entityGroupScope, '')
+      : null;
   const override = scopeType === 'global'
     ? global
-    : await selectParameters(scopeType, scopeId);
+    : isGroupScope
+      ? groupRow
+      : await selectParameters(scopeType, scopeId);
   const overrides = scopeType === 'global'
     ? global
     : {
       gpsRadiusMeters: override?.gpsRadiusMeters ?? null,
       eventRegistrationLockHours: override?.eventRegistrationLockHours ?? null,
       qrDurationMinutes: override?.qrDurationMinutes ?? null,
+      attendanceThresholdPercent: override?.attendanceThresholdPercent ?? null,
     };
   const effective = scopeType === 'global'
     ? global
     : {
-      gpsRadiusMeters: overrides.gpsRadiusMeters ?? global.gpsRadiusMeters,
+      gpsRadiusMeters: overrides.gpsRadiusMeters
+        ?? groupRow?.gpsRadiusMeters ?? global.gpsRadiusMeters,
       eventRegistrationLockHours:
-        overrides.eventRegistrationLockHours ?? global.eventRegistrationLockHours,
-      qrDurationMinutes: overrides.qrDurationMinutes ?? global.qrDurationMinutes,
+        overrides.eventRegistrationLockHours
+          ?? groupRow?.eventRegistrationLockHours ?? global.eventRegistrationLockHours,
+      qrDurationMinutes: overrides.qrDurationMinutes
+        ?? groupRow?.qrDurationMinutes ?? global.qrDurationMinutes,
+      attendanceThresholdPercent:
+        overrides.attendanceThresholdPercent
+          ?? groupRow?.attendanceThresholdPercent ?? global.attendanceThresholdPercent,
     };
   return { global, overrides, effective };
+}
+
+async function filterEligibleEventAttendees(eventId, attendees) {
+  if (attendees.length === 0) return [];
+  const { effective } = await getEffectiveAttendanceParameters('event', eventId);
+  const [[sessionSummary]] = await pool.execute(
+    `SELECT COUNT(*) AS totalSessions FROM event_attendance_sessions WHERE event_id = ?`,
+    [eventId],
+  );
+  const [sessionAttendance] = await pool.execute(
+    `SELECT student_id AS studentId, COUNT(DISTINCT session_id) AS attendedSessions
+     FROM event_attendance_records WHERE event_id = ? GROUP BY student_id`,
+    [eventId],
+  );
+  const [legacyAttendance] = Number(sessionSummary.totalSessions) === 0
+    ? await pool.execute(
+      `SELECT student_id AS studentId FROM event_attendance WHERE event_id = ?`,
+      [eventId],
+    )
+    : [[]];
+  const attendedByStudent = new Map(sessionAttendance.map((row) => [
+    String(row.studentId), Number(row.attendedSessions),
+  ]));
+  for (const row of legacyAttendance) attendedByStudent.set(String(row.studentId), 1);
+  const totalSessions = Number(sessionSummary.totalSessions);
+  const threshold = Number(effective.attendanceThresholdPercent);
+  return attendees.filter((attendee) => {
+    const attended = attendedByStudent.get(String(attendee.studentId)) || 0;
+    return totalSessions === 0
+      ? threshold === 0 || attended > 0
+      : attended * 100 >= threshold * totalSessions;
+  });
 }
 
 // Đọc và kiểm tra vĩ độ, kinh độ từ request hoặc payload QR.
@@ -3097,6 +3334,9 @@ app.get('/api/reports/attendance/classes/:classId', requireAuth, requireRole('Qu
       });
     }
 
+    const { effective: classParameters } = await getEffectiveAttendanceParameters(
+      'class', classInfo.id,
+    );
     const [students] = await pool.execute(
       `SELECT tvl.Masv AS studentId,
               COALESCE(nd.Hoten, tvl.Masv) AS studentName,
@@ -3141,6 +3381,28 @@ app.get('/api/reports/attendance/classes/:classId', requireAuth, requireRole('Qu
         late: Number(student.late || 0),
         absent: Number(student.absent || 0),
         excused: Number(student.excused || 0),
+        attendancePercent: Number(student.totalSessions || 0) > 0
+          ? Math.round((Number(student.present || 0) + Number(student.late || 0)) * 100
+            / Number(student.totalSessions || 0))
+          : 0,
+        attendanceThresholdPercent: Number(classParameters.attendanceThresholdPercent),
+        requiredAttendanceSessions: Math.ceil(
+          Number(student.totalSessions || 0)
+            * Number(classParameters.attendanceThresholdPercent) / 100,
+        ),
+        maxAttendanceAbsences: Number(student.totalSessions || 0) - Math.ceil(
+          Number(student.totalSessions || 0)
+            * Number(classParameters.attendanceThresholdPercent) / 100,
+        ),
+        attendanceEligible: Number(student.totalSessions || 0) > 0
+          && (Number(student.present || 0) + Number(student.late || 0)) * 100
+            >= Number(classParameters.attendanceThresholdPercent) * Number(student.totalSessions || 0),
+        attendanceResult: Number(student.totalSessions || 0) === 0
+          ? 'Chưa có buổi'
+          : (Number(student.present || 0) + Number(student.late || 0)) * 100
+            >= Number(classParameters.attendanceThresholdPercent) * Number(student.totalSessions || 0)
+            ? 'Đạt'
+            : 'Chưa đạt',
       })),
     });
   } catch (error) {
@@ -3279,6 +3541,14 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
         accuracyMeters,
       ],
     );
+    sendClassAttendancePush(pool, {
+      classId: classSession.classId,
+      sessionId: id,
+      method,
+      closesAt: closedAt,
+    }).catch((error) => {
+      console.error('Attendance push notification failed:', error.message);
+    });
     return response.status(201).json({
       id,
       method,
@@ -4302,19 +4572,20 @@ app.post('/api/organizer/events/:eventId/certificates/issue', requireAuth, requi
       return response.status(409).json({ message: 'Chỉ có thể cấp chứng nhận sau khi sự kiện kết thúc hoặc đã đóng.' });
     }
 
-    const [attendees] = await pool.execute(
-      `SELECT checked_in.student_id AS studentId
+    const [candidateAttendees] = await pool.execute(
+      `SELECT candidates.studentId
        FROM (
-         SELECT ea.event_id, ea.student_id FROM event_attendance ea
-         WHERE ea.event_id = ? GROUP BY ea.event_id, ea.student_id
+         SELECT dk.Masv AS studentId FROM DangKySuKien dk WHERE dk.Masukien = ?
          UNION
-         SELECT ear.event_id, ear.student_id FROM event_attendance_records ear
-         WHERE ear.event_id = ? GROUP BY ear.event_id, ear.student_id
-       ) checked_in
-       WHERE (? IS NULL OR checked_in.student_id = ?)
-       ORDER BY checked_in.student_id`,
-      [event.id, event.id, studentId, studentId],
+         SELECT ea.student_id AS studentId FROM event_attendance ea WHERE ea.event_id = ?
+         UNION
+         SELECT ear.student_id AS studentId FROM event_attendance_records ear WHERE ear.event_id = ?
+       ) candidates
+       WHERE (? IS NULL OR candidates.studentId = ?)
+       ORDER BY candidates.studentId`,
+      [event.id, event.id, event.id, studentId, studentId],
     );
+    const attendees = await filterEligibleEventAttendees(event.id, candidateAttendees);
     if (attendees.length === 0) {
       if (studentId) return response.status(409).json({ message: 'Sinh viên chưa điểm danh sự kiện.' });
       return response.json({ eventId: event.id, issued: 0, skipped: 0, failures: [], message: 'Chưa có sinh viên điểm danh đủ điều kiện.' });
@@ -4433,39 +4704,30 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
       });
     }
 
-    const [attendees] = await pool.execute(
-      `SELECT checked_in.student_id AS studentId,
-              COALESCE(nd.Hoten, checked_in.student_id) AS studentName,
+    const [candidateAttendees] = await pool.execute(
+      `SELECT candidates.studentId,
+              COALESCE(nd.Hoten, candidates.studentId) AS studentName,
               COALESCE(nd.Email, '') AS email
        FROM (
-         SELECT ea.event_id, ea.student_id, MIN(ea.checked_in_at) AS checkedInAt
-         FROM event_attendance ea
-         WHERE ea.event_id = ?
-         GROUP BY ea.event_id, ea.student_id
-         UNION ALL
-         SELECT ear.event_id, ear.student_id, MIN(ear.checked_in_at) AS checkedInAt
-         FROM event_attendance_records ear
-         WHERE ear.event_id = ?
-           AND NOT EXISTS (
-             SELECT 1
-             FROM event_attendance ea
-             WHERE ea.event_id = ear.event_id
-               AND ea.student_id = ear.student_id
-           )
-         GROUP BY ear.event_id, ear.student_id
-       ) checked_in
-       LEFT JOIN NguoiDung nd ON nd.Mand = checked_in.student_id
+         SELECT dk.Masv AS studentId FROM DangKySuKien dk WHERE dk.Masukien = ?
+         UNION
+         SELECT ea.student_id AS studentId FROM event_attendance ea WHERE ea.event_id = ?
+         UNION
+         SELECT ear.student_id AS studentId FROM event_attendance_records ear WHERE ear.event_id = ?
+       ) candidates
+       LEFT JOIN NguoiDung nd ON nd.Mand = candidates.studentId
        WHERE NOT EXISTS (
          SELECT 1
          FROM ChungNhan mailed
-         WHERE mailed.Masv = checked_in.student_id
-           AND mailed.Masukien = checked_in.event_id
+         WHERE mailed.Masv = candidates.studentId
+           AND mailed.Masukien = ?
            AND mailed.EmailTrangthai = 'Đã gửi'
        )
-         AND (? IS NULL OR checked_in.student_id = ?)
-       ORDER BY checked_in.checkedInAt, checked_in.student_id`,
-      [event.id, event.id, studentId, studentId],
+         AND (? IS NULL OR candidates.studentId = ?)
+       ORDER BY candidates.studentId`,
+      [event.id, event.id, event.id, event.id, studentId, studentId],
     );
+    const attendees = await filterEligibleEventAttendees(event.id, candidateAttendees);
     if (attendees.length === 0) {
       if (studentId) {
         return response.status(409).json({
@@ -4686,6 +4948,29 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
       });
     }
 
+    const { effective: eventParameters } = await getEffectiveAttendanceParameters(
+      'event', event.id,
+    );
+    const [[sessionSummary]] = await pool.execute(
+      'SELECT COUNT(*) AS totalSessions FROM event_attendance_sessions WHERE event_id = ?',
+      [event.id],
+    );
+    const [sessionAttendance] = await pool.execute(
+      `SELECT student_id AS studentId, COUNT(DISTINCT session_id) AS attendedSessions
+       FROM event_attendance_records WHERE event_id = ? GROUP BY student_id`,
+      [event.id],
+    );
+    const eventAttendanceCounts = new Map(sessionAttendance.map((row) => [
+      String(row.studentId), Number(row.attendedSessions),
+    ]));
+    if (Number(sessionSummary.totalSessions) === 0) {
+      const [legacyAttendance] = await pool.execute(
+        'SELECT student_id AS studentId FROM event_attendance WHERE event_id = ?',
+        [event.id],
+      );
+      for (const row of legacyAttendance) eventAttendanceCounts.set(String(row.studentId), 1);
+    }
+
     const [rows] = await pool.execute(
       `SELECT dk.Masv AS studentId,
               COALESCE(nd.Hoten, dk.Masv) AS studentName,
@@ -4784,6 +5069,29 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
         ...row,
         attendanceStatus,
         checkedInAt: attendance?.checkedInAt || null,
+        attendedSessions: eventAttendanceCounts.get(String(row.studentId)) || 0,
+        totalAttendanceSessions: Number(sessionSummary.totalSessions),
+        attendanceThresholdPercent: Number(eventParameters.attendanceThresholdPercent),
+        requiredAttendanceSessions: Math.ceil(
+          Number(sessionSummary.totalSessions)
+            * Number(eventParameters.attendanceThresholdPercent) / 100,
+        ),
+        maxAttendanceAbsences: Number(sessionSummary.totalSessions) - Math.ceil(
+          Number(sessionSummary.totalSessions)
+            * Number(eventParameters.attendanceThresholdPercent) / 100,
+        ),
+        attendancePercent: Number(sessionSummary.totalSessions) > 0
+          ? Math.round((eventAttendanceCounts.get(String(row.studentId)) || 0) * 100
+            / Number(sessionSummary.totalSessions))
+          : (eventAttendanceCounts.has(String(row.studentId)) ? 100 : 0),
+        attendanceEligible: (Number(eventParameters.attendanceThresholdPercent) === 0
+          || eventAttendanceCounts.has(String(row.studentId)))
+          && (Number(sessionSummary.totalSessions) === 0
+            ? Number(eventParameters.attendanceThresholdPercent) === 0
+              || eventAttendanceCounts.has(String(row.studentId))
+            : (eventAttendanceCounts.get(String(row.studentId)) || 0) * 100
+              >= Number(eventParameters.attendanceThresholdPercent)
+                * Number(sessionSummary.totalSessions)),
         certificateStatus: certificateByStudent.get(String(row.studentId))?.certificateStatus || 'Chưa cấp',
         emailStatus: certificateByStudent.get(String(row.studentId))?.emailStatus || 'Chưa gửi',
       };
@@ -4967,6 +5275,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
   const parsedEnd = new Date(endTime);
   const contentResult = validateEventContent(body);
   const imageResult = validateEventImageUrl(body.imageUrl);
+  const registrationFormResult = validateEventRegistrationFormUrl(
+    body.registrationFormUrl,
+  );
 
   if (!name || !organizerId || !location || !Number.isInteger(parsedCapacity)
       || parsedCapacity <= 0
@@ -4982,6 +5293,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
   }
   if (imageResult.message) {
     return response.status(400).json({ message: imageResult.message });
+  }
+  if (registrationFormResult.message) {
+    return response.status(400).json({ message: registrationFormResult.message });
   }
   if (attendancePeriodsResult.message) {
     return response.status(400).json({
@@ -5003,16 +5317,17 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
         await connection.beginTransaction();
         await connection.execute(
           `INSERT INTO SuKien
-           (Masukien, Tensukien, Madv, Mota, HinhAnh, Thoigianbatdau,
+           (Masukien, Tensukien, Madv, Mota, HinhAnh, DonDangKy, Thoigianbatdau,
             Thoigianketthuc, Diadiem, Soluongtoida, Trangthaisukien,
             Capchungnhan)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra', ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra', ?)`,
           [
             id,
             name.trim(),
             organizerId.trim(),
             contentResult.value.description,
             imageResult.value || getEventImageUrl(name, contentResult.value.description),
+            registrationFormResult.value || null,
             parsedStart,
             parsedEnd,
             location.trim(),
@@ -5069,6 +5384,12 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
     .some((field) => Object.hasOwn(body, field));
   const contentResult = validateEventContent(body);
   const imageResult = validateEventImageUrl(body.imageUrl);
+  const registrationFormResult = validateEventRegistrationFormUrl(
+    body.registrationFormUrl,
+  );
+  const registrationFormUrl = Object.hasOwn(body, 'registrationFormUrl')
+    ? registrationFormResult.value || null
+    : null;
   const attendancePeriodsResult = hasAttendancePeriods
     ? validateEventAttendancePeriods(
       body.attendancePeriods,
@@ -5089,6 +5410,9 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
   }
   if (imageResult.message) {
     return response.status(400).json({ message: imageResult.message });
+  }
+  if (registrationFormResult.message) {
+    return response.status(400).json({ message: registrationFormResult.message });
   }
   if (attendancePeriodsResult?.message) {
     return response.status(400).json({
@@ -5155,7 +5479,8 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
       const [result] = await connection.execute(
         `UPDATE SuKien
          SET Tensukien = ?, Madv = ?,
-           HinhAnh = ?, Thoigianbatdau = ?, Thoigianketthuc = ?,
+           HinhAnh = ?, DonDangKy = COALESCE(?, DonDangKy),
+           Thoigianbatdau = ?, Thoigianketthuc = ?,
            Diadiem = ?, Soluongtoida = ?,
            Capchungnhan = COALESCE(?, Capchungnhan)
          WHERE Masukien = ?`,
@@ -5163,6 +5488,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         name.trim(),
         organizerId.trim(),
         imageResult.value || getEventImageUrl(name, contentResult.value.description),
+        registrationFormUrl,
         parsedStart,
         parsedEnd,
         location.trim(),
@@ -6250,8 +6576,8 @@ app.get('/api/admin/settings/parameters/options', requireAuth, requireRole('Qu�
 app.get('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const scopeType = String(request.query.scopeType || 'global');
   const scopeId = String(request.query.scopeId || '').trim();
-  if (!['global', 'class', 'event'].includes(scopeType)
-      || (scopeType !== 'global' && !scopeId)) {
+  if (!['global', 'class', 'event', 'all_classes', 'all_events'].includes(scopeType)
+      || (['class', 'event'].includes(scopeType) && !scopeId)) {
     return response.status(400).json({ message: 'Phạm vi cấu hình không hợp lệ.' });
   }
   try {
@@ -6275,24 +6601,29 @@ app.get('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị
 
 app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const scopeType = String(request.body?.scopeType || '');
-  const scopeId = scopeType === 'global' ? '' : String(request.body?.scopeId || '').trim();
+  const scopeId = ['global', 'all_classes', 'all_events'].includes(scopeType)
+    ? ''
+    : String(request.body?.scopeId || '').trim();
   const body = request.body || {};
-  if (!['global', 'class', 'event'].includes(scopeType)
-      || (scopeType !== 'global' && !scopeId)) {
+  if (!['global', 'class', 'event', 'all_classes', 'all_events'].includes(scopeType)
+      || (['class', 'event'].includes(scopeType) && !scopeId)) {
     return response.status(400).json({ message: 'Phạm vi cấu hình không hợp lệ.' });
   }
   const values = {
     gpsRadiusMeters: body.gpsRadiusMeters,
     eventRegistrationLockHours: body.eventRegistrationLockHours,
     qrDurationMinutes: body.qrDurationMinutes,
+    attendanceThresholdPercent: body.attendanceThresholdPercent,
   };
   const ranges = {
     gpsRadiusMeters: [10, 5000],
     eventRegistrationLockHours: [0, 720],
     qrDurationMinutes: [1, 180],
+    attendanceThresholdPercent: [0, 100],
   };
   for (const [key, [minimum, maximum]] of Object.entries(ranges)) {
-    if (scopeType === 'class' && key === 'eventRegistrationLockHours') {
+    if (['class', 'all_classes'].includes(scopeType)
+        && key === 'eventRegistrationLockHours') {
       if (values[key] !== null && values[key] !== undefined) {
         return response.status(400).json({ message: 'Thời gian khóa đăng ký chỉ áp dụng cho phạm vi sự kiện.' });
       }
@@ -6301,7 +6632,7 @@ app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị
     }
     if (values[key] === null || values[key] === undefined || values[key] === '') {
       if (scopeType === 'global') {
-        return response.status(400).json({ message: 'Cấu hình toàn hệ thống cần đủ cả ba tham số.' });
+        return response.status(400).json({ message: 'Cấu hình toàn hệ thống cần đủ cả bốn tham số.' });
       }
       values[key] = null;
       continue;
@@ -6329,15 +6660,18 @@ app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị
     await pool.execute(
       `INSERT INTO system_parameters
          (scope_type, scope_id, gps_radius_meters,
-          event_registration_lock_hours, qr_duration_minutes, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?)
+          event_registration_lock_hours, qr_duration_minutes,
+          attendance_threshold_percent, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          gps_radius_meters = VALUES(gps_radius_meters),
          event_registration_lock_hours = VALUES(event_registration_lock_hours),
          qr_duration_minutes = VALUES(qr_duration_minutes),
+         attendance_threshold_percent = VALUES(attendance_threshold_percent),
          updated_by = VALUES(updated_by)`,
       [scopeType, scopeId, values.gpsRadiusMeters,
-        values.eventRegistrationLockHours, values.qrDurationMinutes, request.auth.sub],
+        values.eventRegistrationLockHours, values.qrDurationMinutes,
+        values.attendanceThresholdPercent, request.auth.sub],
     );
     return response.json(await getEffectiveAttendanceParameters(scopeType, scopeId));
   } catch (error) {
@@ -6351,9 +6685,11 @@ ensureAttendanceLocationColumns()
     await ensureSystemParametersTable();
     await ensureEventStatusColumn();
     await ensureEventImageColumn();
+    await ensureEventRegistrationFormColumn();
     await ensureEventCertificateColumn();
     await ensureCertificateEmailColumns();
     await ensurePasswordResetChallengesTable();
+    await ensureUserFcmTokensTable();
     await ensureAttendanceDeviceClaimsTable();
     await ensureEventAttendanceTable();
     await ensureEventAttendanceSessionsTable();

@@ -1,15 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
+import 'firebase_options.dart';
 import 'controllers/auth_controller.dart';
 import 'controllers/notification_controller.dart';
+import 'controllers/push_notification_service.dart';
 import 'controllers/theme_controller.dart';
 import 'data/api/api_client.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (defaultTargetPlatform != TargetPlatform.linux) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
   final prefs = await SharedPreferences.getInstance();
   var apiBaseUrl = prefs.getString('apiBaseUrl');
   const buildApiBaseUrl = String.fromEnvironment('API_BASE_URL');
@@ -30,6 +39,7 @@ Future<void> main() async {
   final authController = Get.put(AuthController());
   ApiClient.onUnauthorized = authController.handleUnauthorized;
   Get.put(NotificationController());
+  Get.put(PushNotificationService());
 
   runApp(const App());
 }

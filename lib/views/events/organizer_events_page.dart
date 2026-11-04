@@ -1713,8 +1713,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       builder: (context) => AlertDialog(
         title: const Text('Gửi chứng nhận qua email?'),
         content: Text(
-          'Chứng nhận PDF sẽ chỉ gửi cho sinh viên đã điểm danh sự kiện '
-          '“${event.name}” và chưa được cấp chứng nhận.',
+          'Chứng nhận PDF chỉ gửi cho sinh viên đạt tỷ lệ điểm danh tối thiểu '
+          'đã cài đặt cho sự kiện “${event.name}”.',
         ),
         actions: [
           TextButton(
@@ -1799,7 +1799,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Cấp chứng nhận trong ứng dụng?'),
         content: Text(
-          'Chứng nhận sẽ xuất hiện trong mục chứng nhận của sinh viên thuộc sự kiện “${event.name}”. Email sẽ không được gửi.',
+          'Chứng nhận sẽ xuất hiện trong ứng dụng của sinh viên đạt tỷ lệ điểm danh tối thiểu đã cài đặt cho sự kiện “${event.name}”. Email sẽ không được gửi.',
         ),
         actions: [
           TextButton(

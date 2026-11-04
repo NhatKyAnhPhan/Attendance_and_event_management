@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Activity, Award, BarChart3, Bell, BookOpen, Building2, CalendarDays, Download,
   ChevronLeft, ChevronRight, ClipboardCheck, Home, LogOut,
@@ -998,6 +999,70 @@ function normalizeMatchText(value) {
     .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
 }
 
+function EventRegistrationFormField({ form, setForm }) {
+  const [container, setContainer] = useState(null);
+
+  useEffect(() => {
+    setContainer(form
+      ? document.querySelector('form.rp-modal.rp-form-modal .rp-form-grid')
+      : null);
+  }, [Boolean(form), form?.id]);
+
+  if (!form || !container) return null;
+  return createPortal(
+    <label className="rp-form-wide">
+      Đơn đăng ký có mộc (PDF)
+      <input
+        type="file"
+        accept="application/pdf,.pdf"
+        required={!form.id}
+        onChange={(event) => {
+          const registrationFormFile = event.target.files?.[0] || null;
+          setForm((current) => current && ({
+            ...current,
+            registrationFormFile,
+          }));
+        }}
+      />
+      <small className="rp-image-help">
+        Tệp PDF tối đa 10 MB. Bắt buộc khi tạo sự kiện mới.
+      </small>
+      {form.registrationFormFile && (
+        <small>{form.registrationFormFile.name}</small>
+      )}
+      {form.registrationFormUrl
+        ? <a className="rp-registration-form-link" href={form.registrationFormUrl} target="_blank" rel="noreferrer">Xem đơn đăng ký hiện tại</a>
+        : !form.registrationFormFile && <small>Chưa có đơn đăng ký PDF.</small>}
+    </label>,
+    container,
+  );
+}
+
+function EventRegistrationDetails({ eventId, registrationFormUrl }) {
+  const [container, setContainer] = useState(null);
+
+  useEffect(() => {
+    if (!eventId) {
+      setContainer(null);
+      return;
+    }
+    const target = [...document.querySelectorAll('.rp-modal-backdrop .rp-modal')]
+      .find((modal) => !modal.querySelector('form') && modal.textContent.includes(eventId));
+    setContainer(target || null);
+  }, [eventId]);
+
+  if (!eventId || !container) return null;
+  return createPortal(
+    <section className="rp-registration-form-details">
+      <h3 className="rp-modal-section-title">Đơn đăng ký</h3>
+      {registrationFormUrl
+        ? <a className="rp-secondary-button" href={registrationFormUrl} target="_blank" rel="noreferrer">Xem đơn đăng ký</a>
+        : <p className="rp-modal-muted">Không có đơn đăng ký.</p>}
+    </section>,
+    container,
+  );
+}
+
 function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, role, showNotice }) {
   const [form, setForm] = useState(null);
   const [units, setUnits] = useState([]);
@@ -1089,11 +1154,13 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
         location: current.location || item?.location || '', capacity: String(current.capacity || item?.capacity || 100),
         certificateEnabled: current.certificateEnabled === true || Number(current.certificateEnabled) === 1,
         imageUrl: current.imageUrl || item?.imageUrl || '',
+        registrationFormUrl: current.registrationFormUrl || '',
+        registrationFormFile: null,
         description: current.description || '', benefits, rules, periods,
       });
     } catch (exception) {
       setFormError(exception instanceof Error ? exception.message : 'Không thể tải dữ liệu sự kiện.');
-      setForm({ id: item?.id || '', name: item?.name || '', organizerId: item?.organizerId || '', startTime: '', endTime: '', location: item?.location || '', capacity: String(item?.capacity || 100), certificateEnabled: item?.certificateEnabled === true || Number(item?.certificateEnabled) === 1, imageUrl: item?.imageUrl || '', description: '', benefits: [], rules: '', periods: [] });
+      setForm({ id: item?.id || '', name: item?.name || '', organizerId: item?.organizerId || '', startTime: '', endTime: '', location: item?.location || '', capacity: String(item?.capacity || 100), certificateEnabled: item?.certificateEnabled === true || Number(item?.certificateEnabled) === 1, imageUrl: item?.imageUrl || '', registrationFormUrl: '', registrationFormFile: null, description: '', benefits: [], rules: '', periods: [] });
     } finally {
       setSaving(false);
     }
@@ -1103,6 +1170,11 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     event.preventDefault();
     setSaving(true);
     setFormError('');
+    if (!form.id && !form.registrationFormFile) {
+      setFormError('Vui lòng đính kèm đơn đăng ký PDF có mộc khi tạo sự kiện.');
+      setSaving(false);
+      return;
+    }
     let parsePeriods;
     try {
       parsePeriods = form.periods.map((period) => {
@@ -1131,6 +1203,18 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
       attendancePeriods: parsePeriods,
     };
     try {
+      if (form.registrationFormFile) {
+        const uploadBody = new FormData();
+        uploadBody.append('registrationForm', form.registrationFormFile);
+        const uploadedForm = await api('/api/organizer/event-registration-forms', {
+          method: 'POST',
+          body: uploadBody,
+          timeoutMs: 30000,
+        });
+        body.registrationFormUrl = uploadedForm.registrationFormUrl;
+      } else {
+        body.registrationFormUrl = form.registrationFormUrl || '';
+      }
       if (form.imageFile) {
         const uploadBody = new FormData();
         uploadBody.append('image', form.imageFile);
@@ -1182,7 +1266,7 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
 
   const refreshCertificateStudents = async (item) => {
     const result = await api(`/api/organizer/events/${encodeURIComponent(item.id)}/students`);
-    const attendees = itemsOf(result).filter((student) => student.checkedInAt);
+    const attendees = itemsOf(result);
     setCertificateStudents(attendees.filter((student) => (
       student.certificateStatus !== 'Đã cấp' || student.emailStatus !== 'Đã gửi'
     )));
@@ -1523,10 +1607,15 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     || certificateTarget.status === 'Đã kết thúc'
     || new Date(certificateTarget.endTime) <= new Date()
   );
-  const appPendingCertificateStudents = certificateStudents.filter((student) => student.certificateStatus !== 'Đã cấp');
-  const emailPendingCertificateStudents = certificateStudents.filter((student) => student.emailStatus !== 'Đã gửi' && student.emailStatus !== 'Đang gửi');
+  const appPendingCertificateStudents = certificateStudents.filter((student) => student.attendanceEligible && student.certificateStatus !== 'Đã cấp');
+  const emailPendingCertificateStudents = certificateStudents.filter((student) => student.attendanceEligible && student.emailStatus !== 'Đã gửi' && student.emailStatus !== 'Đang gửi');
 
   return <>
+    <EventRegistrationFormField form={form} setForm={setForm} />
+    <EventRegistrationDetails
+      eventId={selected?.id}
+      registrationFormUrl={details?.registrationFormUrl}
+    />
     {certificateTarget && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !certificateBusy) setCertificateTarget(null); }}>
       <section className="rp-modal rp-form-modal" role="dialog" aria-modal="true">
         <header><div><h2>{'Ch\u1ee9ng nh\u1eadn s\u1ef1 ki\u1ec7n'}</h2><p>{certificateTarget.name}</p></div><button className="rp-icon-button" onClick={() => setCertificateTarget(null)} aria-label={'\u0110\u00f3ng'} disabled={Boolean(certificateBusy)}><X size={18} /></button></header>
@@ -1534,13 +1623,14 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
         {!certificateEventEnded && <div className="rp-detail-error" role="status">{'Ch\u1ec9 c\u00f3 th\u1ec3 c\u1ea5p ho\u1eb7c g\u1eedi ch\u1ee9ng nh\u1eadn sau khi s\u1ef1 ki\u1ec7n k\u1ebft th\u00fac ho\u1eb7c \u0111\u00e3 \u0111\u00f3ng.'}</div>}
         {certificateLoading ? <LoadingPanel /> : certificateStudents.length ? <>
           <p className="rp-modal-muted">{'Ch\u1ecdn sinh vi\u00ean \u0111\u00e3 \u0111i\u1ec3m danh. C\u1ea5p qua app v\u00e0 g\u1eedi qua Gmail \u0111\u01b0\u1ee3c theo d\u00f5i ri\u00eang.'}</p>
-          <div className="rp-table-wrap"><table className="rp-table"><thead><tr><th>{'Ch\u1ecdn'}</th><th>{'M\u00e3 sinh vi\u00ean'}</th><th>{'H\u1ecd t\u00ean'}</th><th>{'Tr\u1ea1ng th\u00e1i app'}</th><th>{'Tr\u1ea1ng th\u00e1i Gmail'}</th></tr></thead><tbody>
+          <div className="rp-table-wrap"><table className="rp-table"><thead><tr><th>{'Ch\u1ecdn'}</th><th>{'M\u00e3 sinh vi\u00ean'}</th><th>{'H\u1ecd t\u00ean'}</th><th>{'Điểm danh'}</th><th>{'Tr\u1ea1ng th\u00e1i app'}</th><th>{'Tr\u1ea1ng th\u00e1i Gmail'}</th></tr></thead><tbody>
             {certificateStudents.map((student) => {
               const appDone = student.certificateStatus === '\u0110\u00e3 c\u1ea5p';
               const emailDone = student.emailStatus === '\u0110\u00e3 g\u1eedi';
               const emailPending = student.emailStatus === '\u0110ang g\u1eedi';
-              const canSelect = certificateEventEnded && (!appDone || (!emailDone && !emailPending));
-              return <tr key={student.studentId}><td><input type="checkbox" aria-label={'Ch\u1ecdn ' + student.studentName} checked={selectedCertificateStudents.has(student.studentId)} disabled={!canSelect || Boolean(certificateBusy)} onChange={(event) => setSelectedCertificateStudents((current) => { const next = new Set(current); if (event.target.checked) next.add(student.studentId); else next.delete(student.studentId); return next; })} /></td><td>{student.studentId}</td><td>{student.studentName}</td><td>{student.certificateStatus || 'Ch\u01b0a c\u1ea5p'}</td><td>{student.emailStatus || 'Ch\u01b0a g\u1eedi'}</td></tr>;
+              const canSelect = certificateEventEnded && student.attendanceEligible && (!appDone || (!emailDone && !emailPending));
+              const attendanceLabel = student.totalAttendanceSessions > 0 ? `${student.attendedSessions}/${student.totalAttendanceSessions} buổi · cần ${student.requiredAttendanceSessions}, vắng tối đa ${student.maxAttendanceAbsences} · ${student.attendancePercent}%` : student.attendanceEligible ? 'Đạt (dữ liệu cũ)' : 'Chưa điểm danh';
+              return <tr key={student.studentId}><td><input type="checkbox" aria-label={'Ch\u1ecdn ' + student.studentName} checked={selectedCertificateStudents.has(student.studentId)} disabled={!canSelect || Boolean(certificateBusy)} onChange={(event) => setSelectedCertificateStudents((current) => { const next = new Set(current); if (event.target.checked) next.add(student.studentId); else next.delete(student.studentId); return next; })} /></td><td>{student.studentId}</td><td>{student.studentName}</td><td>{attendanceLabel} · {student.attendanceEligible ? 'Đạt' : 'Chưa đạt'}</td><td>{student.certificateStatus || 'Ch\u01b0a c\u1ea5p'}</td><td>{student.emailStatus || 'Ch\u01b0a g\u1eedi'}</td></tr>;
             })}
           </tbody></table></div>
         </> : !certificateError && <EmptyPanel title={'Ch\u01b0a c\u00f3 sinh vi\u00ean c\u1ea7n x\u1eed l\u00fd'} message={'Ch\u1ec9 sinh vi\u00ean \u0111\u00e3 \u0111i\u1ec3m danh s\u1ef1 ki\u1ec7n m\u1edbi \u0111\u1ee7 \u0111i\u1ec1u ki\u1ec7n.'} />}
@@ -1885,6 +1975,10 @@ function EventAttendanceView({ items }) {
   const openEvents = items.filter((item) => !['đã đóng', 'đã kết thúc', 'closed', 'ended'].includes(String(item.status || '').trim().toLowerCase()) && (!item.endTime || new Date(item.endTime) > new Date()));
   return (
     <>
+      <EventRegistrationDetails
+        eventId={selected?.id}
+        registrationFormUrl={details?.registrationFormUrl}
+      />
       {openEvents.length ? (
         <div className="rp-event-grid">
           {openEvents.map((item) => (
@@ -2126,7 +2220,7 @@ function ReportsView({ data, loading, error, onRefresh, role }) {
           <section className="rp-card rp-report-select"><label htmlFor="rp-report-class">Chọn lớp học</label><select id="rp-report-class" value={selectedClassId} onChange={selectClass}><option value="">Chọn lớp để xem báo cáo</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.studentCount ?? 0} sinh viên</option>)}</select></section>
           {reportLoading && <LoadingPanel />}
           {report?.error && <ErrorPanel message={report.error} />}
-          {report && !report.error && <><div className="rp-metrics-grid rp-metrics-compact">{totals.map(([label, value]) => <article className="rp-metric-card" key={label}><span className="rp-metric-icon"><BarChart3 size={19} /></span><div><span>{label}</span><strong>{value}</strong></div></article>)}</div><AttendanceDonutChart title="Phân bổ kết quả điểm danh" data={[{ label: 'Có mặt', value: sum(summary, 'present'), color: '#28a76c' }, { label: 'Đi muộn', value: sum(summary, 'late'), color: '#e7a639' }, { label: 'Vắng mặt', value: sum(summary, 'absent'), color: '#d95d54' }, { label: 'Vắng có phép', value: sum(summary, 'excused'), color: '#4770d8' }]} /><DataTable items={summary} columns={[['Mã sinh viên', 'studentId'], ['Họ tên', 'studentName'], ['Tổng buổi', 'totalSessions'], ['Có mặt', 'present'], ['Đi trễ', 'late'], ['Vắng', 'absent'], ['Có phép', 'excused']]} /></>}
+          {report && !report.error && <><div className="rp-metrics-grid rp-metrics-compact">{totals.map(([label, value]) => <article className="rp-metric-card" key={label}><span className="rp-metric-icon"><BarChart3 size={19} /></span><div><span>{label}</span><strong>{value}</strong></div></article>)}</div><AttendanceDonutChart title="Phân bổ kết quả điểm danh" data={[{ label: 'Có mặt', value: sum(summary, 'present'), color: '#28a76c' }, { label: 'Đi muộn', value: sum(summary, 'late'), color: '#e7a639' }, { label: 'Vắng mặt', value: sum(summary, 'absent'), color: '#d95d54' }, { label: 'Vắng có phép', value: sum(summary, 'excused'), color: '#4770d8' }]} /><DataTable items={summary} columns={[['Mã sinh viên', 'studentId'], ['Họ tên', 'studentName'], ['Tổng buổi', 'totalSessions'], ['Có mặt', 'present'], ['Đi trễ', 'late'], ['Vắng', 'absent'], ['Có phép', 'excused'], ['Tỷ lệ đi học (%)', 'attendancePercent'], ['Kết quả', 'attendanceResult']]} /></>}
           {!classes.length && <EmptyPanel title="Chưa có lớp" message="Tài khoản chưa được phân công lớp học." />}
         </>
       )}
@@ -2134,29 +2228,53 @@ function ReportsView({ data, loading, error, onRefresh, role }) {
   );
 }
 
+function SearchableOptionField({ label, options, value, onChange }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = options.find((item) => String(item.id) === String(value));
+  const optionLabel = (item) => `${item.name}${item.subjectName ? ` · ${item.subjectName}` : ''}${item.startTime ? ` · ${formatDate(item.startTime)}` : ''}`;
+  useEffect(() => { setQuery(selected ? optionLabel(selected) : ''); }, [value, options]);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filtered = options.filter((item) => `${item.id} ${optionLabel(item)}`.toLocaleLowerCase().includes(normalizedQuery));
+
+  return <label className="rp-searchable-field">{label}
+    <div className="rp-searchable-select">
+      <input type="search" role="combobox" aria-label={label} aria-expanded={open} aria-controls="rp-settings-options" autoComplete="off" placeholder="Tìm theo tên hoặc mã..." value={query} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} onChange={(event) => { setQuery(event.target.value); setOpen(true); if (value) onChange(''); }} />
+      {open && <div className="rp-searchable-options" id="rp-settings-options" role="listbox">
+        {filtered.length ? filtered.slice(0, 100).map((item) => <button type="button" role="option" aria-selected={String(item.id) === String(value)} key={item.id} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(String(item.id)); setQuery(optionLabel(item)); setOpen(false); }}>{optionLabel(item)}</button>) : <p>Không tìm thấy kết quả.</p>}
+        {filtered.length > 100 && <p>Nhập thêm từ khóa để thu hẹp {filtered.length} kết quả.</p>}
+      </div>}
+    </div>
+  </label>;
+}
+
 function SettingsView({ darkMode, setDarkMode }) {
   const [scopeType, setScopeType] = useState('global');
   const [scopeId, setScopeId] = useState('');
   const [classes, setClasses] = useState([]);
   const [events, setEvents] = useState([]);
-  const [parameters, setParameters] = useState({ gpsRadiusMeters: '100', eventRegistrationLockHours: '24', qrDurationMinutes: '15' });
-  const [inherit, setInherit] = useState({ gpsRadiusMeters: false, eventRegistrationLockHours: false, qrDurationMinutes: false });
+  const [parameters, setParameters] = useState({ gpsRadiusMeters: '100', eventRegistrationLockHours: '24', qrDurationMinutes: '15', attendanceThresholdPercent: '100' });
+  const [inherit, setInherit] = useState({ gpsRadiusMeters: false, eventRegistrationLockHours: false, qrDurationMinutes: false, attendanceThresholdPercent: false });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const isSpecificScope = (type) => type === 'class' || type === 'event';
+  const isClassScope = (type) => type === 'class' || type === 'all_classes';
 
   const loadParameters = async (type = scopeType, id = scopeId) => {
-    if (type !== 'global' && !id) {
+    if (isSpecificScope(type) && !id) {
       setLoading(false);
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const query = type === 'global' ? '?scopeType=global' : `?scopeType=${type}&scopeId=${encodeURIComponent(id)}`;
+      const query = isSpecificScope(type)
+        ? `?scopeType=${type}&scopeId=${encodeURIComponent(id)}`
+        : `?scopeType=${type}`;
       const result = await api(`/api/admin/settings/parameters${query}`);
-      const keys = ['gpsRadiusMeters', 'eventRegistrationLockHours', 'qrDurationMinutes'];
+      const keys = ['gpsRadiusMeters', 'eventRegistrationLockHours', 'qrDurationMinutes', 'attendanceThresholdPercent'];
       const nextParameters = {};
       const nextInherit = {};
       keys.forEach((key) => {
@@ -2192,8 +2310,8 @@ function SettingsView({ darkMode, setDarkMode }) {
 
   const changeScopeType = (event) => {
     const nextType = event.target.value;
-    const options = nextType === 'class' ? classes : events;
-    const nextId = nextType === 'global' ? '' : String(options[0]?.id || '');
+    const options = nextType === 'class' ? classes : nextType === 'event' ? events : [];
+    const nextId = isSpecificScope(nextType) ? String(options[0]?.id || '') : '';
     setScopeType(nextType);
     setScopeId(nextId);
     loadParameters(nextType, nextId);
@@ -2209,14 +2327,15 @@ function SettingsView({ darkMode, setDarkMode }) {
         method: 'PUT',
         body: {
           scopeType,
-          ...(scopeType !== 'global' ? { scopeId } : {}),
+          ...(isSpecificScope(scopeType) ? { scopeId } : {}),
           gpsRadiusMeters: scopeType !== 'global' && inherit.gpsRadiusMeters ? null : asNumber('gpsRadiusMeters'),
-          eventRegistrationLockHours: scopeType === 'class'
+          eventRegistrationLockHours: isClassScope(scopeType)
             ? null
             : scopeType !== 'global' && inherit.eventRegistrationLockHours
               ? null
               : asNumber('eventRegistrationLockHours'),
           qrDurationMinutes: scopeType !== 'global' && inherit.qrDurationMinutes ? null : asNumber('qrDurationMinutes'),
+          attendanceThresholdPercent: scopeType !== 'global' && inherit.attendanceThresholdPercent ? null : asNumber('attendanceThresholdPercent'),
         },
       });
       await loadParameters(scopeType, scopeId);
@@ -2234,11 +2353,11 @@ function SettingsView({ darkMode, setDarkMode }) {
     <div className="rp-parameter-field" key={key}>
       <label htmlFor={`rp-parameter-${key}`}>{label}</label>
       <div><input id={`rp-parameter-${key}`} type="number" min={min} max={max} step="1" value={parameters[key]} disabled={scopeType !== 'global' && inherit[key]} onChange={(event) => updateParameter(key, event.target.value)} /><small>{unit}</small></div>
-      {scopeType !== 'global' && <label className="rp-parameter-inherit"><input type="checkbox" checked={Boolean(inherit[key])} onChange={(event) => toggleInheritance(key, event.target.checked)} /> Dùng tham số toàn hệ thống</label>}
+      {scopeType !== 'global' && <label className="rp-parameter-inherit"><input type="checkbox" checked={Boolean(inherit[key])} onChange={(event) => toggleInheritance(key, event.target.checked)} /> Dùng tham số từ phạm vi rộng hơn</label>}
       <small className="rp-parameter-range">Giới hạn: {min}–{max} {unit}</small>
     </div>
   );
-  const selectedOptions = scopeType === 'class' ? classes : events;
+  const selectedOptions = scopeType === 'class' ? classes : scopeType === 'event' ? events : [];
 
   return <>
     <PageTitle title="Cài đặt" subtitle="Tùy chỉnh giao diện và các tham số vận hành." />
@@ -2253,20 +2372,22 @@ function SettingsView({ darkMode, setDarkMode }) {
       </button>
     </section>
     <section className="rp-card rp-parameter-card">
-      <header><div><h2>Tham số hệ thống</h2><p>Cấu hình mặc định hoặc ghi đè riêng cho một lớp học phần hay sự kiện.</p></div><Settings size={19} /></header>
+      <header><div><h2>Tham số hệ thống</h2><p>Cấu hình toàn hệ thống, cho toàn bộ lớp/sự kiện hoặc ghi đè riêng cho một đối tượng.</p></div><Settings size={19} /></header>
       {error && <ErrorPanel message={error} />}
       {notice && <p className="rp-parameter-notice">{notice}</p>}
       <div className="rp-form-grid">
-        <label>Phạm vi cài đặt<select value={scopeType} onChange={changeScopeType}><option value="global">Toàn hệ thống</option><option value="class">Một lớp học phần</option><option value="event">Một sự kiện</option></select></label>
-        {scopeType !== 'global' && <label>{scopeType === 'class' ? 'Lớp học phần' : 'Sự kiện'}<select value={scopeId} onChange={(event) => { setScopeId(event.target.value); loadParameters(scopeType, event.target.value); }}><option value="">Chọn đối tượng</option>{selectedOptions.map((item) => <option key={item.id} value={item.id}>{item.name}{item.subjectName ? ` · ${item.subjectName}` : ''}{item.startTime ? ` · ${formatDate(item.startTime)}` : ''}</option>)}</select></label>}
+        <label>Phạm vi cài đặt<select value={scopeType} onChange={changeScopeType}><option value="global">Toàn hệ thống</option><option value="all_classes">Toàn bộ lớp học phần</option><option value="class">Một lớp học phần</option><option value="all_events">Toàn bộ sự kiện</option><option value="event">Một sự kiện</option></select></label>
+        {isSpecificScope(scopeType) && <SearchableOptionField label={scopeType === 'class' ? 'Lớp học phần' : 'Sự kiện'} options={selectedOptions} value={scopeId} onChange={(id) => { setScopeId(id); loadParameters(scopeType, id); }} />}
       </div>
       {loading ? <LoadingPanel /> : <>
         <div className="rp-parameter-grid">
           {parameterField('gpsRadiusMeters', 'GPS điểm danh', 'mét', 10, 5000)}
-          {scopeType !== 'class' && parameterField('eventRegistrationLockHours', 'Khóa đăng ký trước khi sự kiện bắt đầu', 'giờ', 0, 720)}
+          {!isClassScope(scopeType) && parameterField('eventRegistrationLockHours', 'Khóa đăng ký trước khi sự kiện bắt đầu', 'giờ', 0, 720)}
           {parameterField('qrDurationMinutes', 'Thời gian QR có hiệu lực', 'phút', 1, 180)}
+          {parameterField('attendanceThresholdPercent', 'Tỷ lệ điểm danh tối thiểu để đạt', '%', 0, 100)}
         </div>
-        <div className="rp-parameter-footer"><span>Tham số riêng có thể kế thừa giá trị toàn hệ thống.</span><button className="rp-secondary-button" onClick={saveParameters} disabled={saving || (scopeType !== 'global' && !scopeId)}>{saving ? 'Đang lưu...' : 'Lưu tham số'}</button></div>
+        <p className="rp-parameter-help">Có mặt và đi trễ được tính là tham dự; buổi vắng có phép vẫn tính là vắng.</p>
+        <div className="rp-parameter-footer"><span>Tham số riêng có thể kế thừa giá trị từ phạm vi rộng hơn.</span><button className="rp-secondary-button" onClick={saveParameters} disabled={saving || (isSpecificScope(scopeType) && !scopeId)}>{saving ? 'Đang lưu...' : 'Lưu tham số'}</button></div>
       </>}
     </section>
   </>;

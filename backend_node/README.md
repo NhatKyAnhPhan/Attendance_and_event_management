@@ -54,6 +54,25 @@ are not verified yet, so users should use an email they can access; before
 production, add email verification (or have an administrator confirm school
 addresses) and require verification when an email is changed.
 
+## Firebase push notifications
+
+The Flutter Android app registers its FCM token after a student signs in. The
+API stores device tokens in `user_fcm_tokens` and sends a push to a class's
+active members when a lecturer opens an attendance session. The table is created
+automatically when the API starts.
+
+Create a Firebase service account for the same Firebase project as the mobile
+app. In Render, upload its JSON key under **Environment → Secret Files**, then
+set `FIREBASE_SERVICE_ACCOUNT_FILE` to `/etc/secrets/<uploaded-filename>`.
+Alternatively, set `FIREBASE_SERVICE_ACCOUNT_JSON` to the full JSON value in
+Environment Variables. Keep the key private and never put it in the Flutter app
+or commit it. Without either setting, token registration still works, but the
+backend skips sending pushes. Redeploy the API after configuring it.
+
+Android 13+ asks the student for notification permission. Push delivery should
+be checked on a physical Android device with Google Play services, with the app
+both in the foreground and in the background.
+
 ## Face attendance test
 
 The Flutter app bundles the consented `facedataset/Dieu/`,
@@ -98,3 +117,13 @@ files are stored under `backend_node/uploads/events` by default; set
 deployment. Leaving both image inputs empty selects an Unsplash image based on
 the event name and description. The student event cards and details load the
 saved image URL, so clients need internet access to display remote photos.
+
+## Event registration forms
+
+The API adds the nullable `DonDangKy` column to `SuKien` on startup. Organizers
+can upload a signed PDF registration form up to 10 MB when creating an event;
+the management and student event details open the saved PDF in a new tab.
+Uploaded files are stored under
+`backend_node/uploads/event-registration-forms` by default; set
+`EVENT_REGISTRATION_FORMS_DIRECTORY` to use persistent storage on a hosted
+deployment. Older events without a form display “Không có đơn đăng ký.”

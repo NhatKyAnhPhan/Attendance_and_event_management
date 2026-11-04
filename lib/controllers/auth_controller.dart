@@ -7,6 +7,7 @@ import '../core/constants/role.dart';
 import '../core/routes/app_routes.dart';
 import '../data/api/api_client.dart';
 import '../data/repositories/auth_repository.dart';
+import 'push_notification_service.dart';
 
 /// Tương ứng state `authed` + `role` + hàm `handleLogin`/`handleLogout` trong App.tsx.
 class AuthController extends GetxController {
@@ -125,6 +126,9 @@ class AuthController extends GetxController {
 
   // Xóa toàn bộ dữ liệu phiên hiện tại rồi đưa người dùng về màn đăng nhập.
   Future<void> logout() async {
+    if (Get.isRegistered<PushNotificationService>()) {
+      await Get.find<PushNotificationService>().unregisterCurrentDevice();
+    }
     isAuthed.value = false;
     role.value = Role.admin;
     final prefs = await SharedPreferences.getInstance();
