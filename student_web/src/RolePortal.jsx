@@ -1943,7 +1943,6 @@ function ClassQrGenerator({ onCreated }) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [sessionId, setSessionId] = useState('');
-  const [duration, setDuration] = useState('15');
   const [qr, setQr] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -2008,7 +2007,6 @@ function ClassQrGenerator({ onCreated }) {
         body: {
           classSessionId: sessionId,
           method: 'Both',
-          durationMinutes: Number(duration),
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
           accuracy: position.coords.accuracy,
@@ -2053,7 +2051,7 @@ function ClassQrGenerator({ onCreated }) {
         <header><div><h2 id="rp-qr-title">Tạo mã QR điểm danh</h2><p>Mã do backend HUIT phát hành, tương thích với ứng dụng Flutter.</p></div><button className="rp-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={18} /></button></header>
         {error && <ErrorPanel message={error} />}
         {qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr.qr} size={250} level="M" includeMargin /></div><strong>Phiên điểm danh đang mở</strong><span>Đóng lúc {formatDate(qr.closedAt)}</span><p>Sinh viên mở Flutter, chọn Điểm danh và quét mã này. Vị trí cần được bật trên cả hai thiết bị.</p><button className="rp-secondary-button" onClick={() => stopQr(qr.id)} disabled={loading}>{loading ? 'Đang tắt...' : 'Tắt mã QR để tạo mã mới'}</button></div> : <form onSubmit={createQr}>
-          {loading && !sessions.length ? <LoadingPanel /> : <div className="rp-form-grid"><label>Buổi học<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">Chọn buổi học</option>{sessions.map((session) => <option key={session.classSessionId} value={session.classSessionId}>{session.className || session.classId} · {session.classId} · Buổi {session.classSessionId} · {formatDate(session.startTime)}{session.activeSessionId ? ' · Đang có QR' : ''}</option>)}</select></label><label>Thời lượng<select value={duration} onChange={(event) => setDuration(event.target.value)}>{[5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} phút</option>)}</select></label><p className="rp-form-hint">Trình duyệt sẽ yêu cầu quyền vị trí. Hãy mở trang qua HTTPS hoặc localhost.</p>{activeSessionId && <><p className="rp-form-hint">Buổi học đã có mã QR hoạt động. Tắt mã đó trước khi tạo mã mới.</p><button type="button" className="rp-secondary-button" onClick={() => stopQr(activeSessionId)} disabled={loading}>Tắt mã QR đang hoạt động</button></>}</div>}
+          {loading && !sessions.length ? <LoadingPanel /> : <div className="rp-form-grid"><label className="rp-form-wide">Buổi học<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">Chọn buổi học</option>{sessions.map((session) => <option key={session.classSessionId} value={session.classSessionId}>{session.className || session.classId} · {session.classId} · Buổi {session.classSessionId} · {formatDate(session.startTime)}{session.activeSessionId ? ' · Đang có QR' : ''}</option>)}</select></label><p className="rp-form-hint">QR có hiệu lực {sessions.find((session) => session.classSessionId === sessionId)?.qrDurationMinutes || 15} phút; phạm vi GPS {sessions.find((session) => session.classSessionId === sessionId)?.gpsRadiusMeters || 100} m theo cài đặt. Trình duyệt cần quyền vị trí và trang phải chạy qua HTTPS hoặc localhost.</p>{activeSessionId && <><p className="rp-form-hint">Buổi học đã có mã QR hoạt động. Tắt mã đó trước khi tạo mã mới.</p><button type="button" className="rp-secondary-button" onClick={() => stopQr(activeSessionId)} disabled={loading}>Tắt mã QR đang hoạt động</button></>}</div>}
           <footer><button type="button" className="rp-secondary-button" onClick={() => setOpen(false)} disabled={loading}>Hủy</button><button className="rp-secondary-button" disabled={loading || !sessionId || Boolean(activeSessionId)}>{loading ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer>
         </form>}
       </section>
@@ -2137,8 +2135,113 @@ function ReportsView({ data, loading, error, onRefresh, role }) {
 }
 
 function SettingsView({ darkMode, setDarkMode }) {
+  const [scopeType, setScopeType] = useState('global');
+  const [scopeId, setScopeId] = useState('');
+  const [classes, setClasses] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [parameters, setParameters] = useState({ gpsRadiusMeters: '100', eventRegistrationLockHours: '24', qrDurationMinutes: '15' });
+  const [inherit, setInherit] = useState({ gpsRadiusMeters: false, eventRegistrationLockHours: false, qrDurationMinutes: false });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const loadParameters = async (type = scopeType, id = scopeId) => {
+    if (type !== 'global' && !id) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const query = type === 'global' ? '?scopeType=global' : `?scopeType=${type}&scopeId=${encodeURIComponent(id)}`;
+      const result = await api(`/api/admin/settings/parameters${query}`);
+      const keys = ['gpsRadiusMeters', 'eventRegistrationLockHours', 'qrDurationMinutes'];
+      const nextParameters = {};
+      const nextInherit = {};
+      keys.forEach((key) => {
+        const inherited = type !== 'global' && result.overrides?.[key] == null;
+        nextInherit[key] = inherited;
+        nextParameters[key] = String(result.overrides?.[key] ?? result.effective?.[key] ?? '');
+      });
+      setParameters(nextParameters);
+      setInherit(nextInherit);
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : 'Không thể tải tham số.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    api('/api/admin/settings/parameters/options').then((result) => {
+      if (!active) return;
+      setClasses(itemsOf({ items: result.classes }));
+      setEvents(itemsOf({ items: result.events }));
+      return loadParameters('global', '');
+    }).catch((exception) => {
+      if (active) {
+        setError(exception instanceof Error ? exception.message : 'Không thể tải danh sách lớp và sự kiện.');
+        setLoading(false);
+      }
+    });
+    return () => { active = false; };
+  }, []);
+
+  const changeScopeType = (event) => {
+    const nextType = event.target.value;
+    const options = nextType === 'class' ? classes : events;
+    const nextId = nextType === 'global' ? '' : String(options[0]?.id || '');
+    setScopeType(nextType);
+    setScopeId(nextId);
+    loadParameters(nextType, nextId);
+  };
+
+  const saveParameters = async () => {
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const asNumber = (key) => parameters[key].trim() === '' ? null : Number(parameters[key]);
+      await api('/api/admin/settings/parameters', {
+        method: 'PUT',
+        body: {
+          scopeType,
+          ...(scopeType !== 'global' ? { scopeId } : {}),
+          gpsRadiusMeters: scopeType !== 'global' && inherit.gpsRadiusMeters ? null : asNumber('gpsRadiusMeters'),
+          eventRegistrationLockHours: scopeType === 'class'
+            ? null
+            : scopeType !== 'global' && inherit.eventRegistrationLockHours
+              ? null
+              : asNumber('eventRegistrationLockHours'),
+          qrDurationMinutes: scopeType !== 'global' && inherit.qrDurationMinutes ? null : asNumber('qrDurationMinutes'),
+        },
+      });
+      await loadParameters(scopeType, scopeId);
+      setNotice('Đã lưu tham số cấu hình.');
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : 'Không thể lưu tham số.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateParameter = (key, value) => setParameters((current) => ({ ...current, [key]: value }));
+  const toggleInheritance = (key, value) => setInherit((current) => ({ ...current, [key]: value }));
+  const parameterField = (key, label, unit, min, max) => (
+    <div className="rp-parameter-field" key={key}>
+      <label htmlFor={`rp-parameter-${key}`}>{label}</label>
+      <div><input id={`rp-parameter-${key}`} type="number" min={min} max={max} step="1" value={parameters[key]} disabled={scopeType !== 'global' && inherit[key]} onChange={(event) => updateParameter(key, event.target.value)} /><small>{unit}</small></div>
+      {scopeType !== 'global' && <label className="rp-parameter-inherit"><input type="checkbox" checked={Boolean(inherit[key])} onChange={(event) => toggleInheritance(key, event.target.checked)} /> Dùng tham số toàn hệ thống</label>}
+      <small className="rp-parameter-range">Giới hạn: {min}–{max} {unit}</small>
+    </div>
+  );
+  const selectedOptions = scopeType === 'class' ? classes : events;
+
   return <>
-    <PageTitle title="Cài đặt" subtitle="Tùy chỉnh giao diện ứng dụng." />
+    <PageTitle title="Cài đặt" subtitle="Tùy chỉnh giao diện và các tham số vận hành." />
     <section className="rp-card rp-settings-card">
       <div>
         <h2>Giao diện</h2>
@@ -2148,6 +2251,23 @@ function SettingsView({ darkMode, setDarkMode }) {
         {darkMode ? <Sun size={16} /> : <Moon size={16} />}
         {darkMode ? 'Giao diện sáng' : 'Giao diện tối'}
       </button>
+    </section>
+    <section className="rp-card rp-parameter-card">
+      <header><div><h2>Tham số hệ thống</h2><p>Cấu hình mặc định hoặc ghi đè riêng cho một lớp học phần hay sự kiện.</p></div><Settings size={19} /></header>
+      {error && <ErrorPanel message={error} />}
+      {notice && <p className="rp-parameter-notice">{notice}</p>}
+      <div className="rp-form-grid">
+        <label>Phạm vi cài đặt<select value={scopeType} onChange={changeScopeType}><option value="global">Toàn hệ thống</option><option value="class">Một lớp học phần</option><option value="event">Một sự kiện</option></select></label>
+        {scopeType !== 'global' && <label>{scopeType === 'class' ? 'Lớp học phần' : 'Sự kiện'}<select value={scopeId} onChange={(event) => { setScopeId(event.target.value); loadParameters(scopeType, event.target.value); }}><option value="">Chọn đối tượng</option>{selectedOptions.map((item) => <option key={item.id} value={item.id}>{item.name}{item.subjectName ? ` · ${item.subjectName}` : ''}{item.startTime ? ` · ${formatDate(item.startTime)}` : ''}</option>)}</select></label>}
+      </div>
+      {loading ? <LoadingPanel /> : <>
+        <div className="rp-parameter-grid">
+          {parameterField('gpsRadiusMeters', 'GPS điểm danh', 'mét', 10, 5000)}
+          {scopeType !== 'class' && parameterField('eventRegistrationLockHours', 'Khóa đăng ký trước khi sự kiện bắt đầu', 'giờ', 0, 720)}
+          {parameterField('qrDurationMinutes', 'Thời gian QR có hiệu lực', 'phút', 1, 180)}
+        </div>
+        <div className="rp-parameter-footer"><span>Tham số riêng có thể kế thừa giá trị toàn hệ thống.</span><button className="rp-secondary-button" onClick={saveParameters} disabled={saving || (scopeType !== 'global' && !scopeId)}>{saving ? 'Đang lưu...' : 'Lưu tham số'}</button></div>
+      </>}
     </section>
   </>;
 }

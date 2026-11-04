@@ -70,7 +70,6 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         data: {
           'classSessionId': _selectedClassSession,
           'method': 'Both',
-          'durationMinutes': 15,
           'latitude': position.latitude,
           'longitude': position.longitude,
           'accuracy': position.accuracy,
@@ -518,6 +517,11 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
                 const SizedBox(height: 4),
                 Text(
                   'Buổi $id',
+                  style: AppTextStyles.bodyXs(colors.mutedForeground),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "QR ${session['qrDurationMinutes'] ?? 15} phút · GPS ${session['gpsRadiusMeters'] ?? 100} m",
                   style: AppTextStyles.bodyXs(colors.mutedForeground),
                 ),
               ],

@@ -666,13 +666,29 @@ class _EventCard extends StatelessWidget {
                 ),
               if (event.registered &&
                   !event.isEnded &&
-                  event.registeredAt != null &&
-                  !_canCancelRegistration(event))
+                  event.isAttended)
                 Text(
-                  'Đã quá 24 giờ, không thể hủy',
+                  'Đã điểm danh, không thể hủy đăng ký',
                   style: AppTextStyles.bodyXs(c.mutedForeground),
                 ),
-              if (!event.registered && !event.isEnded)
+              if (event.registered &&
+                  !event.isEnded &&
+                  !event.isAttended &&
+                  event.registrationLocked)
+                Text(
+                  event.registrationLockHours == null
+                      ? 'Đã đến thời gian khóa đăng ký, không thể hủy'
+                      : 'Đã đến thời gian khóa đăng ký trước sự kiện ${event.registrationLockHours} giờ',
+                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                ),
+              if (!event.registered && !event.isEnded && event.registrationLocked)
+                Text(
+                  event.registrationLockHours == null
+                      ? 'Đã khóa đăng ký sự kiện'
+                      : 'Đã khóa đăng ký trước sự kiện ${event.registrationLockHours} giờ',
+                  style: AppTextStyles.bodyXs(c.mutedForeground),
+                ),
+              if (!event.registered && !event.isEnded && !event.registrationLocked)
                 ElevatedButton(
                   onPressed: onRegister,
                   child: const Text('Đăng ký ngay'),
@@ -685,20 +701,12 @@ class _EventCard extends StatelessWidget {
   }
 }
 
-// Cho phép hủy khi đã biết thời điểm đăng ký và chưa đủ 24 giờ.
+// Chỉ cho phép hủy trước mốc khóa do quản trị viên cấu hình.
 bool _canCancelRegistration(StudentEventSummary event) {
-  final registeredAt = event.registeredAt;
-  final endTime = event.endTime;
-  final elapsed = registeredAt == null
-      ? null
-      : DateTime.now().difference(registeredAt);
   return event.registered &&
-      registeredAt != null &&
-      endTime != null &&
-      endTime.isAfter(DateTime.now()) &&
-      elapsed != null &&
-      !elapsed.isNegative &&
-      elapsed <= const Duration(hours: 24);
+      !event.isAttended &&
+      !event.isEnded &&
+      !event.registrationLocked;
 }
 
 // Hủy đăng ký và thông báo kết quả cho sinh viên.

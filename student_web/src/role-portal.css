@@ -407,6 +407,23 @@
 .rp-settings-card > div { flex: 1; }
 .rp-settings-card h2 { margin: 0 0 5px; font-family: Nunito, sans-serif; font-size: 16px; }
 .rp-settings-card p { margin: 0; color: var(--rp-muted); font-size: 12px; }
+.rp-parameter-card { max-width: 980px; margin-top: 16px; padding: 18px; }
+.rp-parameter-card > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.rp-parameter-card > header h2 { margin:0 0 5px; font-family:Nunito,sans-serif; font-size:16px; }
+.rp-parameter-card > header p { margin:0; color:var(--rp-muted); font-size:12px; line-height:1.5; }
+.rp-parameter-card > header > svg { color:var(--rp-primary); }
+.rp-parameter-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; margin-top:16px; }
+.rp-parameter-field { display:grid; align-content:start; gap:8px; min-width:0; padding:14px; border:1px solid var(--rp-border); border-radius:10px; background:color-mix(in srgb,var(--rp-secondary) 25%,var(--rp-card)); color:var(--rp-text); font-size:12px; font-weight:700; }
+.rp-parameter-field > label:first-child { line-height:1.45; }
+.rp-parameter-field > div { display:flex; align-items:center; gap:8px; }
+.rp-parameter-field input[type="number"] { width:100%; min-width:0; min-height:39px; padding:8px 10px; border:1px solid var(--rp-border); border-radius:7px; background:var(--rp-bg); color:var(--rp-text); font:inherit; font-size:13px; }
+.rp-parameter-field input:disabled { opacity:.65; }
+.rp-parameter-field > div > small { color:var(--rp-muted); font-weight:600; white-space:nowrap; }
+.rp-parameter-inherit { display:flex; align-items:center; gap:7px; color:var(--rp-muted); font-size:11px; font-weight:500; }
+.rp-parameter-inherit input { accent-color:var(--rp-primary); }
+.rp-parameter-range { color:var(--rp-muted); font-size:10px; font-weight:500; }
+.rp-parameter-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:16px; padding-top:14px; border-top:1px solid var(--rp-border); color:var(--rp-muted); font-size:11px; }
+.rp-parameter-notice { margin:0 0 12px; color:#168052; font-size:12px; font-weight:600; }
 .rp-profile-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); align-items: start; gap: 16px; }
 .rp-profile-summary { display: flex; min-height: 235px; align-items: center; flex-direction: column; gap: 10px; padding: 22px; text-align: center; }
 .rp-profile-avatar { display: grid; width: 76px; height: 76px; place-items: center; border-radius: 50%; background: var(--rp-secondary); color: var(--rp-primary); font-family: Nunito, sans-serif; font-size: 24px; font-weight: 800; }
@@ -484,6 +501,8 @@
   .rp-list-row { align-items: flex-start; padding: 10px 0; }
   .rp-list-time { max-width: 105px; white-space: normal; text-align: right; }
   .rp-settings-card { align-items: flex-start; flex-wrap: wrap; }
+  .rp-parameter-grid { grid-template-columns: 1fr; }
+  .rp-parameter-footer { align-items: stretch; flex-direction: column; }
   .rp-form-grid,.rp-account-readonly { grid-template-columns: 1fr; }
   .rp-benefit-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px; }
   .rp-benefit-row > input[aria-label^="Ná»™i dung"] { grid-column: 1 / 3; }

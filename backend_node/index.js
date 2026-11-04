@@ -476,6 +476,28 @@ async function ensureAttendanceLocationColumns() {
   }
 }
 
+async function ensureSystemParametersTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS system_parameters (
+       scope_type VARCHAR(12) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+       scope_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+       gps_radius_meters INT NULL,
+       event_registration_lock_hours INT NULL,
+       qr_duration_minutes INT NULL,
+       updated_by VARCHAR(30) NULL,
+       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+         ON UPDATE CURRENT_TIMESTAMP,
+       PRIMARY KEY (scope_type, scope_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+  await pool.execute(
+    `INSERT IGNORE INTO system_parameters
+       (scope_type, scope_id, gps_radius_meters,
+        event_registration_lock_hours, qr_duration_minutes)
+     VALUES ('global', '', 100, 24, 15)`,
+  );
+}
+
 async function ensureAttendanceDeviceClaimsTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS attendance_device_claims (
@@ -1123,7 +1145,7 @@ app.get('/api/notifications', requireAuth, async (request, response) => {
        LIMIT 50`,
       [request.auth.sub],
     );
-    return response.json({ items: rows });
+    return response.json({ items: result });
   } catch (error) {
     console.error('Notifications error:', error.message);
     return response.status(500).json({ message: 'Không thể tải thông báo.' });
@@ -1517,6 +1539,29 @@ app.get('/api/events', requireAuth, async (request, response) => {
        ORDER BY sk.Thoigianbatdau`,
       [request.auth.sub],
     );
+    const { effective: globalParameters } = await getEffectiveAttendanceParameters();
+    const eventParameterRows = rows.length > 0
+      ? (await pool.execute(
+        `SELECT scope_id AS scopeId,
+                event_registration_lock_hours AS eventRegistrationLockHours
+         FROM system_parameters
+         WHERE scope_type = 'event' AND scope_id IN (${rows.map(() => '?').join(', ')})`,
+        rows.map((row) => row.id),
+      ))[0]
+      : [];
+    const eventLockOverrides = new Map(
+      eventParameterRows.map((item) => [String(item.scopeId), item.eventRegistrationLockHours]),
+    );
+    for (const row of rows) {
+      const lockHours = eventLockOverrides.get(String(row.id))
+        ?? globalParameters.eventRegistrationLockHours;
+      const registrationLockAt = new Date(row.startTime).getTime()
+        - Number(lockHours) * 60 * 60 * 1000;
+      row.registrationLockHours = Number(lockHours);
+      row.registrationLocked = Date.now() >= registrationLockAt
+        || row.status === 'Đã đóng'
+        || new Date(row.endTime) <= new Date();
+    }
     return response.json({ items: rows });
   } catch (error) {
     console.error('Events error:', error.message);
@@ -1878,7 +1923,7 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[event]] = await connection.execute(
-      `SELECT Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
+    `SELECT Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
               Soluongtoida AS capacity, Trangthaisukien AS status
        FROM SuKien WHERE Masukien = ? FOR UPDATE`,
       [request.params.eventId],
@@ -1896,6 +1941,17 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
     if (new Date(event.endTime) <= new Date()) {
       await connection.rollback();
       return response.status(409).json({ message: 'Sự kiện đã kết thúc, không thể đăng ký.' });
+    }
+    const { effective: eventParameters } = await getEffectiveAttendanceParameters(
+      'event', request.params.eventId, connection,
+    );
+    const registrationLockAt = new Date(event.startTime).getTime()
+      - Number(eventParameters.eventRegistrationLockHours) * 60 * 60 * 1000;
+    if (Date.now() >= registrationLockAt) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: `Đã đến thời gian khóa đăng ký trước sự kiện ${eventParameters.eventRegistrationLockHours} giờ. Không thể đăng ký mới.`,
+      });
     }
     const [[registrationCount]] = await connection.execute(
       'SELECT COUNT(*) AS total FROM DangKySuKien WHERE Masukien = ?',
@@ -1966,58 +2022,80 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
   }
 });
 
-// Hủy đăng ký nếu thời điểm đăng ký chưa quá 24 giờ.
+// Hủy đăng ký khi còn trước mốc khóa đăng ký của sự kiện.
 app.delete('/api/events/:eventId/register', requireAuth, async (request, response) => {
+  let connection;
   try {
-    const [[event]] = await pool.execute(
-      `SELECT CASE WHEN Thoigianketthuc <= NOW() THEN 1 ELSE 0 END AS ended
-       FROM SuKien WHERE Masukien = ? LIMIT 1`,
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [[event]] = await connection.execute(
+      `SELECT Thoigianbatdau AS startTime,
+              CASE WHEN Thoigianketthuc <= NOW() THEN 1 ELSE 0 END AS ended
+       FROM SuKien WHERE Masukien = ? LIMIT 1 FOR UPDATE`,
       [request.params.eventId],
     );
     if (!event) {
+      await connection.rollback();
       return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
     }
     if (Number(event.ended) === 1) {
+      await connection.rollback();
       return response.status(409).json({
         message: 'Sự kiện đã kết thúc, không thể hủy đăng ký.',
       });
     }
-    const [result] = await pool.execute(
-      `DELETE FROM DangKySuKien
+    const [[registration]] = await connection.execute(
+      `SELECT Ngaydangky AS registeredAt
+       FROM DangKySuKien
        WHERE Masukien = ? AND Masv = ?
-         AND Ngaydangky >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-         AND EXISTS (
-           SELECT 1 FROM SuKien sk
-           WHERE sk.Masukien = ? AND sk.Thoigianketthuc > NOW()
-         )`,
-      [request.params.eventId, request.auth.sub, request.params.eventId],
-    );
-    if (result.affectedRows === 1) {
-      return response.json({ message: 'Đã hủy đăng ký sự kiện.' });
-    }
-
-    const [[registration]] = await pool.execute(
-      `SELECT dk.Ngaydangky AS registeredAt,
-              CASE WHEN sk.Thoigianketthuc <= NOW() THEN 1 ELSE 0 END AS ended
-       FROM DangKySuKien dk
-       INNER JOIN SuKien sk ON sk.Masukien = dk.Masukien
-       WHERE dk.Masukien = ? AND dk.Masv = ? LIMIT 1`,
+       LIMIT 1 FOR UPDATE`,
       [request.params.eventId, request.auth.sub],
     );
     if (!registration) {
+      await connection.rollback();
       return response.status(404).json({ message: 'Bạn chưa đăng ký sự kiện này.' });
     }
-    if (Number(registration.ended) === 1) {
+    const [[attendance]] = await connection.execute(
+      `SELECT (
+         EXISTS (
+           SELECT 1 FROM event_attendance ea
+           WHERE ea.event_id = ? AND ea.student_id = ?
+         ) OR EXISTS (
+           SELECT 1 FROM event_attendance_records ear
+           WHERE ear.event_id = ? AND ear.student_id = ?
+         )
+       ) AS attended`,
+      [request.params.eventId, request.auth.sub, request.params.eventId, request.auth.sub],
+    );
+    if (Number(attendance.attended) === 1) {
+      await connection.rollback();
       return response.status(409).json({
-        message: 'Sự kiện đã kết thúc, không thể hủy đăng ký.',
+        message: 'Bạn đã điểm danh sự kiện này nên không thể hủy đăng ký.',
       });
     }
-    return response.status(403).json({
-      message: 'Đã quá 24 giờ kể từ lúc đăng ký, bạn không thể hủy sự kiện này.',
-    });
+    const { effective: eventParameters } = await getEffectiveAttendanceParameters(
+      'event', request.params.eventId, connection,
+    );
+    const registrationLockAt = new Date(event.startTime).getTime()
+      - Number(eventParameters.eventRegistrationLockHours) * 60 * 60 * 1000;
+    if (Date.now() >= registrationLockAt) {
+      await connection.rollback();
+      return response.status(403).json({
+        message: `Đã đến thời gian khóa đăng ký trước sự kiện ${eventParameters.eventRegistrationLockHours} giờ. Không thể hủy đăng ký.`,
+      });
+    }
+    await connection.execute(
+      `DELETE FROM DangKySuKien WHERE Masukien = ? AND Masv = ?`,
+      [request.params.eventId, request.auth.sub],
+    );
+    await connection.commit();
+    return response.json({ message: 'Đã hủy đăng ký sự kiện.' });
   } catch (error) {
+    if (connection) await connection.rollback();
     console.error('Event cancellation error:', error.message);
     return response.status(500).json({ message: 'Không thể hủy đăng ký sự kiện.' });
+  } finally {
+    connection?.release();
   }
 });
 
@@ -2197,6 +2275,45 @@ function makeId(prefix) {
 
 const classAttendanceRadiusMeters = 100;
 const eventAttendanceRadiusMeters = 300;
+const defaultAttendanceParameters = {
+  gpsRadiusMeters: 100,
+  eventRegistrationLockHours: 24,
+  qrDurationMinutes: 15,
+};
+
+async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = '', executor = pool) {
+  const selectParameters = async (type, id) => {
+    const [rows] = await executor.execute(
+      `SELECT gps_radius_meters AS gpsRadiusMeters,
+              event_registration_lock_hours AS eventRegistrationLockHours,
+              qr_duration_minutes AS qrDurationMinutes
+       FROM system_parameters WHERE scope_type = ? AND scope_id = ? LIMIT 1`,
+      [type, id],
+    );
+    return rows[0] || null;
+  };
+  const globalRow = await selectParameters('global', '');
+  const global = { ...defaultAttendanceParameters, ...(globalRow || {}) };
+  const override = scopeType === 'global'
+    ? global
+    : await selectParameters(scopeType, scopeId);
+  const overrides = scopeType === 'global'
+    ? global
+    : {
+      gpsRadiusMeters: override?.gpsRadiusMeters ?? null,
+      eventRegistrationLockHours: override?.eventRegistrationLockHours ?? null,
+      qrDurationMinutes: override?.qrDurationMinutes ?? null,
+    };
+  const effective = scopeType === 'global'
+    ? global
+    : {
+      gpsRadiusMeters: overrides.gpsRadiusMeters ?? global.gpsRadiusMeters,
+      eventRegistrationLockHours:
+        overrides.eventRegistrationLockHours ?? global.eventRegistrationLockHours,
+      qrDurationMinutes: overrides.qrDurationMinutes ?? global.qrDurationMinutes,
+    };
+  return { global, overrides, effective };
+}
 
 // Đọc và kiểm tra vĩ độ, kinh độ từ request hoặc payload QR.
 function readCoordinates(body) {
@@ -2624,6 +2741,16 @@ app.get('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên
              ORDER BY b.Thoigianbatdau DESC`,
       [request.auth.role, request.auth.sub],
     );
+    const settingsByClass = new Map();
+    for (const row of rows) {
+      if (!settingsByClass.has(row.classId)) {
+        const { effective } = await getEffectiveAttendanceParameters('class', row.classId);
+        settingsByClass.set(row.classId, effective);
+      }
+      const parameters = settingsByClass.get(row.classId);
+      row.gpsRadiusMeters = parameters.gpsRadiusMeters;
+      row.qrDurationMinutes = parameters.qrDurationMinutes;
+    }
     return response.json({ items: rows });
   } catch (error) {
     console.error('Attendance sessions error:', error.message);
@@ -3078,12 +3205,10 @@ app.get('/api/reports/attendance', requireAuth, requireRole('Quản trị viên'
 
 // Kiểm tra dữ liệu, lưu phiên điểm danh và phát hành mã QR nếu cần.
 app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
-  const { classSessionId, method = 'QR', durationMinutes = 15 } = request.body || {};
-  const duration = Number(durationMinutes);
+  const { classSessionId, method = 'QR' } = request.body || {};
   const coordinates = readCoordinates(request.body);
   const accuracyMeters = readLocationAccuracy(request.body);
   if (!classSessionId || !['QR', 'Face', 'Both'].includes(method)
-      || !Number.isInteger(duration) || duration < 1 || duration > 180
       || !coordinates || accuracyMeters === null) {
     return response.status(400).json({ message: 'Cần chọn buổi học và cho phép vị trí để mở điểm danh.' });
   }
@@ -3115,6 +3240,11 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
         message: 'Lớp đã đóng hoặc đã quá 1 năm nên không thể mở điểm danh.',
       });
     }
+    const { effective: classParameters } = await getEffectiveAttendanceParameters(
+      'class', classSession.classId,
+    );
+    const duration = Number(classParameters.qrDurationMinutes);
+    const radiusMeters = Number(classParameters.gpsRadiusMeters) || classAttendanceRadiusMeters;
     const [[activeSession]] = await pool.execute(
       `SELECT Mabuoidiemdanh AS id
        FROM BuoiDiemDanh
@@ -3129,8 +3259,6 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
         message: 'Buổi học đang có mã QR hoạt động. Hãy tắt mã hiện tại trước khi tạo mã mới.',
       });
     }
-    const radiusMeters = classAttendanceRadiusMeters;
-
     const openedAt = new Date();
     const closedAt = new Date(openedAt.getTime() + duration * 60 * 1000);
     const id = makeId('AT');
@@ -3159,6 +3287,7 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
       latitude: coordinates.latitude,
       longitude: coordinates.longitude,
       radiusMeters,
+      qrDurationMinutes: duration,
       qr: method === 'Face'
         ? null
         : createAttendanceQr(
@@ -4001,7 +4130,14 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
         message: 'Sự kiện chưa cấu hình khung điểm danh.',
       });
     }
-    const expiresAt = new Date(period?.endTime ?? event.endTime);
+    const { effective: eventParameters } = await getEffectiveAttendanceParameters(
+      'event', event.id,
+    );
+    const periodEndsAt = new Date(period?.endTime ?? event.endTime);
+    const configuredQrEndsAt = new Date(
+      Date.now() + Number(eventParameters.qrDurationMinutes) * 60 * 1000,
+    );
+    const expiresAt = new Date(Math.min(periodEndsAt.getTime(), configuredQrEndsAt.getTime()));
     if (event.status === 'Đã đóng' || expiresAt <= new Date()) {
       return response.status(409).json({
         message: 'Không thể tạo QR cho sự kiện đã đóng hoặc đã kết thúc.',
@@ -4035,7 +4171,7 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
         sessionId,
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
-        radiusMeters: eventAttendanceRadiusMeters,
+        radiusMeters: Number(eventParameters.gpsRadiusMeters) || eventAttendanceRadiusMeters,
       },
       jwtSecret,
       { expiresIn },
@@ -4050,7 +4186,7 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
         event.id,
         coordinates.latitude,
         coordinates.longitude,
-        eventAttendanceRadiusMeters,
+        Number(eventParameters.gpsRadiusMeters) || eventAttendanceRadiusMeters,
         expiresAt,
         period?.id ?? null,
         period?.name ?? null,
@@ -4075,7 +4211,8 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
       periodStart: period?.startTime ?? null,
       periodEnd: period?.endTime ?? null,
       expiresAt,
-      radiusMeters: eventAttendanceRadiusMeters,
+      radiusMeters: Number(eventParameters.gpsRadiusMeters) || eventAttendanceRadiusMeters,
+      qrDurationMinutes: Number(eventParameters.qrDurationMinutes),
       qr,
     });
   } catch (error) {
@@ -4686,7 +4823,8 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const [[event]] = await connection.execute(
-      `SELECT Masukien, Madv AS organizerId, Thoigianketthuc AS endTime,
+      `SELECT Masukien, Madv AS organizerId,
+              Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
               Soluongtoida AS capacity, Trangthaisukien AS status
        FROM SuKien WHERE Masukien = ? FOR UPDATE`,
       [request.params.eventId],
@@ -4705,6 +4843,19 @@ app.post('/api/organizer/events/:eventId/students/import', requireAuth, requireR
       return response.status(409).json({
         message: 'Sự kiện đã đóng hoặc đã kết thúc, không thể nhập sinh viên.',
       });
+    }
+    if (!allowHistoricalImport) {
+      const { effective: eventParameters } = await getEffectiveAttendanceParameters(
+        'event', event.Masukien, connection,
+      );
+      const registrationLockAt = new Date(event.startTime).getTime()
+        - Number(eventParameters.eventRegistrationLockHours) * 60 * 60 * 1000;
+      if (Date.now() >= registrationLockAt) {
+        await connection.rollback();
+        return response.status(409).json({
+          message: `Đã đến thời gian khóa đăng ký trước sự kiện ${eventParameters.eventRegistrationLockHours} giờ. Không thể nhập sinh viên mới.`,
+        });
+      }
     }
 
     const placeholders = normalizedIds.map(() => '?').join(', ');
@@ -6076,8 +6227,128 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
   }
 });
 
+app.get('/api/admin/settings/parameters/options', requireAuth, requireRole('Quản trị viên', 'admin'), async (_request, response) => {
+  try {
+    const [classes] = await pool.query(
+      `SELECT lhp.Malop AS id, lhp.Tenlop AS name,
+              COALESCE(mh.Tenmon, '') AS subjectName
+       FROM LopHocPhan lhp
+       LEFT JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
+       ORDER BY lhp.Tenlop, lhp.Malop`,
+    );
+    const [events] = await pool.query(
+      `SELECT Masukien AS id, Tensukien AS name, Thoigianbatdau AS startTime
+       FROM SuKien ORDER BY Thoigianbatdau DESC`,
+    );
+    return response.json({ classes, events });
+  } catch (error) {
+    console.error('Parameter options error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải danh sách lớp và sự kiện.' });
+  }
+});
+
+app.get('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  const scopeType = String(request.query.scopeType || 'global');
+  const scopeId = String(request.query.scopeId || '').trim();
+  if (!['global', 'class', 'event'].includes(scopeType)
+      || (scopeType !== 'global' && !scopeId)) {
+    return response.status(400).json({ message: 'Phạm vi cấu hình không hợp lệ.' });
+  }
+  try {
+    if (scopeType === 'class') {
+      const [[item]] = await pool.execute(
+        'SELECT Malop FROM LopHocPhan WHERE Malop = ? LIMIT 1', [scopeId],
+      );
+      if (!item) return response.status(404).json({ message: 'Không tìm thấy lớp học phần.' });
+    } else if (scopeType === 'event') {
+      const [[item]] = await pool.execute(
+        'SELECT Masukien FROM SuKien WHERE Masukien = ? LIMIT 1', [scopeId],
+      );
+      if (!item) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    return response.json(await getEffectiveAttendanceParameters(scopeType, scopeId));
+  } catch (error) {
+    console.error('Read parameters error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải tham số hệ thống.' });
+  }
+});
+
+app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  const scopeType = String(request.body?.scopeType || '');
+  const scopeId = scopeType === 'global' ? '' : String(request.body?.scopeId || '').trim();
+  const body = request.body || {};
+  if (!['global', 'class', 'event'].includes(scopeType)
+      || (scopeType !== 'global' && !scopeId)) {
+    return response.status(400).json({ message: 'Phạm vi cấu hình không hợp lệ.' });
+  }
+  const values = {
+    gpsRadiusMeters: body.gpsRadiusMeters,
+    eventRegistrationLockHours: body.eventRegistrationLockHours,
+    qrDurationMinutes: body.qrDurationMinutes,
+  };
+  const ranges = {
+    gpsRadiusMeters: [10, 5000],
+    eventRegistrationLockHours: [0, 720],
+    qrDurationMinutes: [1, 180],
+  };
+  for (const [key, [minimum, maximum]] of Object.entries(ranges)) {
+    if (scopeType === 'class' && key === 'eventRegistrationLockHours') {
+      if (values[key] !== null && values[key] !== undefined) {
+        return response.status(400).json({ message: 'Thời gian khóa đăng ký chỉ áp dụng cho phạm vi sự kiện.' });
+      }
+      values[key] = null;
+      continue;
+    }
+    if (values[key] === null || values[key] === undefined || values[key] === '') {
+      if (scopeType === 'global') {
+        return response.status(400).json({ message: 'Cấu hình toàn hệ thống cần đủ cả ba tham số.' });
+      }
+      values[key] = null;
+      continue;
+    }
+    const parsed = Number(values[key]);
+    if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+      return response.status(400).json({
+        message: `${key} phải là số nguyên từ ${minimum} đến ${maximum}.`,
+      });
+    }
+    values[key] = parsed;
+  }
+  try {
+    if (scopeType === 'class') {
+      const [[item]] = await pool.execute(
+        'SELECT Malop FROM LopHocPhan WHERE Malop = ? LIMIT 1', [scopeId],
+      );
+      if (!item) return response.status(404).json({ message: 'Không tìm thấy lớp học phần.' });
+    } else if (scopeType === 'event') {
+      const [[item]] = await pool.execute(
+        'SELECT Masukien FROM SuKien WHERE Masukien = ? LIMIT 1', [scopeId],
+      );
+      if (!item) return response.status(404).json({ message: 'Không tìm thấy sự kiện.' });
+    }
+    await pool.execute(
+      `INSERT INTO system_parameters
+         (scope_type, scope_id, gps_radius_meters,
+          event_registration_lock_hours, qr_duration_minutes, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         gps_radius_meters = VALUES(gps_radius_meters),
+         event_registration_lock_hours = VALUES(event_registration_lock_hours),
+         qr_duration_minutes = VALUES(qr_duration_minutes),
+         updated_by = VALUES(updated_by)`,
+      [scopeType, scopeId, values.gpsRadiusMeters,
+        values.eventRegistrationLockHours, values.qrDurationMinutes, request.auth.sub],
+    );
+    return response.json(await getEffectiveAttendanceParameters(scopeType, scopeId));
+  } catch (error) {
+    console.error('Save parameters error:', error.message);
+    return response.status(500).json({ message: 'Không thể lưu tham số hệ thống.' });
+  }
+});
+
 ensureAttendanceLocationColumns()
   .then(async () => {
+    await ensureSystemParametersTable();
     await ensureEventStatusColumn();
     await ensureEventImageColumn();
     await ensureEventCertificateColumn();

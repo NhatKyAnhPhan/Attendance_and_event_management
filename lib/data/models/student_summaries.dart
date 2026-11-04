@@ -71,6 +71,8 @@ class StudentEventSummary {
   final DateTime? endTime;
   final String status;
   final String attendanceStatus;
+  final bool registrationLocked;
+  final int? registrationLockHours;
 
   const StudentEventSummary({
     required this.id,
@@ -84,12 +86,18 @@ class StudentEventSummary {
     this.endTime,
     this.status = '',
     this.attendanceStatus = '',
+    this.registrationLocked = false,
+    this.registrationLockHours,
   });
 
   /// Kiểm tra trạng thái kết thúc theo thời gian sự kiện từ API.
   bool get isEnded =>
       status == 'Đã đóng' ||
       (endTime != null && !DateTime.now().isBefore(endTime!));
+
+  bool get isAttended =>
+      attendanceStatus == 'Có mặt' ||
+      attendanceStatus.startsWith('Đã điểm danh');
 
   /// Tính trạng thái sự kiện theo thời gian bắt đầu và kết thúc thực tế.
   String get eventStatus {
@@ -118,6 +126,11 @@ class StudentEventSummary {
       endTime: DateTime.tryParse(json['endTime']?.toString() ?? '')?.toLocal(),
       status: json['status']?.toString() ?? '',
       attendanceStatus: json['attendanceStatus']?.toString() ?? '',
+      registrationLocked: json['registrationLocked'] == true,
+      registrationLockHours: _parseOptionalInt(json['registrationLockHours']),
     );
   }
+
+  static int? _parseOptionalInt(dynamic value) =>
+      value == null ? null : int.tryParse(value.toString());
 }

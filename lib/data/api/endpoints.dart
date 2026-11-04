@@ -14,6 +14,8 @@ class ApiEndpoints {
   static String importEventStudents(String eventId) =>
       '/api/organizer/events/${Uri.encodeComponent(eventId)}/students/import';
   static const adminClasses = '/api/admin/classes';
+  static const adminParameterOptions = '/api/admin/settings/parameters/options';
+  static const adminParameters = '/api/admin/settings/parameters';
   static const attendance = '/api/attendance';
   static const attendanceSessions = '/api/attendance/sessions';
   static String closeAttendanceSession(String sessionId) =>
