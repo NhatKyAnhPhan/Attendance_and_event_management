@@ -69,6 +69,7 @@ class _AttendancePeriodDraft {
 class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
+  final Set<String> _selectedClosedEventIds = {};
   bool _sendingCertificates = false;
   bool _issuingCertificatesInApp = false;
   bool _importingEventsFromExcel = false;
@@ -124,7 +125,10 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     }
 
     try {
-      final events = extractEventsFromWorkbook(decodeExcelWorkbook(bytes));
+      final parsedEvents = extractEventsFromWorkbook(
+        decodeExcelWorkbook(bytes),
+      );
+      final events = parsedEvents.events;
       await controller.loadUnits();
       if (!context.mounted) return;
       if (controller.unitsError.value.isNotEmpty) {
@@ -140,22 +144,54 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         );
         return;
       }
-      final unitMappings = await _chooseEventUnits(context, events, controller);
-      if (unitMappings == null || !context.mounted) return;
+      final unitMappings = <String, OrganizerUnit?>{};
+      for (final event in events) {
+        final matches = controller.units
+            .where(
+              (unit) =>
+                  _normalizeMatchText(unit.name) ==
+                  _normalizeMatchText(event.organizerName),
+            )
+            .toList();
+        unitMappings[event.organizerName] = matches.length == 1
+            ? matches.single
+            : null;
+      }
+      final importableEvents = events
+          .where((event) => unitMappings[event.organizerName] != null)
+          .toList();
+      final unmatchedOrganizerNames = unitMappings.entries
+          .where((entry) => entry.value == null)
+          .map((entry) => entry.key)
+          .toSet();
+      if (importableEvents.isEmpty) {
+        await _showExcelError(
+          context,
+          'Không có sự kiện nào có đơn vị tổ chức khớp với đơn vị hiện có. '
+          'Các tên không khớp: ${unmatchedOrganizerNames.join(', ')}.',
+        );
+        return;
+      }
+      final warnings = [
+        ...parsedEvents.warnings,
+        for (final name in unmatchedOrganizerNames)
+          'Không tìm thấy đơn vị "$name" trong hệ thống; sự kiện của đơn vị này sẽ bị bỏ qua.',
+      ];
       final confirmed = await _confirmExcelImport(
         context,
         title: 'Xác nhận thêm sự kiện từ Excel',
-        subtitle: '${events.length} sự kiện sẽ được thêm vào hệ thống.',
-        lines: events
-            .map(
-              (event) =>
-                  '${event.name} (${event.sourceId})\n'
-                  '${DateFormat('dd/MM/yyyy').format(event.eventDate)} · '
-                  '${event.startMinutes == null ? '09:00 mặc định' : _formatMinutes(event.startMinutes!)} · '
-                  '${event.location} · '
-                  '${controller.units.firstWhere((unit) => unit.id == unitMappings[event.organizerName]).name}',
-            )
-            .toList(),
+        subtitle:
+            '${importableEvents.length} sự kiện có đơn vị khớp sẽ được thêm; '
+            '${events.length - importableEvents.length} sự kiện không khớp sẽ bị bỏ qua.',
+        warnings: warnings,
+        lines: events.map((event) {
+          final unit = unitMappings[event.organizerName];
+          return '${event.name} (${event.sourceId})\n'
+              '${DateFormat('dd/MM/yyyy').format(event.eventDate)} · '
+              '${event.startMinutes == null ? '09:00 mặc định' : _formatMinutes(event.startMinutes!)} · '
+              '${event.location} · '
+              '${unit?.name ?? 'Không khớp đơn vị: ${event.organizerName} — sẽ bỏ qua'}';
+        }).toList(),
       );
       if (confirmed != true || !context.mounted) return;
 
@@ -164,6 +200,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       var existingCount = 0;
       final failures = <String>[];
       for (final event in events) {
+        final organizerUnit = unitMappings[event.organizerName];
+        if (organizerUnit == null) {
+          failures.add(
+            '${event.name}: không tìm thấy đơn vị "${event.organizerName}" trong hệ thống.',
+          );
+          continue;
+        }
         final normalizedName = _normalizeMatchText(event.name);
         if (controller.items.any(
           (existing) => _normalizeMatchText(existing.name) == normalizedName,
@@ -192,7 +235,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
           await controller.createEvent(
             sourceId: event.sourceId,
             name: event.name,
-            organizerId: unitMappings[event.organizerName]!,
+            organizerId: organizerUnit.id,
             startTime: startTime,
             endTime: endTime,
             location: event.location,
@@ -256,6 +299,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     required String title,
     required String subtitle,
     required List<String> lines,
+    List<String> warnings = const [],
   }) {
     return showDialog<bool>(
       context: context,
@@ -268,6 +312,24 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(subtitle),
+              if (warnings.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.errorContainer
+                        .withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Dòng sẽ bị bỏ qua:\n${warnings.join('\n')}',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Flexible(
                 child: SingleChildScrollView(child: Text(lines.join('\n\n'))),
@@ -301,99 +363,6 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             child: const Text('Đóng'),
           ),
         ],
-      ),
-    );
-  }
-
-  Future<Map<String, String>?> _chooseEventUnits(
-    BuildContext context,
-    List<ExcelEventImportRow> events,
-    OrganizerEventsController controller,
-  ) {
-    final organizerNames = events
-        .map((event) => event.organizerName)
-        .toSet()
-        .toList();
-    final selectedUnits = <String, String?>{};
-    for (final name in organizerNames) {
-      final matches = controller.units
-          .where(
-            (unit) =>
-                _normalizeMatchText(unit.name) == _normalizeMatchText(name),
-          )
-          .toList();
-      selectedUnits[name] = matches.length == 1 ? matches.single.id : null;
-    }
-    var missingSelection = false;
-    return showDialog<Map<String, String>>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Chọn đơn vị tổ chức'),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final name in organizerNames) ...[
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 12, bottom: 4),
-                        child: Text(name),
-                      ),
-                    ),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedUnits[name],
-                      decoration: const InputDecoration(
-                        labelText: 'Đơn vị trong hệ thống',
-                      ),
-                      items: [
-                        for (final unit in controller.units)
-                          DropdownMenuItem(
-                            value: unit.id,
-                            child: Text(unit.name),
-                          ),
-                      ],
-                      onChanged: (value) => setDialogState(() {
-                        selectedUnits[name] = value;
-                        missingSelection = false;
-                      }),
-                    ),
-                  ],
-                  if (missingSelection)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 12),
-                      child: Text(
-                        'Hãy chọn đơn vị tổ chức cho từng tên trong file.',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Hủy'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (selectedUnits.values.any((value) => value == null)) {
-                  setDialogState(() => missingSelection = true);
-                  return;
-                }
-                Navigator.pop(
-                  dialogContext,
-                  selectedUnits.map((key, value) => MapEntry(key, value!)),
-                );
-              },
-              child: const Text('Tiếp tục'),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -627,7 +596,18 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
           event.status,
           event.organizerId,
         ].any((value) => value.toLowerCase().contains(query));
-      }).toList();
+      }).toList()
+        ..sort((a, b) {
+          int rank(OrganizerEventSummary event) {
+            if (event.isClosed) return 4;
+            if (event.status == 'Sắp diễn ra') return 0;
+            if (event.status == 'Đang diễn ra') return 1;
+            return 3;
+          }
+          final rankOrder = rank(a).compareTo(rank(b));
+          if (rankOrder != 0) return rankOrder;
+          return a.startTime.compareTo(b.startTime);
+        });
       if (controller.loading.value && controller.items.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -738,7 +718,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   onSelected: (_) => setState(() => _showArchived = false),
                 ),
                 ChoiceChip(
-                  label: const Text('Sự kiện đã đóng / quá 1 năm'),
+                  label: const Text('Sự kiện đã đóng'),
                   selected: _showArchived,
                   selectedColor: colors.secondary,
                   side: BorderSide(
@@ -760,6 +740,29 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ],
             ),
             const SizedBox(height: 12),
+            if (_showArchived && canDeleteEvents && filteredItems.isNotEmpty)
+              Wrap(spacing: 8, children: [
+                OutlinedButton.icon(
+                  onPressed: () => setState(() {
+                    if (_selectedClosedEventIds.length == filteredItems.length) {
+                      _selectedClosedEventIds.clear();
+                    } else {
+                      _selectedClosedEventIds
+                        ..clear()
+                        ..addAll(filteredItems.map((event) => event.id));
+                    }
+                  }),
+                  icon: const Icon(Icons.check_box_outlined),
+                  label: Text(_selectedClosedEventIds.length == filteredItems.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'),
+                ),
+                FilledButton.icon(
+                  onPressed: _selectedClosedEventIds.isEmpty ? null : () => _confirmDeleteSelected(context, controller),
+                  icon: const Icon(Icons.delete_outline),
+                  label: Text('Xóa đã chọn (${_selectedClosedEventIds.length})'),
+                ),
+              ]),
+            if (_showArchived && canDeleteEvents && filteredItems.isNotEmpty)
+              const SizedBox(height: 12),
             AppSearchField(
               colors: colors,
               hintText: 'Tìm tên sự kiện, địa điểm, trạng thái...',
@@ -823,6 +826,17 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
+                        if (_showArchived && canDeleteEvents)
+                          Checkbox(
+                            value: _selectedClosedEventIds.contains(event.id),
+                            onChanged: (selected) => setState(() {
+                              if (selected == true) {
+                                _selectedClosedEventIds.add(event.id);
+                              } else {
+                                _selectedClosedEventIds.remove(event.id);
+                              }
+                            }),
+                          ),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -861,7 +875,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                                     ? 'Có cấp chứng nhận'
                                     : 'Không cấp chứng nhận',
                               ),
-                              if (event.isArchived) ...[
+                              if (event.isClosed) ...[
                                 const SizedBox(height: 7),
                                 Text(
                                   event.isClosed
@@ -882,13 +896,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                             vertical: 6,
                           ),
                           decoration: BoxDecoration(
-                            color: colors.secondary,
+                            color: _eventStatusColor(event.status),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
                             event.status,
                             style: AppTextStyles.bodyXs(
-                              colors.secondaryForeground,
+                              Colors.white,
                             ).copyWith(fontWeight: FontWeight.w700),
                           ),
                         ),
@@ -936,6 +950,44 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         ),
       );
     });
+  }
+
+  Color _eventStatusColor(String status) => switch (status) {
+    'Sắp diễn ra' => Colors.green.shade700,
+    'Đang diễn ra' => Colors.amber.shade800,
+    'Đã kết thúc' => Colors.red.shade700,
+    'Đã đóng' => Colors.red.shade900,
+    _ => Colors.blueGrey,
+  };
+
+  Future<void> _confirmDeleteSelected(
+    BuildContext context,
+    OrganizerEventsController controller,
+  ) async {
+    final ids = _selectedClosedEventIds.toList();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Xóa sự kiện đã chọn?'),
+        content: Text('Bạn có chắc muốn xóa ${ids.length} sự kiện đã đóng không?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Hủy')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Xác nhận xóa')),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      for (final id in ids) {
+        await controller.deleteEvent(id);
+      }
+      if (mounted) setState(() => _selectedClosedEventIds.clear());
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã xóa ${ids.length} sự kiện.')));
+      }
+    } catch (exception) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(exception.toString())));
+    }
   }
 
   Widget _eventMetaLine(AppColors colors, IconData icon, String value) {

@@ -1,8 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:excel/excel.dart' hide Border;
+import 'package:file_picker/file_picker.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/api/api_client.dart';
+import '../../core/utils/excel_file_decoder.dart';
 import '../../widgets/app_search_field.dart';
 
 class AdminDataPage extends StatefulWidget {
@@ -24,6 +29,7 @@ class AdminDataPage extends StatefulWidget {
 class _AdminDataPageState extends State<AdminDataPage> {
   late Future<Map<String, dynamic>> _dataFuture;
   String _query = '';
+  bool _importingMasterData = false;
 
   @override
   void initState() {
@@ -38,6 +44,239 @@ class _AdminDataPageState extends State<AdminDataPage> {
       _query = '';
       _dataFuture = ApiClient().get(widget.endpoint);
     }
+  }
+
+  String? get _masterDataKind => widget.endpoint.endsWith('/units')
+      ? 'units'
+      : widget.endpoint.endsWith('/users')
+      ? 'users'
+      : null;
+
+  bool get _supportsMasterDataImport => _masterDataKind != null;
+
+  Future<void> _downloadMasterDataTemplate() async {
+    try {
+      final workbook = Excel.createExcel();
+      final isUnits = _masterDataKind == 'units';
+      final sheetName = isUnits ? 'DonVi' : 'NguoiDung';
+      workbook.rename('Sheet1', sheetName);
+      workbook[sheetName].appendRow(
+        isUnits
+            ? [
+                TextCellValue('MaDV'),
+                TextCellValue('TenDV'),
+                TextCellValue('MaNhanVienPhuTrach'),
+              ]
+            : [
+                TextCellValue('MaND'),
+                TextCellValue('HoTen'),
+                TextCellValue('Email'),
+                TextCellValue('MatKhau'),
+                TextCellValue('VaiTro'),
+                TextCellValue('TrangThai'),
+                TextCellValue('SDT'),
+                TextCellValue('DiaChi'),
+                TextCellValue('NgaySinh'),
+                TextCellValue('GioiTinh'),
+                TextCellValue('QueQuan'),
+                TextCellValue('Lop'),
+                TextCellValue('ChuyenNganh'),
+                TextCellValue('BoMon'),
+                TextCellValue('ChucVu'),
+              ],
+      );
+      final instructions = isUnits
+          ? [
+              'Sheet DonVi: MaDV và TenDV bắt buộc; MaNhanVienPhuTrach có thể để trống.',
+              'Định dạng MaDV và MaNhanVienPhuTrach là Văn bản để giữ số 0 ở đầu.',
+              'Mã đơn vị phải chưa tồn tại trong hệ thống.',
+            ]
+          : [
+              'Sheet NguoiDung: MaND, HoTen, Email, MatKhau và VaiTro bắt buộc.',
+              'VaiTro hợp lệ: Sinh viên, Giảng viên, Cán bộ. Không hỗ trợ tạo tài khoản Admin.',
+              'Sinh viên cần Lop và ChuyenNganh; Giảng viên cần BoMon; Cán bộ cần ChucVu.',
+              'MatKhau tối thiểu 8 ký tự; mật khẩu được mã hóa trước khi lưu. Trạng thái trống mặc định là Đang hoạt động.',
+              'Định dạng MaND là Văn bản để giữ số 0 ở đầu. NgaySinh dùng dạng YYYY-MM-DD.',
+              'Mã tài khoản và email phải chưa tồn tại trong hệ thống.',
+            ];
+      for (final instruction in instructions) {
+        workbook['HuongDan'].appendRow([TextCellValue(instruction)]);
+      }
+      final bytes = workbook.encode();
+      if (bytes == null || bytes.isEmpty) {
+        throw Exception('Không tạo được nội dung file mẫu.');
+      }
+      final savedPath = await FilePicker.saveFile(
+        dialogTitle: 'Lưu mẫu import ${isUnits ? 'đơn vị' : 'người dùng'}',
+        fileName: isUnits
+            ? 'Mau_import_don_vi.xlsx'
+            : 'Mau_import_nguoi_dung.xlsx',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        bytes: Uint8List.fromList(bytes),
+      );
+      if (!mounted || savedPath == null) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Đã lưu file mẫu: $savedPath')));
+    } on Exception catch (exception) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể tạo file mẫu Excel: $exception')),
+      );
+    }
+  }
+
+  Future<void> _importMasterData() async {
+    FilePickerResult? selection;
+    try {
+      selection = await FilePicker.pickFiles(
+        dialogTitle:
+            'Chọn file Excel ${_masterDataKind == 'units' ? 'đơn vị' : 'người dùng'}',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        allowMultiple: false,
+        withData: true,
+      );
+    } on Exception catch (exception) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể mở file Excel: $exception')),
+      );
+      return;
+    }
+    if (selection == null || selection.files.isEmpty || !mounted) return;
+    final bytes = selection.files.single.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không đọc được nội dung file Excel.')),
+      );
+      return;
+    }
+
+    try {
+      final parsed = extractAdminMasterDataFromWorkbook(
+        decodeExcelWorkbook(bytes),
+      );
+      final isUnits = _masterDataKind == 'units';
+      final selected = (
+        units: isUnits ? parsed.units : <Map<String, String>>[],
+        users: isUnits ? <Map<String, String>>[] : parsed.users,
+        warnings: parsed.warnings,
+      );
+      if (selected.units.isEmpty && selected.users.isEmpty) {
+        throw FormatException(
+          isUnits
+              ? 'Không tìm thấy đơn vị hợp lệ trong sheet DonVi.'
+              : 'Không tìm thấy tài khoản hợp lệ trong sheet NguoiDung.',
+        );
+      }
+      final confirmed = await _confirmMasterDataImport(selected);
+      if (confirmed != true || !mounted) return;
+
+      setState(() => _importingMasterData = true);
+      final result = await ApiClient().post(
+        '/api/admin/master-data/import',
+        data: {'units': parsed.units, 'users': parsed.users},
+      );
+      if (!mounted) return;
+      setState(() {
+        _dataFuture = ApiClient().get(widget.endpoint);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isUnits
+                ? 'Đã thêm ${result['importedUnits'] ?? 0} đơn vị.'
+                : 'Đã thêm ${result['importedUsers'] ?? 0} tài khoản.',
+          ),
+        ),
+      );
+    } on FormatException catch (exception) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(exception.message)));
+    } on Exception catch (exception) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể nhập dữ liệu Excel: $exception')),
+      );
+    } finally {
+      if (mounted) setState(() => _importingMasterData = false);
+    }
+  }
+
+  Future<bool?> _confirmMasterDataImport(ExcelMasterDataImport parsed) {
+    final preview = <String>[
+      for (final unit in parsed.units)
+        'Đơn vị: ${unit['name']} · ${unit['id']} · '
+            'Phụ trách: ${unit['managerId']!.isEmpty ? 'chưa phân công' : unit['managerId']}',
+      for (final user in parsed.users)
+        'Tài khoản: ${user['name']} · ${user['id']} · '
+            '${user['email']} · ${user['role']}',
+    ];
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Xác nhận import ${parsed.units.isNotEmpty ? 'đơn vị' : 'người dùng'}',
+        ),
+        content: SizedBox(
+          width: 560,
+          height: 440,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                parsed.units.isNotEmpty
+                    ? '${parsed.units.length} đơn vị hợp lệ sẽ được thêm.'
+                    : '${parsed.users.length} tài khoản hợp lệ sẽ được thêm.',
+              ),
+              const SizedBox(height: 8),
+              if (parsed.users.isNotEmpty)
+                const Text(
+                  'Mật khẩu không hiển thị trong bản xem trước và sẽ được mã hóa khi lưu. Không thể tạo tài khoản Admin từ Excel.',
+                ),
+              if (parsed.warnings.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '${parsed.warnings.length} dòng sẽ bị bỏ qua:',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                ...parsed.warnings.take(5).map(Text.new),
+                if (parsed.warnings.length > 5)
+                  Text('Còn ${parsed.warnings.length - 5} cảnh báo khác.'),
+              ],
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: preview.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, index) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(preview[index]),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: _importingMasterData
+                ? null
+                : () => Navigator.pop(dialogContext, true),
+            child: const Text('Xác nhận import'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Tải bảng dữ liệu thật theo endpoint được chọn.
@@ -74,6 +313,40 @@ class _AdminDataPageState extends State<AdminDataPage> {
           children: [
             Text(widget.title, style: AppTextStyles.displayLg(c.foreground)),
             const SizedBox(height: 16),
+            if (_supportsMasterDataImport) ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _importingMasterData
+                        ? null
+                        : _downloadMasterDataTemplate,
+                    icon: const Icon(Icons.download_outlined),
+                    label: Text(
+                      'Tải mẫu ${_masterDataKind == 'units' ? 'đơn vị' : 'người dùng'} Excel',
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: _importingMasterData ? null : _importMasterData,
+                    icon: const Icon(Icons.upload_file),
+                    label: Text(
+                      _importingMasterData
+                          ? 'Đang nhập...'
+                          : 'Import ${_masterDataKind == 'units' ? 'đơn vị' : 'người dùng'} Excel',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _masterDataKind == 'units'
+                    ? 'Dùng sheet DonVi với các cột MaDV, TenDV và MaNhanVienPhuTrach (không bắt buộc).'
+                    : 'Dùng sheet NguoiDung. Vai trò hợp lệ: Sinh viên, Giảng viên, Cán bộ; không hỗ trợ tạo Admin. Sinh viên cần lớp/chuyên ngành, Giảng viên cần bộ môn, Cán bộ cần chức vụ.',
+                style: AppTextStyles.bodyXs(c.mutedForeground),
+              ),
+              const SizedBox(height: 16),
+            ],
             AppSearchField(
               key: ValueKey(widget.endpoint),
               colors: c,

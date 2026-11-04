@@ -94,7 +94,7 @@ class OrganizerEventSummary {
 
   bool get isClosed => storedStatus == 'Đã đóng';
 
-  bool get isArchived => isClosed || isOlderThanOneYear(startTime);
+  bool get isArchived => isClosed;
 
   String get status {
     if (isClosed) return storedStatus;

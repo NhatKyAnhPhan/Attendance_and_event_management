@@ -50,6 +50,203 @@ typedef ExcelEventImportRow = ({
   String description,
 });
 
+typedef ExcelEventsImport = ({
+  List<ExcelEventImportRow> events,
+  List<String> warnings,
+});
+
+typedef ExcelMasterDataImport = ({
+  List<Map<String, String>> units,
+  List<Map<String, String>> users,
+  List<String> warnings,
+});
+
+ExcelMasterDataImport extractAdminMasterDataFromWorkbook(Excel workbook) {
+  final units = <Map<String, String>>[];
+  final users = <Map<String, String>>[];
+  final warnings = <String>[];
+  final unitSheet = workbook.tables['DonVi'];
+  final userSheet = workbook.tables['NguoiDung'];
+
+  if (unitSheet == null && userSheet == null) {
+    throw const FormatException(
+      'File cần có sheet DonVi, NguoiDung hoặc cả hai theo mẫu Excel.',
+    );
+  }
+  if (unitSheet != null) {
+    _extractMasterDataSheet(
+      unitSheet.rows,
+      sheetName: 'DonVi',
+      fields: const {
+        'id': {'madv', 'maunit', 'unitid', 'unitcode'},
+        'name': {'tendv', 'tendonvi', 'unitname', 'name'},
+        'managerId': {'manhanvienphutrach', 'manv', 'managerid', 'employeeid'},
+      },
+      requiredFields: const {'id', 'name'},
+      output: units,
+      warnings: warnings,
+    );
+  }
+  if (userSheet != null) {
+    _extractMasterDataSheet(
+      userSheet.rows,
+      sheetName: 'NguoiDung',
+      fields: const {
+        'id': {'mand', 'mataikhoan', 'userid', 'usercode'},
+        'name': {'hoten', 'hovaten', 'fullname', 'name'},
+        'email': {'email'},
+        'password': {'matkhau', 'password'},
+        'role': {'vaitro', 'role'},
+        'status': {'trangthai', 'trangthaitaikhoan', 'status'},
+        'phone': {'sdt', 'sodienthoai', 'phone'},
+        'address': {'diachi', 'address'},
+        'birthDate': {'ngaysinh', 'birthdate'},
+        'gender': {'gioitinh', 'gender'},
+        'hometown': {'quequan', 'hometown'},
+        'className': {'lop', 'class'},
+        'major': {'chuyennganh', 'major'},
+        'subjectDepartment': {'bomon', 'subjectdepartment'},
+        'position': {'chucvu', 'position'},
+      },
+      requiredFields: const {'id', 'name', 'email', 'password', 'role'},
+      output: users,
+      warnings: warnings,
+    );
+  }
+
+  if (units.isEmpty && users.isEmpty) {
+    throw FormatException(
+      warnings.isEmpty
+          ? 'Không tìm thấy đơn vị hoặc tài khoản trong file Excel.'
+          : warnings.join(' '),
+    );
+  }
+  return (units: units, users: users, warnings: warnings);
+}
+
+void _extractMasterDataSheet(
+  List<List<Data?>> rows, {
+  required String sheetName,
+  required Map<String, Set<String>> fields,
+  required Set<String> requiredFields,
+  required List<Map<String, String>> output,
+  required List<String> warnings,
+}) {
+  final headerIndex = rows.indexWhere((row) {
+    final headers = row.map((cell) => _normalizeHeader(_excelCellText(cell)));
+    return requiredFields.every(
+      (field) => headers.any(fields[field]!.contains),
+    );
+  });
+  if (headerIndex < 0) {
+    warnings.add('$sheetName: không tìm thấy hàng tiêu đề hợp lệ.');
+    return;
+  }
+
+  final headers = rows[headerIndex]
+      .map((cell) => _normalizeHeader(_excelCellText(cell)))
+      .toList();
+  final seenIds = <String>{};
+  final seenEmails = <String>{};
+  for (var index = headerIndex + 1; index < rows.length; index++) {
+    final row = rows[index];
+    if (row.every((cell) => _excelCellText(cell).trim().isEmpty)) continue;
+    final record = <String, String>{};
+    for (final entry in fields.entries) {
+      final column = headers.indexWhere(entry.value.contains);
+      if (entry.key == 'birthDate') {
+        final date = _excelDateAt(row, column);
+        record[entry.key] = date == null ? '' : _formatExcelDate(date);
+      } else {
+        record[entry.key] = _cellTextAt(row, column).trim();
+      }
+    }
+    final missing = requiredFields
+        .where((field) => record[field]!.isEmpty)
+        .toList();
+    if (missing.isNotEmpty) {
+      warnings.add(
+        '$sheetName dòng ${index + 1}: thiếu ${missing.join(', ')}, sẽ bỏ qua.',
+      );
+      continue;
+    }
+    final idKey = record['id']!.toLowerCase();
+    if (seenIds.contains(idKey)) {
+      warnings.add('$sheetName dòng ${index + 1}: mã bị lặp trong file, sẽ bỏ qua.');
+      continue;
+    }
+    if (sheetName == 'NguoiDung') {
+      final role = _canonicalMasterDataRole(record['role']!);
+      if (role == null) {
+        warnings.add(
+          '$sheetName dòng ${index + 1}: vai trò không hợp lệ (không hỗ trợ Admin), sẽ bỏ qua.',
+        );
+        continue;
+      }
+      record['role'] = role;
+      final email = record['email']!;
+      final password = record['password']!;
+      if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email) ||
+          password.length < 8) {
+        warnings.add(
+          '$sheetName dòng ${index + 1}: email không hợp lệ hoặc mật khẩu ngắn hơn 8 ký tự, sẽ bỏ qua.',
+        );
+        continue;
+      }
+      if ((role == 'Sinh viên' &&
+              (record['className']!.isEmpty || record['major']!.isEmpty)) ||
+          (role == 'Giảng viên' && record['subjectDepartment']!.isEmpty) ||
+          (role == 'Cán bộ' && record['position']!.isEmpty)) {
+        warnings.add(
+          '$sheetName dòng ${index + 1}: thiếu thông tin hồ sơ bắt buộc theo vai trò, sẽ bỏ qua.',
+        );
+        continue;
+      }
+      final status = record['status']!.toLowerCase();
+      if (status.isNotEmpty &&
+          status != 'đang hoạt động' &&
+          status != 'đã khóa') {
+        warnings.add(
+          '$sheetName dòng ${index + 1}: trạng thái không hợp lệ, sẽ bỏ qua.',
+        );
+        continue;
+      }
+      final emailKey = email.toLowerCase();
+      if (seenEmails.contains(emailKey)) {
+        warnings.add(
+          '$sheetName dòng ${index + 1}: email bị lặp trong file, sẽ bỏ qua.',
+        );
+        continue;
+      }
+      seenEmails.add(emailKey);
+    }
+    seenIds.add(idKey);
+    output.add(record);
+  }
+}
+
+String? _canonicalMasterDataRole(String role) {
+  switch (role.trim().toLowerCase()) {
+    case 'sinh viên':
+    case 'student':
+      return 'Sinh viên';
+    case 'giảng viên':
+    case 'lecturer':
+      return 'Giảng viên';
+    case 'cán bộ':
+    case 'nhân viên':
+    case 'employee':
+      return 'Cán bộ';
+    default:
+      return null;
+  }
+}
+
+String _formatExcelDate(DateTime date) =>
+    '${date.year.toString().padLeft(4, '0')}-'
+    '${date.month.toString().padLeft(2, '0')}-'
+    '${date.day.toString().padLeft(2, '0')}';
+
 ExcelStudentIds extractStudentIdsFromWorkbook(Excel workbook) {
   if (workbook.tables.isEmpty) {
     throw const FormatException('File Excel không có trang tính dữ liệu.');
@@ -102,8 +299,7 @@ List<ExcelStudentRosterGroup> extractStudentRosterGroups(
     final headers = row.map((cell) => _normalizeHeader(_excelCellText(cell)));
     return headers.any(_isStudentIdHeader) &&
         headers.any(
-          (header) =>
-              targetIdHeaders.map(_normalizeHeader).contains(header),
+          (header) => targetIdHeaders.map(_normalizeHeader).contains(header),
         );
   });
   if (headerIndex < 0) {
@@ -176,7 +372,7 @@ List<ExcelStudentRosterGroup> extractStudentRosterGroups(
       .toList();
 }
 
-List<ExcelEventImportRow> extractEventsFromWorkbook(Excel workbook) {
+ExcelEventsImport extractEventsFromWorkbook(Excel workbook) {
   final rows = _firstSheetRows(workbook);
   const eventIdHeaders = {'masukien', 'mãsựkiện'};
   const eventNameHeaders = {'tensukien', 'tênsựkiện'};
@@ -206,6 +402,7 @@ List<ExcelEventImportRow> extractEventsFromWorkbook(Excel workbook) {
   final endColumn = _findHeader(headers, const {'gioketthuc', 'giờkếtthúc'});
   final descriptionColumn = _findHeader(headers, const {'mota', 'môtả'});
   final events = <ExcelEventImportRow>[];
+  final warnings = <String>[];
 
   for (var index = headerIndex + 1; index < rows.length; index++) {
     final row = rows[index];
@@ -213,22 +410,24 @@ List<ExcelEventImportRow> extractEventsFromWorkbook(Excel workbook) {
     final name = _cellTextAt(row, nameColumn).trim();
     if (sourceId.isEmpty && name.isEmpty) continue;
     if (sourceId.isEmpty || name.isEmpty) {
-      throw FormatException(
-        'Thiếu mã hoặc tên sự kiện ở dòng ${index + 1} của file Excel.',
+      warnings.add(
+        'Dòng ${index + 1}: thiếu ${sourceId.isEmpty ? 'mã sự kiện' : 'tên sự kiện'}, sẽ bỏ qua.',
       );
+      continue;
     }
     final eventDate = _excelDateAt(row, dateColumn);
-    if (eventDate == null) {
-      throw FormatException(
-        'Thiếu ngày tổ chức của sự kiện "$name" ở dòng ${index + 1}.',
-      );
-    }
     final organizerName = _cellTextAt(row, organizerColumn).trim();
     final location = _cellTextAt(row, locationColumn).trim();
-    if (organizerName.isEmpty || location.isEmpty) {
-      throw FormatException(
-        'Thiếu đơn vị tổ chức hoặc địa điểm của sự kiện "$name".',
+    final missingFields = <String>[
+      if (eventDate == null) 'ngày tổ chức',
+      if (organizerName.isEmpty) 'đơn vị tổ chức',
+      if (location.isEmpty) 'địa điểm',
+    ];
+    if (missingFields.isNotEmpty) {
+      warnings.add(
+        'Dòng ${index + 1} ($name): thiếu ${missingFields.join(', ')}, sẽ bỏ qua.',
       );
+      continue;
     }
 
     events.add((
@@ -236,7 +435,7 @@ List<ExcelEventImportRow> extractEventsFromWorkbook(Excel workbook) {
       name: name,
       organizerName: organizerName,
       location: location,
-      eventDate: eventDate,
+      eventDate: eventDate!,
       startMinutes: _excelTimeMinutesAt(row, startColumn),
       endMinutes: _excelTimeMinutesAt(row, endColumn),
       description: _cellTextAt(row, descriptionColumn).trim(),
@@ -244,9 +443,13 @@ List<ExcelEventImportRow> extractEventsFromWorkbook(Excel workbook) {
   }
 
   if (events.isEmpty) {
-    throw const FormatException('Không tìm thấy sự kiện nào trong file Excel.');
+    throw FormatException(
+      warnings.isEmpty
+          ? 'Không tìm thấy sự kiện nào trong file Excel.'
+          : 'Không có sự kiện hợp lệ để nhập. ${warnings.join(' ')}',
+    );
   }
-  return events;
+  return (events: events, warnings: warnings);
 }
 
 List<List<Data?>> _firstSheetRows(Excel workbook) {
@@ -260,10 +463,8 @@ List<List<Data?>> _firstSheetRows(Excel workbook) {
   return rows;
 }
 
-int _findHeader(List<String> headers, Set<String> candidates) =>
-    headers.indexWhere(
-      (header) => candidates.map(_normalizeHeader).contains(header),
-    );
+int _findHeader(List<String> headers, Set<String> candidates) => headers
+    .indexWhere((header) => candidates.map(_normalizeHeader).contains(header));
 
 String _cellTextAt(List<Data?> row, int column) =>
     column < 0 || column >= row.length ? '' : _excelCellText(row[column]);
@@ -277,7 +478,9 @@ DateTime? _excelDateAt(List<Data?> row, int column) {
   }
   final text = _excelCellText(row[column]).trim();
   final parsed = DateTime.tryParse(text);
-  return parsed == null ? null : DateTime(parsed.year, parsed.month, parsed.day);
+  return parsed == null
+      ? null
+      : DateTime(parsed.year, parsed.month, parsed.day);
 }
 
 int? _excelTimeMinutesAt(List<Data?> row, int column) {

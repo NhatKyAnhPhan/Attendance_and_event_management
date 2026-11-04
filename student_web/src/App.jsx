@@ -158,7 +158,9 @@ export default function App() {
 
   const showNotice = (type, text) => {
     setNotice({ type, text });
-    window.setTimeout(() => setNotice((current) => current?.text === text ? null : current), 4500);
+    if (type !== 'error') {
+      window.setTimeout(() => setNotice((current) => current?.text === text ? null : current), 4500);
+    }
   };
 
   if (checkingSession) {
@@ -168,7 +170,10 @@ export default function App() {
     return <LoginPage onLogin={setUser} notice={notice} clearNotice={() => setNotice(null)} />;
   }
   if (!roleIsStudent(user.role)) {
-    return <RolePortal user={user} onUserChange={setUser} onLogout={() => signOut()} showNotice={showNotice} darkMode={darkMode} setDarkMode={setDarkMode} />;
+    return <>
+      <RolePortal user={user} onUserChange={setUser} onLogout={() => signOut()} showNotice={showNotice} darkMode={darkMode} setDarkMode={setDarkMode} />
+      {notice && <div role="status" className={`toast ${notice.type}`}><span>{notice.type === 'success' ? <Check size={18} /> : <CircleHelp size={18} />}</span>{notice.text}<button className="icon-button" aria-label="Đóng" onClick={() => setNotice(null)}><X size={16} /></button></div>}
+    </>;
   }
 
   const currentNav = FULL_NAV_ITEMS.find((item) => item.id === activePage);

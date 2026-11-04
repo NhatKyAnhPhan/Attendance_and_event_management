@@ -106,14 +106,60 @@ void main() {
       const TimeCellValue(hour: 12),
       TextCellValue('Hội nghị khoa học.'),
     ]);
+    sheet.appendRow([TextCellValue('SK2026005')]);
 
-    final events = extractEventsFromWorkbook(workbook);
+    final result = extractEventsFromWorkbook(workbook);
 
-    expect(events, hasLength(1));
-    expect(events.single.sourceId, 'SK2026004');
-    expect(events.single.name, 'FAIR 2026');
-    expect(events.single.eventDate, DateTime(2026, 10, 8));
-    expect(events.single.startMinutes, 510);
-    expect(events.single.endMinutes, 720);
+    expect(result.events, hasLength(1));
+    expect(result.warnings, hasLength(1));
+    expect(result.warnings.single, contains('tên sự kiện'));
+    expect(result.events.single.sourceId, 'SK2026004');
+    expect(result.events.single.name, 'FAIR 2026');
+    expect(result.events.single.eventDate, DateTime(2026, 10, 8));
+    expect(result.events.single.startMinutes, 510);
+    expect(result.events.single.endMinutes, 720);
+  });
+
+  test('extracts units and user accounts from the named master-data sheets', () {
+    final workbook = Excel.createExcel();
+    workbook.rename('Sheet1', 'DonVi');
+    workbook['DonVi'].appendRow([
+      TextCellValue('MaDV'),
+      TextCellValue('TenDV'),
+      TextCellValue('MaNhanVienPhuTrach'),
+    ]);
+    workbook['DonVi'].appendRow([
+      TextCellValue('DV01'),
+      TextCellValue('Khoa Công nghệ thông tin'),
+      TextCellValue('NV001'),
+    ]);
+    workbook['NguoiDung'].appendRow([
+      TextCellValue('MaND'),
+      TextCellValue('HoTen'),
+      TextCellValue('Email'),
+      TextCellValue('MatKhau'),
+      TextCellValue('VaiTro'),
+      TextCellValue('Lop'),
+      TextCellValue('ChuyenNganh'),
+    ]);
+    workbook['NguoiDung'].appendRow([
+      TextCellValue('SV001'),
+      TextCellValue('Nguyễn An'),
+      TextCellValue('an@example.com'),
+      TextCellValue('password123'),
+      TextCellValue('Sinh viên'),
+      TextCellValue('12A'),
+      TextCellValue('Công nghệ thông tin'),
+    ]);
+
+    final result = extractAdminMasterDataFromWorkbook(workbook);
+
+    expect(result.units, hasLength(1));
+    expect(result.units.single['id'], 'DV01');
+    expect(result.units.single['managerId'], 'NV001');
+    expect(result.users, hasLength(1));
+    expect(result.users.single['id'], 'SV001');
+    expect(result.users.single['className'], '12A');
+    expect(result.warnings, isEmpty);
   });
 }

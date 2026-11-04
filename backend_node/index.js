@@ -256,8 +256,9 @@ async function recordExpiredClassAbsences() {
      ORDER BY Mabuoidiemdanh`,
   );
   for (const session of sessions) {
-    const connection = await pool.getConnection();
+    let connection;
     try {
+      connection = await pool.getConnection();
       await connection.beginTransaction();
       const [[lockedSession]] = await connection.execute(
         `SELECT Mabuoidiemdanh AS id
@@ -863,7 +864,7 @@ app.use('/uploads/events', express.static(eventImagesDirectory, {
   maxAge: '1y',
   setHeaders: (response) => response.setHeader('X-Content-Type-Options', 'nosniff'),
 }));
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
 app.get('/', (_request, response) => {
   response.json({
@@ -2636,6 +2637,8 @@ app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị
     await recordExpiredClassAbsences();
     const [rows] = await pool.execute(
       `SELECT bpd.Mabuoidiemdanh AS id, b.Malop AS classId,
+              COALESCE(mh.Mamon, '') AS subjectId,
+              COALESCE(mh.Tenmon, '') AS subjectName,
               COALESCE(lhp.Tenlop, '') AS className,
               COALESCE(b.Noidung, '') AS sessionName,
               bpd.Thoigianmo AS openedAt, bpd.Thoigiandong AS closedAt,
@@ -2647,6 +2650,7 @@ app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị
        FROM BuoiDiemDanh bpd
        INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
        LEFT JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+       LEFT JOIN MonHoc mh ON mh.Mamon = lhp.Mamon
        LEFT JOIN KetQuaDiemDanh kd ON kd.Mabuoidiemdanh = bpd.Mabuoidiemdanh
        WHERE (
          ? IN ('Quản trị viên', 'admin')
@@ -2659,7 +2663,7 @@ app.get('/api/admin/attendance/sessions', requireAuth, requireRole('Quản trị
            )
          )
        )
-       GROUP BY bpd.Mabuoidiemdanh, b.Malop, lhp.Tenlop,
+       GROUP BY bpd.Mabuoidiemdanh, b.Malop, mh.Mamon, mh.Tenmon, lhp.Tenlop,
                 b.Noidung, bpd.Thoigianmo, bpd.Thoigiandong,
                 bpd.Phuongthuc, bpd.Trangthaidiemdanh
        ORDER BY bpd.Thoigianmo DESC`,
@@ -2731,6 +2735,95 @@ app.get('/api/admin/attendance/sessions/:sessionId/students', requireAuth, requi
   }
 });
 
+// Cập nhật cùng một trạng thái cho nhiều sinh viên được chọn trong phiên đang mở.
+app.post('/api/admin/attendance/sessions/:sessionId/students/bulk-update', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer', 'Cán bộ', 'organizer'), async (request, response) => {
+  const statusLabels = new Map([
+    ['present', 'Có mặt'],
+    ['late', 'Đi trễ'],
+    ['absent', 'Vắng mặt'],
+    ['excused', 'Vắng có phép'],
+  ]);
+  const submittedRecords = Array.isArray(request.body?.records)
+    ? request.body.records.map((record) => ({
+        studentId: String(record?.studentId || '').trim(),
+        status: String(record?.status || '').trim(),
+      }))
+    : Array.isArray(request.body?.studentIds)
+      ? request.body.studentIds.map((studentId) => ({
+          studentId: String(studentId || '').trim(),
+          status: String(request.body?.status || '').trim(),
+        }))
+      : [];
+  const records = [...new Map(submittedRecords
+    .filter((record) => record.studentId)
+    .map((record) => [record.studentId, record])).values()];
+  const studentIds = records.map((record) => record.studentId);
+  if (records.length === 0 || records.length > 500
+      || records.some((record) => !statusLabels.has(record.status))) {
+    return response.status(400).json({ message: 'Cần chọn 1–500 sinh viên và trạng thái điểm danh hợp lệ cho từng sinh viên.' });
+  }
+
+  let connection;
+  try {
+    const session = await findManagedAttendanceSession(request.params.sessionId, request.auth);
+    if (!session) {
+      return response.status(404).json({ message: 'Không tìm thấy phiên điểm danh hoặc bạn không phụ trách phiên này.' });
+    }
+    if (session.status !== 'Đang mở' || Number(session.notExpired) !== 1) {
+      return response.status(409).json({ message: 'Phiên điểm danh đã đóng hoặc hết hạn.' });
+    }
+
+    const placeholders = studentIds.map(() => '?').join(', ');
+    const [members] = await pool.execute(
+      `SELECT tvl.Masv AS id
+       FROM ThanhVienLop tvl
+       INNER JOIN Buoi b ON b.Malop = tvl.Malop
+       INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoi = b.Mabuoi
+       WHERE bpd.Mabuoidiemdanh = ? AND tvl.Masv IN (${placeholders})`,
+      [request.params.sessionId, ...studentIds],
+    );
+    const memberIds = new Set(members.map((member) => String(member.id)));
+    const invalidIds = studentIds.filter((id) => !memberIds.has(id));
+    if (invalidIds.length) {
+      return response.status(400).json({ message: `${invalidIds.length} sinh viên không thuộc lớp của phiên điểm danh.` });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    for (const { studentId, status } of records) {
+      const attendanceStatus = statusLabels.get(status);
+      const [[existing]] = await connection.execute(
+        `SELECT Maketqua AS id FROM KetQuaDiemDanh
+         WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1 FOR UPDATE`,
+        [request.params.sessionId, studentId],
+      );
+      if (existing) {
+        await connection.execute(
+          `UPDATE KetQuaDiemDanh
+           SET Thoigiandiemdanh = NOW(), Trangthaiketqua = ?, Vitri = NULL
+           WHERE Maketqua = ?`,
+          [attendanceStatus, existing.id],
+        );
+      } else {
+        await connection.execute(
+          `INSERT INTO KetQuaDiemDanh
+           (Maketqua, Thoigiandiemdanh, Trangthaiketqua, Mabuoidiemdanh, Masv)
+           VALUES (?, NOW(), ?, ?, ?)`,
+          [makeId('RS'), attendanceStatus, request.params.sessionId, studentId],
+        );
+      }
+    }
+    await connection.commit();
+    return response.json({ message: `Đã cập nhật điểm danh cho ${records.length} sinh viên.`, updatedCount: records.length });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Bulk manual attendance error:', error.message);
+    return response.status(500).json({ message: 'Không thể cập nhật điểm danh cho các sinh viên đã chọn.' });
+  } finally {
+    connection?.release();
+  }
+});
+
 // Ghi nhận hoặc cập nhật kết quả điểm danh thủ công của sinh viên trong phiên đang mở.
 app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên', 'lecturer', 'Cán bộ', 'organizer'), async (request, response) => {
   const statusLabels = new Map([
@@ -2792,7 +2885,7 @@ app.post('/api/admin/attendance/sessions/:sessionId/students/:studentId', requir
     if (existing) {
       await connection.execute(
         `UPDATE KetQuaDiemDanh
-         SET Thoigiandiemdanh = NOW(), Trangthaiketqua = ?
+         SET Thoigiandiemdanh = NOW(), Trangthaiketqua = ?, Vitri = NULL
          WHERE Maketqua = ?`,
         [attendanceStatus, existing.id],
       );
@@ -3194,11 +3287,14 @@ app.post('/api/attendance/check-in', requireAuth, async (request, response) => {
     }
 
     const [[existing]] = await pool.execute(
-      `SELECT Maketqua AS id FROM KetQuaDiemDanh
+      `SELECT Maketqua AS id, (Vitri IS NULL) AS manuallyRecorded
+       FROM KetQuaDiemDanh
        WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1`,
       [session.id, request.auth.sub],
     );
-    if (existing) return response.status(409).json({ message: 'Bạn đã điểm danh phiên này.' });
+    if (existing) return response.status(409).json({ message: Number(existing.manuallyRecorded) === 1
+      ? 'Giảng viên đã ghi nhận trạng thái điểm danh cho bạn trong phiên này. Bạn không thể quét mã thêm.'
+      : 'Bạn đã có kết quả điểm danh trong phiên này. Bạn không thể quét mã thêm.' });
 
     if (previewOnly) {
       const [[preview]] = await pool.execute(
@@ -3482,13 +3578,16 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     }
     if (previewOnly) {
       const [[existing]] = await pool.execute(
-        `SELECT 1 AS id FROM KetQuaDiemDanh
+        `SELECT Maketqua AS id, (Vitri IS NULL) AS manuallyRecorded
+         FROM KetQuaDiemDanh
          WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1`,
         [session.id, request.auth.sub],
       );
       if (existing) {
         return response.status(409).json({
-          message: 'Bạn đã điểm danh phiên này.',
+          message: Number(existing.manuallyRecorded) === 1
+            ? 'Giảng viên đã ghi nhận trạng thái điểm danh cho bạn trong phiên này. Bạn không thể quét mã thêm.'
+            : 'Bạn đã có kết quả điểm danh trong phiên này. Bạn không thể quét mã thêm.',
         });
       }
       return response.json({
@@ -3530,11 +3629,14 @@ app.post('/api/attendance/face-check-in', requireAuth, async (request, response)
     }
 
     const [[existing]] = await pool.execute(
-      `SELECT 1 AS id FROM KetQuaDiemDanh
+      `SELECT Maketqua AS id, (Vitri IS NULL) AS manuallyRecorded
+       FROM KetQuaDiemDanh
        WHERE Mabuoidiemdanh = ? AND Masv = ? LIMIT 1`,
       [session.id, request.auth.sub],
     );
-    if (existing) return response.status(409).json({ message: 'Bạn đã điểm danh phiên này.' });
+    if (existing) return response.status(409).json({ message: Number(existing.manuallyRecorded) === 1
+      ? 'Giảng viên đã ghi nhận trạng thái điểm danh cho bạn trong phiên này. Bạn không thể quét mã thêm.'
+      : 'Bạn đã có kết quả điểm danh trong phiên này. Bạn không thể quét mã thêm.' });
 
     const connection = await pool.getConnection();
     try {
@@ -5323,6 +5425,190 @@ app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admi
   } catch (error) {
     console.error('Admin users error:', error.message);
     return response.status(500).json({ message: 'Không thể tải người dùng.' });
+  }
+});
+
+app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  const { units, users } = request.body || {};
+  if (!Array.isArray(units) || !Array.isArray(users)
+      || units.length > 500 || users.length > 500
+      || (units.length === 0 && users.length === 0)) {
+    return response.status(400).json({
+      message: 'File cần có ít nhất một đơn vị hoặc tài khoản, tối đa 500 dòng mỗi sheet.',
+    });
+  }
+
+  const unitIds = new Set();
+  for (const [index, unit] of units.entries()) {
+    const id = String(unit?.id || '').trim();
+    const name = String(unit?.name || '').trim();
+    if (!id || !name) {
+      return response.status(400).json({
+        message: `Đơn vị ở dòng ${index + 2} cần có mã và tên.`,
+      });
+    }
+    if (unitIds.has(id.toLocaleLowerCase())) {
+      return response.status(400).json({ message: `Mã đơn vị "${id}" bị lặp trong file.` });
+    }
+    unitIds.add(id.toLocaleLowerCase());
+  }
+
+  const userIds = new Set();
+  const userEmails = new Set();
+  const allowedRoles = new Map([
+    ['sinhvien', 'Sinh viên'],
+    ['student', 'Sinh viên'],
+    ['giangvien', 'Giảng viên'],
+    ['lecturer', 'Giảng viên'],
+    ['canbo', 'Cán bộ'],
+    ['nhanvien', 'Cán bộ'],
+    ['employee', 'Cán bộ'],
+  ]);
+  const normalizeImportRole = (value) => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+  for (const [index, user] of users.entries()) {
+    const id = String(user?.id || '').trim();
+    const name = String(user?.name || '').trim();
+    const email = String(user?.email || '').trim().toLowerCase();
+    const password = String(user?.password || '');
+    const role = allowedRoles.get(normalizeImportRole(user?.role));
+    if (!id || !name || !email || !password || !role) {
+      return response.status(400).json({
+        message: `Tài khoản ở dòng ${index + 2} thiếu thông tin bắt buộc hoặc có vai trò không hợp lệ.`,
+      });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8) {
+      return response.status(400).json({
+        message: `Tài khoản ở dòng ${index + 2} cần email hợp lệ và mật khẩu từ 8 ký tự.`,
+      });
+    }
+    if (userIds.has(id.toLocaleLowerCase()) || userEmails.has(email)) {
+      return response.status(400).json({
+        message: `Mã tài khoản hoặc email bị lặp ở dòng ${index + 2}.`,
+      });
+    }
+    userIds.add(id.toLocaleLowerCase());
+    userEmails.add(email);
+    if (role === 'Sinh viên' && (!String(user.className || '').trim() || !String(user.major || '').trim())) {
+      return response.status(400).json({
+        message: `Sinh viên ở dòng ${index + 2} cần có lớp và chuyên ngành.`,
+      });
+    }
+    if (role === 'Giảng viên' && !String(user.subjectDepartment || '').trim()) {
+      return response.status(400).json({
+        message: `Giảng viên ở dòng ${index + 2} cần có bộ môn.`,
+      });
+    }
+    if (role === 'Cán bộ' && !String(user.position || '').trim()) {
+      return response.status(400).json({
+        message: `Cán bộ ở dòng ${index + 2} cần có chức vụ.`,
+      });
+    }
+    user.normalizedRole = role;
+    user.normalizedEmail = email;
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    for (const [index, user] of users.entries()) {
+      const { id, name, password, normalizedRole } = user;
+      const email = user.normalizedEmail;
+      const status = String(user.status || 'Đang hoạt động').trim();
+      if (!['Đang hoạt động', 'Đã khóa'].includes(status)) {
+        throw new Error(`Trạng thái tài khoản ở dòng ${index + 2} không hợp lệ.`);
+      }
+
+      const [[duplicate]] = await connection.execute(
+        'SELECT Mand AS id FROM NguoiDung WHERE Mand = ? OR LOWER(Email) = ? LIMIT 1',
+        [id.trim(), email],
+      );
+      if (duplicate) {
+        throw new Error(`Mã tài khoản hoặc email đã tồn tại: ${id.trim()} / ${email}.`);
+      }
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      await connection.execute(
+        `INSERT INTO NguoiDung
+          (Mand, Hoten, Email, Matkhau, Vaitro, Trangthaind, SDT, DiaChi, NgaySinh, GioiTinh, QueQuan)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id.trim(),
+          name.trim(),
+          email,
+          passwordHash,
+          normalizedRole,
+          status,
+          String(user.phone || '').trim() || null,
+          String(user.address || '').trim() || null,
+          String(user.birthDate || '').trim() || null,
+          String(user.gender || '').trim() || null,
+          String(user.hometown || '').trim() || null,
+        ],
+      );
+
+      if (normalizedRole === 'Sinh viên') {
+        await connection.execute(
+          'INSERT INTO SinhVien (Masv, Lop, Chuyennganh) VALUES (?, ?, ?)',
+          [id.trim(), String(user.className).trim(), String(user.major).trim()],
+        );
+      } else if (normalizedRole === 'Giảng viên') {
+        await connection.execute(
+          'INSERT INTO GiangVien (Magv, BoMon) VALUES (?, ?)',
+          [id.trim(), String(user.subjectDepartment).trim()],
+        );
+      } else {
+        await connection.execute(
+          'INSERT INTO CongNhanVien (Manv, Chucvu) VALUES (?, ?)',
+          [id.trim(), String(user.position || '').trim() || null],
+        );
+      }
+    }
+
+    for (const [index, unit] of units.entries()) {
+      const id = String(unit.id).trim();
+      const name = String(unit.name).trim();
+      const managerId = String(unit.managerId || '').trim() || null;
+      const [[duplicate]] = await connection.execute(
+        'SELECT Madv AS id FROM DonVi WHERE Madv = ? LIMIT 1',
+        [id],
+      );
+      if (duplicate) throw new Error(`Mã đơn vị đã tồn tại: ${id}.`);
+
+      if (managerId) {
+        const [[manager]] = await connection.execute(
+          `SELECT nd.Mand AS id FROM NguoiDung nd
+           INNER JOIN CongNhanVien cnv ON cnv.Manv = nd.Mand
+           WHERE nd.Mand = ? AND nd.Vaitro IN ('Cán bộ', 'organizer') LIMIT 1`,
+          [managerId],
+        );
+        if (!manager) {
+          throw new Error(`Đơn vị ở dòng ${index + 2}: mã nhân viên phụ trách "${managerId}" không tồn tại.`);
+        }
+      }
+      await connection.execute(
+        'INSERT INTO DonVi (Madv, Tendv, Manv) VALUES (?, ?, ?)',
+        [id, name, managerId],
+      );
+    }
+
+    await connection.commit();
+    return response.json({
+      importedUnits: units.length,
+      importedUsers: users.length,
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Admin master data import error:', error.message);
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 400;
+    return response.status(status).json({
+      message: error.message || 'Không thể nhập đơn vị và tài khoản.',
+    });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

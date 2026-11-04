@@ -8,6 +8,7 @@ import {
 import { api } from './api.js';
 import { QRCodeSVG } from 'qrcode.react';
 import { AttendanceDonutChart } from './StatisticsCharts.jsx';
+import AdminMasterDataImport from './AdminMasterDataImport.jsx';
 import { parseStudentIds } from './studentIds.js';
 import './role-portal.css';
 
@@ -190,9 +191,18 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
     orgUnits: 'Đơn vị tổ chức',
   };
   const rows = itemsOf(data).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
+  const canImportAdminMasterData = isAdminRole(role) && ['users', 'orgUnits'].includes(page);
   return (
     <>
-      <PageTitle title={titles[page] || 'Dashboard'} subtitle="Dữ liệu được tải trực tiếp từ hệ thống HUIT." onRefresh={load} loading={loading} />
+      <PageTitle
+        title={titles[page] || 'Dashboard'}
+        subtitle="Dữ liệu được tải trực tiếp từ hệ thống HUIT."
+        onRefresh={load}
+        loading={loading}
+        action={canImportAdminMasterData
+          ? <AdminMasterDataImport kind={page === 'orgUnits' ? 'units' : 'users'} onImported={load} showNotice={showNotice} />
+          : null}
+      />
       {page !== 'notifications' && <SearchBox value={query} onChange={setQuery} placeholder={`Tìm trong ${(titles[page] || '').toLowerCase()}...`} />}
       {error ? <ErrorPanel message={error} onRetry={load} /> : loading ? <LoadingPanel /> : (
         page === 'events' ? <EventsView items={rows} />
@@ -583,9 +593,6 @@ function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelec
             : archived ? 'Lớp đã đóng hoặc lưu trữ.' : '';
         return { ...group, item, issue };
       });
-      if (!prepared.some((group) => group.item && !group.issue)) {
-        throw new Error(prepared.map((group) => `${group.targetName || group.targetId}: ${group.issue}`).join(' '));
-      }
       setClassWorkbookDraft(prepared);
     } catch (exception) {
       const message = exception instanceof Error ? exception.message : 'Không thể đọc file Excel.';
@@ -648,6 +655,7 @@ function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelec
       {classWorkbookDraft && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importingWorkbook) setClassWorkbookDraft(null); }}>
         <form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importClassWorkbook}>
           <header><div><h2>Xác nhận nhập sinh viên vào lớp</h2><p>{classWorkbookDraft.length} mã lớp, {classWorkbookDraft.reduce((total, group) => total + group.studentIds.length, 0)} mã sinh viên được đọc từ file.</p></div><button type="button" className="rp-icon-button" onClick={() => setClassWorkbookDraft(null)} aria-label="Đóng" disabled={importingWorkbook}><X size={18} /></button></header>
+          {!classWorkbookDraft.some((group) => !group.issue) && <div className="rp-import-warning" role="alert"><strong>Chưa thể nhập sinh viên</strong><span>Không có mã lớp nào khớp với lớp hiện có. Hãy tạo lớp trước, rồi mới import danh sách sinh viên.</span></div>}
           {classWorkbookError && <ErrorPanel message={classWorkbookError} />}
           <div className="rp-import-preview">{classWorkbookDraft.map((group) => <div key={group.targetId}><strong>{group.item?.name || group.targetName || group.targetId} · {group.targetId}</strong><span>{group.studentIds.length} sinh viên{group.duplicateRows ? `, ${group.duplicateRows} dòng trùng` : ''}{group.issue ? ` · Bỏ qua: ${group.issue}` : ''}</span><code>{group.studentIds.join(', ')}</code></div>)}</div>
           <footer><button type="button" className="rp-secondary-button" onClick={() => setClassWorkbookDraft(null)} disabled={importingWorkbook}>Hủy</button><button className="rp-secondary-button" disabled={importingWorkbook || !classWorkbookDraft.some((group) => !group.issue)}>{importingWorkbook ? 'Đang nhập...' : 'Xác nhận nhập'}</button></footer>
@@ -943,19 +951,30 @@ async function readEventsFromWorkbook(file) {
   if (headerIndex < 0) throw new Error('File cần có cột MaSuKien và TenSuKien.');
   const headers = rows[headerIndex].map(normalizeWorkbookHeader);
   const column = (key) => headers.findIndex((header) => headersWanted[key].has(header));
-  const result = [];
+  const events = [];
+  const warnings = [];
   for (const [offset, row] of rows.slice(headerIndex + 1).entries()) {
     const name = String(row[column('name')] ?? '').trim();
     const sourceId = String(row[column('id')] ?? '').trim();
     if (!name && !sourceId) continue;
-    if (!name || !sourceId) throw new Error(`Thiếu mã hoặc tên sự kiện ở dòng ${headerIndex + offset + 2}.`);
+    const rowNumber = headerIndex + offset + 2;
+    if (!name || !sourceId) {
+      warnings.push(`Dòng ${rowNumber}: thiếu ${!sourceId ? 'mã sự kiện' : 'tên sự kiện'}, sẽ bỏ qua.`);
+      continue;
+    }
     const eventDate = excelDateString(row[column('date')]);
     const organizerName = String(row[column('organizer')] ?? '').trim();
     const location = String(row[column('location')] ?? '').trim();
-    if (!eventDate || !organizerName || !location) {
-      throw new Error(`Sự kiện "${name}" thiếu ngày, đơn vị tổ chức hoặc địa điểm.`);
+    const missingFields = [
+      !eventDate && 'ngày tổ chức',
+      !organizerName && 'đơn vị tổ chức',
+      !location && 'địa điểm',
+    ].filter(Boolean);
+    if (missingFields.length) {
+      warnings.push(`Dòng ${rowNumber} (${name}): thiếu ${missingFields.join(', ')}, sẽ bỏ qua.`);
+      continue;
     }
-    result.push({
+    events.push({
       sourceId,
       name,
       organizerName,
@@ -966,8 +985,12 @@ async function readEventsFromWorkbook(file) {
       description: String(row[column('description')] ?? '').trim(),
     });
   }
-  if (!result.length) throw new Error('Không tìm thấy sự kiện nào trong file Excel.');
-  return result;
+  if (!events.length) {
+    throw new Error(warnings.length
+      ? `Không có sự kiện hợp lệ để nhập. ${warnings.join(' ')}`
+      : 'Không tìm thấy sự kiện nào trong file Excel.');
+  }
+  return { events, warnings };
 }
 
 function normalizeMatchText(value) {
@@ -1004,9 +1027,25 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
   const [certificateLoading, setCertificateLoading] = useState(false);
   const [certificateBusy, setCertificateBusy] = useState('');
   const [certificateError, setCertificateError] = useState('');
+  const [showClosedEvents, setShowClosedEvents] = useState(false);
+  const [selectedClosedEventIds, setSelectedClosedEventIds] = useState(new Set());
   const [imagePreview, setImagePreview] = useState('');
   const [imageInputVersion, setImageInputVersion] = useState(0);
-  const events = itemsOf(data).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
+  const allEvents = itemsOf(data).map((item) => {
+    const closed = item.status === 'Đã đóng';
+    const now = Date.now();
+    const start = item.startTime ? new Date(item.startTime).getTime() : NaN;
+    const end = item.endTime ? new Date(item.endTime).getTime() : NaN;
+    const status = closed ? 'Đã đóng' : Number.isFinite(end) && end <= now ? 'Đã kết thúc' : Number.isFinite(start) && start > now ? 'Sắp diễn ra' : 'Đang diễn ra';
+    return { ...item, displayStatus: status };
+  });
+  const events = allEvents
+    .filter((item) => (item.displayStatus === 'Đã đóng') === showClosedEvents)
+    .filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => {
+      const rank = (item) => item.displayStatus === 'Sắp diễn ra' ? 0 : item.displayStatus === 'Đang diễn ra' ? 1 : item.displayStatus === 'Đã kết thúc' ? 2 : 3;
+      return rank(a) - rank(b) || new Date(a.startTime || 0) - new Date(b.startTime || 0);
+    });
   const canManage = !isLecturerRole(role);
   const canImportExcel = isAdminRole(role) || isEmployeeRole(role);
   const selectedImageFile = form?.imageFile || null;
@@ -1248,6 +1287,23 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     }
   };
 
+  const deleteSelectedClosedEvents = async () => {
+    const ids = [...selectedClosedEventIds];
+    if (!ids.length || !window.confirm(`Xóa ${ids.length} sự kiện đã đóng đã chọn? Thao tác này không thể hoàn tác.`)) return;
+    setBusyAction('delete-selected');
+    try {
+      for (const id of ids) await api(`/api/organizer/events/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      setSelectedClosedEventIds(new Set());
+      showNotice('success', `Đã xóa ${ids.length} sự kiện.`);
+      await onRefresh();
+    } catch (exception) {
+      showNotice('error', exception instanceof Error ? exception.message : 'Không thể xóa các sự kiện đã chọn.');
+      await onRefresh();
+    } finally {
+      setBusyAction('');
+    }
+  };
+
   const importStudents = async (event) => {
     event.preventDefault();
     const ids = parseStudentIds(studentIds);
@@ -1303,18 +1359,24 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     if (!file) return;
     setBusyAction('reading-events');
     try {
-      const importedEvents = await readEventsFromWorkbook(file);
+      const { events: importedEvents, warnings } = await readEventsFromWorkbook(file);
       const unitResult = await api('/api/organizer/units');
       const availableUnits = itemsOf(unitResult);
       if (!availableUnits.length) throw new Error('Không có đơn vị tổ chức được phân công cho tài khoản này.');
       const mappings = {};
+      const unitWarnings = [];
       for (const organizerName of new Set(importedEvents.map((item) => item.organizerName))) {
         const matches = availableUnits.filter((unit) =>
           normalizeMatchText(unit.name) === normalizeMatchText(organizerName));
         mappings[organizerName] = matches.length === 1 ? String(matches[0].id) : '';
+        if (matches.length !== 1) {
+          unitWarnings.push(matches.length
+            ? `Đơn vị "${organizerName}" trùng với nhiều đơn vị trong hệ thống; sự kiện của đơn vị này sẽ bị bỏ qua.`
+            : `Không tìm thấy đơn vị "${organizerName}" trong các đơn vị hiện có; sự kiện của đơn vị này sẽ bị bỏ qua.`);
+        }
       }
       setEventUnitMappings(mappings);
-      setEventWorkbookDraft({ events: importedEvents, units: availableUnits });
+      setEventWorkbookDraft({ events: importedEvents, warnings, unitWarnings, units: availableUnits });
     } catch (exception) {
       showNotice('error', exception instanceof Error ? exception.message : 'Không thể đọc file sự kiện.');
     } finally {
@@ -1325,11 +1387,6 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
   const importEventWorkbook = async (event) => {
     event.preventDefault();
     if (!eventWorkbookDraft) return;
-    const organizerNames = [...new Set(eventWorkbookDraft.events.map((item) => item.organizerName))];
-    if (organizerNames.some((name) => !eventUnitMappings[name])) {
-      showNotice('error', 'Hãy chọn đơn vị tổ chức cho từng tên đơn vị trong file.');
-      return;
-    }
     setEventWorkbookBusy(true);
     let imported = 0;
     let alreadyExists = 0;
@@ -1337,6 +1394,10 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     const existingNames = new Set(itemsOf(data).map((item) => normalizeMatchText(item.name)));
     try {
       for (const item of eventWorkbookDraft.events) {
+        if (!eventUnitMappings[item.organizerName]) {
+          failures.push(`${item.name}: không tìm thấy đơn vị "${item.organizerName}" trong hệ thống.`);
+          continue;
+        }
         const nameKey = normalizeMatchText(item.name);
         if (existingNames.has(nameKey)) {
           alreadyExists += 1;
@@ -1411,9 +1472,6 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
             : '';
         return { ...group, item: matches.length === 1 ? matches[0] : null, issue };
       });
-      if (!prepared.some((group) => group.item && !group.issue)) {
-        throw new Error(prepared.map((group) => `${group.targetName || group.targetId}: ${group.issue}`).join(' '));
-      }
       setStudentWorkbookDraft(prepared);
     } catch (exception) {
       showNotice('error', `Không thể chuẩn bị import sinh viên: ${exception instanceof Error ? exception.message : 'Không thể đọc file Excel.'}`);
@@ -1510,25 +1568,40 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     </>} />
     {eventWorkbookDraft && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !eventWorkbookBusy) setEventWorkbookDraft(null); }}>
       <form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importEventWorkbook}>
-        <header><div><h2>Xác nhận thêm sự kiện từ Excel</h2><p>{eventWorkbookDraft.events.length} sự kiện sẽ được thêm. Kiểm tra danh sách và đơn vị trước khi xác nhận.</p></div><button type="button" className="rp-icon-button" onClick={() => setEventWorkbookDraft(null)} aria-label="Đóng" disabled={eventWorkbookBusy}><X size={18} /></button></header>
-        <div className="rp-form-grid">{[...new Set(eventWorkbookDraft.events.map((item) => item.organizerName))].map((name) =>
-          <label key={name}>{name}<select required value={eventUnitMappings[name] || ''} onChange={(event) => setEventUnitMappings({ ...eventUnitMappings, [name]: event.target.value })}><option value="">Chọn đơn vị tổ chức</option>{eventWorkbookDraft.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>)}</div>
-        <div className="rp-import-preview">{eventWorkbookDraft.events.map((item) => <div key={item.sourceId}><strong>{item.name}</strong><span>Mã {item.sourceId} · {item.eventDate}{item.startMinutes !== null ? ` · ${String(Math.floor(item.startMinutes / 60)).padStart(2, '0')}:${String(item.startMinutes % 60).padStart(2, '0')}` : ''} · {item.location} · {item.organizerName}</span></div>)}</div>
-        <footer><button type="button" className="rp-secondary-button" onClick={() => setEventWorkbookDraft(null)} disabled={eventWorkbookBusy}>Hủy</button><button className="rp-secondary-button" disabled={eventWorkbookBusy}>{eventWorkbookBusy ? 'Đang nhập...' : 'Xác nhận thêm sự kiện'}</button></footer>
+        <header><div><h2>Xác nhận thêm sự kiện từ Excel</h2><p>{eventWorkbookDraft.events.filter((item) => eventUnitMappings[item.organizerName]).length} sự kiện có đơn vị khớp sẽ được thêm; {eventWorkbookDraft.events.length - eventWorkbookDraft.events.filter((item) => eventUnitMappings[item.organizerName]).length} sự kiện không khớp sẽ bị bỏ qua.</p></div><button type="button" className="rp-icon-button" onClick={() => setEventWorkbookDraft(null)} aria-label="Đóng" disabled={eventWorkbookBusy}><X size={18} /></button></header>
+        {(eventWorkbookDraft.warnings.length > 0 || eventWorkbookDraft.unitWarnings.length > 0) && <div className="rp-import-warning" role="alert"><strong>{eventWorkbookDraft.warnings.length + eventWorkbookDraft.unitWarnings.length} mục sẽ bị bỏ qua</strong>{[...eventWorkbookDraft.warnings, ...eventWorkbookDraft.unitWarnings].map((warning) => <span key={warning}>{warning}</span>)}</div>}
+        <div className="rp-import-preview">{eventWorkbookDraft.events.map((item) => {
+          const unitId = eventUnitMappings[item.organizerName];
+          const unit = eventWorkbookDraft.units?.find((candidate) => String(candidate.id) === unitId);
+          return <div key={item.sourceId}><strong>{item.name}</strong><span>Mã {item.sourceId} · {item.eventDate}{item.startMinutes !== null ? ` · ${String(Math.floor(item.startMinutes / 60)).padStart(2, '0')}:${String(item.startMinutes % 60).padStart(2, '0')}` : ''} · {item.location}</span><span>{unit ? `Đơn vị trong hệ thống: ${unit.name}` : `Đơn vị từ file: ${item.organizerName} · sẽ bỏ qua vì chưa khớp`}</span></div>;
+        })}</div>
+        <footer><button type="button" className="rp-secondary-button" onClick={() => setEventWorkbookDraft(null)} disabled={eventWorkbookBusy}>Hủy</button><button className="rp-secondary-button" disabled={eventWorkbookBusy || !eventWorkbookDraft.events.some((item) => eventUnitMappings[item.organizerName])}>{eventWorkbookBusy ? 'Đang nhập...' : 'Xác nhận thêm sự kiện'}</button></footer>
       </form>
     </div>}
     {studentWorkbookDraft && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !studentWorkbookBusy) setStudentWorkbookDraft(null); }}>
       <form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importStudentWorkbook}>
         <header><div><h2>Xác nhận import sinh viên</h2><p>{studentWorkbookDraft.length} danh sách · {studentWorkbookDraft.reduce((total, group) => total + group.studentIds.length, 0)} mã sinh viên được đọc từ file.</p></div><button type="button" className="rp-icon-button" onClick={() => setStudentWorkbookDraft(null)} aria-label="Đóng" disabled={studentWorkbookBusy}><X size={18} /></button></header>
+        {!studentWorkbookDraft.some((group) => !group.issue) && <div className="rp-import-warning" role="alert"><strong>Chưa thể nhập sinh viên</strong><span>Không có danh sách nào khớp với sự kiện hiện có. Hãy nhập sự kiện trước hoặc kiểm tra mã sự kiện trong file.</span></div>}
         <div className="rp-import-preview">{studentWorkbookDraft.map((group) => <div key={group.targetId}><strong>{group.item?.name || group.targetName || group.targetId} · {group.targetId}</strong><span>{group.studentIds.length} sinh viên{group.duplicateRows ? `, ${group.duplicateRows} dòng trùng` : ''}{group.issue ? ` · Bỏ qua: ${group.issue}` : ''}</span><code>{group.studentIds.join(', ')}</code></div>)}</div>
         <footer><button type="button" className="rp-secondary-button" onClick={() => setStudentWorkbookDraft(null)} disabled={studentWorkbookBusy}>Hủy</button><button className="rp-secondary-button" disabled={studentWorkbookBusy || !studentWorkbookDraft.some((group) => !group.issue)}>{studentWorkbookBusy ? 'Đang import...' : 'Xác nhận import'}</button></footer>
       </form>
     </div>}
+    <div className="rp-event-tabs" role="group" aria-label="Lọc sự kiện">
+      <button type="button" className={!showClosedEvents ? 'active' : ''} onClick={() => { setShowClosedEvents(false); setSelectedClosedEventIds(new Set()); }}>Sự kiện đang mở</button>
+      <button type="button" className={showClosedEvents ? 'active' : ''} onClick={() => { setShowClosedEvents(true); setSelectedClosedEventIds(new Set()); }}>Sự kiện đã đóng</button>
+    </div>
+    {showClosedEvents && canManage && events.length > 0 && <div className="rp-event-bulk-actions">
+      <button type="button" className="rp-secondary-button" onClick={() => setSelectedClosedEventIds(selectedClosedEventIds.size === events.length ? new Set() : new Set(events.map((item) => String(item.id))))}>{selectedClosedEventIds.size === events.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button>
+      <button type="button" className="rp-secondary-button" onClick={deleteSelectedClosedEvents} disabled={!selectedClosedEventIds.size || busyAction === 'delete-selected'}><Trash2 size={15} /> {busyAction === 'delete-selected' ? 'Đang xóa...' : `Xóa đã chọn (${selectedClosedEventIds.size})`}</button>
+    </div>}
     <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên sự kiện, địa điểm, trạng thái..." />
     {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : events.length ? <div className="rp-event-grid">{events.map((item) => {
-      const eventEnded = item.status === 'Đã đóng' || item.status === 'Đã kết thúc' || (item.endTime && new Date(item.endTime) <= new Date());
-      return <article className="rp-card rp-event-card" key={item.id}><button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className="rp-tag">{item.status || 'Sự kiện'}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><Award size={15} />{Number(item.certificateEnabled) === 1 || item.certificateEnabled === true ? 'Có cấp chứng nhận' : 'Không cấp chứng nhận'}</div><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions">{canImportExcel && <button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button>}{(Number(item.certificateEnabled) === 1 || item.certificateEnabled === true) && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>}{item.status !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}<button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button></div>}</article>;
-    })}</div> : <EmptyPanel title="Chưa có sự kiện" message="Không tìm thấy sự kiện phù hợp." />}
+      const eventEnded = item.displayStatus === 'Đã đóng' || item.displayStatus === 'Đã kết thúc';
+      const statusClass = item.displayStatus === 'Sắp diễn ra' ? 'rp-event-status-new' : item.displayStatus === 'Đang diễn ra' ? 'rp-event-status-live' : 'rp-event-status-ended';
+      return <article className="rp-card rp-event-card" key={item.id}>
+        {showClosedEvents && canManage && <label className="rp-event-select"><input type="checkbox" checked={selectedClosedEventIds.has(String(item.id))} onChange={(event) => setSelectedClosedEventIds((current) => { const next = new Set(current); event.target.checked ? next.add(String(item.id)) : next.delete(String(item.id)); return next; })} /> Chọn</label>}
+        <button className="rp-event-open" onClick={() => openDetails(item)}><div className="rp-event-top"><span className={`rp-tag ${statusClass}`}>{item.displayStatus}</span><span className="rp-event-id">{item.id}</span></div><h2>{item.name || 'Sự kiện HUIT'}</h2><div className="rp-event-detail"><Award size={15} />{Number(item.certificateEnabled) === 1 || item.certificateEnabled === true ? 'Có cấp chứng nhận' : 'Không cấp chứng nhận'}</div><div className="rp-event-detail"><CalendarDays size={15} />{formatDate(item.startTime)}</div><div className="rp-event-detail"><Building2 size={15} />{item.location || 'Chưa cập nhật địa điểm'}</div><div className="rp-event-progress"><span>Đăng ký</span><strong>{item.registeredCount ?? 0}{item.capacity ? ` / ${item.capacity}` : ''}</strong></div><div className="rp-progress-track"><i style={{ width: `${item.capacity ? Math.min(100, Number(item.registeredCount || 0) * 100 / item.capacity) : 0}%` }} /></div></button>{canManage && <div className="rp-inline-actions">{canImportExcel && <button className="rp-secondary-button" onClick={() => { setImportTarget(item); setStudentIds(''); }} disabled={eventEnded} title={eventEnded ? 'Không thể nhập sinh viên vào sự kiện đã đóng hoặc kết thúc.' : 'Nhập danh sách sinh viên đăng ký'}><Upload size={15} /> Nhập SV</button>}{(Number(item.certificateEnabled) === 1 || item.certificateEnabled === true) && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'certificates')} disabled={busyAction === `${item.id}:certificates`}><Award size={15} /> Chứng nhận</button>}{!showClosedEvents && item.displayStatus !== 'Đã đóng' && <button className="rp-secondary-button" onClick={() => runEventAction(item, 'close')}><ShieldCheck size={15} /> Đóng</button>}{showClosedEvents && <button className="rp-icon-button" aria-label="Xóa sự kiện" title="Xóa sự kiện" onClick={() => runEventAction(item, 'delete')}><Trash2 size={15} /></button>}</div>}</article>;
+    })}</div> : <EmptyPanel title={showClosedEvents ? 'Chưa có sự kiện đã đóng' : 'Chưa có sự kiện'} message="Không tìm thấy sự kiện phù hợp." />}
     {form && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setForm(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={saveEvent}><header><div><h2>{form.id ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện'}</h2><p>{form.id || 'Nhập thông tin hoạt động.'}</p></div><button type="button" className="rp-icon-button" onClick={() => setForm(null)} aria-label="Đóng"><X size={18} /></button></header>{formError && <ErrorPanel message={formError} />}<div className="rp-form-grid"><label>Tên sự kiện<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>Đơn vị tổ chức<select required value={form.organizerId} onChange={(event) => setForm({ ...form, organizerId: event.target.value })}><option value="">Chọn đơn vị</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label>Bắt đầu<input type="datetime-local" required value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} /></label><label>Kết thúc<input type="datetime-local" required value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} /></label><label>Địa điểm<input required value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></label><label>Sức chứa<input type="number" min="1" required value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /></label><label className="rp-form-wide rp-checkbox-field"><input type="checkbox" checked={form.certificateEnabled === true} onChange={(event) => setForm({ ...form, certificateEnabled: event.target.checked })} /><span>Cấp chứng nhận cho người tham dự</span><small>Chỉ bật nếu sự kiện này sẽ phát hành giấy chứng nhận.</small></label><label className="rp-form-wide">Chọn ảnh từ máy<input key={imageInputVersion} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const imageFile = event.target.files?.[0] || null; setForm({ ...form, imageFile, ...(imageFile ? { imageUrl: '' } : {}) }); }} /><small className="rp-image-help">JPEG, PNG hoặc WebP, tối đa 5 MB. Ảnh sẽ tải lên khi lưu sự kiện.</small></label><label className="rp-form-wide">Hoặc dùng URL ảnh<input type="url" maxLength="1000" value={form.imageUrl} onChange={(event) => { if (form.imageFile) setImageInputVersion((version) => version + 1); setForm({ ...form, imageUrl: event.target.value, imageFile: null }); }} placeholder="https://..." /><small className="rp-image-help">Để trống cả hai trường để tự chọn ảnh theo chủ đề sự kiện.</small>{(imagePreview || form.imageUrl) && <img key={imagePreview || form.imageUrl} className="rp-event-image-preview" src={imagePreview || form.imageUrl} alt="Xem trước ảnh sự kiện" onError={(event) => { event.currentTarget.hidden = true; }} />}</label><label className="rp-form-wide">Mô tả<textarea rows="3" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Quyền lợi</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, benefits: [...form.benefits, { type: 'Khác', points: '0', content: '' }] })} disabled={form.benefits.length >= 20}><Plus size={15} /> Thêm quyền lợi</button></div>{form.benefits.map((benefit, index) => <div className="rp-editor-row rp-benefit-row" key={`benefit-${index}`}><select aria-label={`Loại quyền lợi ${index + 1}`} value={benefit.type} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value } : item) })}>{['Điểm rèn luyện', 'Điểm công tác xã hội', 'Chứng nhận', 'Khác'].map((type) => <option key={type} value={type}>{type}</option>)}</select><input aria-label={`Số điểm quyền lợi ${index + 1}`} type="number" min="0" step="1" required value={benefit.points} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, points: event.target.value } : item) })} placeholder="Số điểm" /><input aria-label={`Nội dung quyền lợi ${index + 1}`} maxLength="500" required value={benefit.content} onChange={(event) => setForm({ ...form, benefits: form.benefits.map((item, itemIndex) => itemIndex === index ? { ...item, content: event.target.value } : item) })} placeholder="Nội dung quyền lợi" /><button type="button" className="rp-icon-button" aria-label={`Xóa quyền lợi ${index + 1}`} onClick={() => setForm({ ...form, benefits: form.benefits.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section><label className="rp-form-wide">Nội quy<textarea rows="3" value={form.rules} onChange={(event) => setForm({ ...form, rules: event.target.value })} placeholder="Mỗi dòng một nội quy" /></label><section className="rp-form-wide rp-editor-section"><div className="rp-editor-heading"><strong>Khung giờ điểm danh</strong><button type="button" className="rp-secondary-button" onClick={() => setForm({ ...form, periods: [...form.periods, { name: `Đợt ${form.periods.length + 1}`, startTime: form.startTime, endTime: form.endTime }] })} disabled={form.periods.length >= 12}><Plus size={15} /> Thêm khung giờ</button></div><small>Chọn ngày giờ trên lịch; để trống danh sách nếu điểm danh trong toàn bộ thời gian sự kiện.</small>{form.periods.map((period, index) => <div className="rp-editor-row rp-period-row" key={`period-${index}`}><input aria-label={`Tên khung điểm danh ${index + 1}`} required maxLength="60" value={period.name} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} placeholder="Tên khung, ví dụ: Đợt 1" /><label>Bắt đầu<input aria-label={`Bắt đầu khung ${index + 1}`} type="datetime-local" required value={period.startTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, startTime: event.target.value } : item) })} /></label><label>Kết thúc<input aria-label={`Kết thúc khung ${index + 1}`} type="datetime-local" required value={period.endTime} onChange={(event) => setForm({ ...form, periods: form.periods.map((item, itemIndex) => itemIndex === index ? { ...item, endTime: event.target.value } : item) })} /></label><button type="button" className="rp-icon-button" aria-label={`Xóa khung điểm danh ${index + 1}`} onClick={() => setForm({ ...form, periods: form.periods.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={15} /></button></div>)}</section></div><footer><button type="button" className="rp-secondary-button" onClick={() => setForm(null)} disabled={saving}>Hủy</button><button className="rp-secondary-button" disabled={saving}>{saving ? 'Đang lưu...' : form.id ? 'Lưu thay đổi' : 'Tạo sự kiện'}</button></footer></form></div>}
     {importTarget && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busyAction) setImportTarget(null); }}><form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importStudents}><header><div><h2>Nhập sinh viên đăng ký</h2><p>{importTarget.name}</p></div><button type="button" className="rp-icon-button" onClick={() => setImportTarget(null)} aria-label="Đóng"><X size={18} /></button></header><label>Chọn file Excel (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={readEventStudentWorkbook} disabled={Boolean(busyAction)} />{busyAction === 'reading-import' && <small role="status">Đang đọc file Excel...</small>}</label><label>Mã sinh viên<textarea rows="7" required value={studentIds} onChange={(event) => setStudentIds(event.target.value)} placeholder="Mỗi dòng một mã sinh viên; có thể phân tách bằng dấu phẩy hoặc dấu chấm phẩy." /></label><footer><button type="button" className="rp-secondary-button" onClick={() => setImportTarget(null)} disabled={busyAction === 'import'}>Hủy</button><button className="rp-secondary-button" disabled={busyAction === 'import'}>{busyAction === 'import' ? 'Đang nhập...' : 'Nhập sinh viên'}</button></footer></form></div>}
     {importTarget && manualImportPreview && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && busyAction !== 'import') setManualImportPreview(null); }}><section className="rp-modal rp-form-modal" role="dialog" aria-modal="true"><header><div><h2>Xác nhận import sinh viên</h2><p>{importTarget.name} · {manualImportPreview.length} mã sinh viên.</p></div><button type="button" className="rp-icon-button" onClick={() => setManualImportPreview(null)} aria-label="Đóng" disabled={busyAction === 'import'}><X size={18} /></button></header><div className="rp-import-preview"><div><strong>Danh sách mã sinh viên</strong><code>{manualImportPreview.join(', ')}</code></div></div><footer><button type="button" className="rp-secondary-button" onClick={() => setManualImportPreview(null)} disabled={busyAction === 'import'}>Hủy</button><button type="button" className="rp-secondary-button" onClick={confirmManualImport} disabled={busyAction === 'import'}>{busyAction === 'import' ? 'Đang nhập...' : 'Xác nhận import'}</button></footer></section></div>}
@@ -1603,10 +1676,15 @@ function EventsView({ items }) {
 
 function AttendanceView({ data, loading, error, query, setQuery, onRefresh, role }) {
   const [selected, setSelected] = useState(null);
+  const [selectedSubjectId, setSelectedSubjectId] = useState('');
+  const [manualAttendancePage, setManualAttendancePage] = useState(false);
+  const [attendanceExportMode, setAttendanceExportMode] = useState(false);
+  const [exportingSessionId, setExportingSessionId] = useState('');
   const [roster, setRoster] = useState(null);
   const [rosterLoading, setRosterLoading] = useState(false);
   const [rosterError, setRosterError] = useState('');
-  const [savingStudent, setSavingStudent] = useState('');
+  const [pendingAttendanceStatuses, setPendingAttendanceStatuses] = useState(new Map());
+  const [bulkSaving, setBulkSaving] = useState(false);
   const lecturerOrAdmin = isLecturerRole(role) || isAdminRole(role);
   const items = itemsOf(data).map((item) => ({
     ...item,
@@ -1614,11 +1692,21 @@ function AttendanceView({ data, loading, error, query, setQuery, onRefresh, role
       ? `${item.className} · ${item.classId}`
       : item.classId || '',
   })).filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
+  const subjectKeyOf = (item) => String(item.subjectId || item.classId || 'unknown');
+  const subjects = [...new Map(items.map((item) => [subjectKeyOf(item), {
+    id: subjectKeyOf(item),
+    name: item.subjectName || item.className || item.classId || 'Môn học',
+    code: item.subjectId || item.classId || '',
+    className: item.className || '',
+    sessions: items.filter((candidate) => subjectKeyOf(candidate) === subjectKeyOf(item)),
+  }])).values()];
+  const subjectSessions = items.filter((item) => subjectKeyOf(item) === selectedSubjectId);
   const stats = lecturerOrAdmin
     ? [['Có mặt', sum(items, 'present')], ['Đi trễ', sum(items, 'late')], ['Vắng mặt', sum(items, 'absent')]]
     : [['Đăng ký', sum(items, 'registeredCount')], ['Đã tham dự', sum(items, 'checkedInCount')], ['Vắng mặt', sum(items, 'absentCount')]];
 
   const openRoster = async (session) => {
+    setPendingAttendanceStatuses(new Map());
     setSelected(session);
     setRoster(null);
     setRosterError('');
@@ -1632,31 +1720,153 @@ function AttendanceView({ data, loading, error, query, setQuery, onRefresh, role
     }
   };
 
-  const updateStudentStatus = async (studentId, status) => {
-    setSavingStudent(studentId);
+  const applyBulkAttendanceStatus = async () => {
+    const records = [...pendingAttendanceStatuses].map(([studentId, status]) => ({ studentId, status }));
+    if (!selected || !roster?.session?.canEdit || !records.length || bulkSaving) return;
+    setBulkSaving(true);
     setRosterError('');
     try {
-      await api(`/api/admin/attendance/sessions/${encodeURIComponent(selected.id)}/students/${encodeURIComponent(studentId)}`, {
-        method: 'POST', body: { status },
-      });
+      const bulkEndpoint = `/api/admin/attendance/sessions/${encodeURIComponent(selected.id)}/students/bulk-update`;
+      try {
+        await api(bulkEndpoint, { method: 'POST', body: { records } });
+      } catch (exception) {
+        // Older deployed backends route "bulk-update" through :studentId. Fall back
+        // to the existing single-student API until the bulk route is deployed there.
+        const bulkRouteUnavailable = exception?.status === 400
+          && exception.message === 'Trạng thái điểm danh không hợp lệ.';
+        if (!bulkRouteUnavailable) throw exception;
+        const studentEndpoint = `/api/admin/attendance/sessions/${encodeURIComponent(selected.id)}/students`;
+        for (let offset = 0; offset < records.length; offset += 10) {
+          const chunk = records.slice(offset, offset + 10);
+          await Promise.all(chunk.map(({ studentId, status }) => api(
+            `${studentEndpoint}/${encodeURIComponent(studentId)}`,
+            { method: 'POST', body: { status } },
+          )));
+        }
+      }
+      setPendingAttendanceStatuses(new Map());
       await openRoster(selected);
       onRefresh();
     } catch (exception) {
-      setRosterError(exception instanceof Error ? exception.message : 'Không thể cập nhật điểm danh.');
+      setRosterError(exception instanceof Error ? exception.message : 'Không thể cập nhật điểm danh cho các sinh viên đã chọn.');
     } finally {
-      setSavingStudent('');
+      setBulkSaving(false);
     }
   };
+
+  const exportAttendanceSession = async (session) => {
+    if (exportingSessionId) return;
+    setExportingSessionId(String(session.id));
+    setRosterError('');
+    try {
+      const rosterData = await api(`/api/admin/attendance/sessions/${encodeURIComponent(session.id)}/students`);
+      const rosterStudents = itemsOf(rosterData);
+      const cell = (value, style = {}) => ({ value, ...style });
+      const titleStyle = { fontWeight: 'bold', fontSize: 17, textColor: '#FFFFFF', backgroundColor: '#174B8A', align: 'center', height: 30 };
+      const metaStyle = { backgroundColor: '#EAF2FB', textColor: '#36536F' };
+      const headerStyle = { fontWeight: 'bold', textColor: '#FFFFFF', backgroundColor: '#2467A6', align: 'center', wrap: true, height: 26 };
+      const rows = [
+        [cell('DANH SÁCH ĐIỂM DANH', { ...titleStyle, columnSpan: 7 })],
+        [cell('MÔN HỌC', { ...metaStyle, fontWeight: 'bold' }), cell(session.subjectName || '—', { ...metaStyle, columnSpan: 6 })],
+        [cell('LỚP HỌC PHẦN', { ...metaStyle, fontWeight: 'bold' }), cell(session.classLabel || session.classId || '—', { ...metaStyle, columnSpan: 6 })],
+        [cell('BUỔI HỌC', { ...metaStyle, fontWeight: 'bold' }), cell(session.sessionName || 'Buổi học', { ...metaStyle, columnSpan: 6 })],
+        [],
+        ['STT', 'Mã sinh viên', 'Họ và tên', 'Trạng thái', 'Có phép', 'Không phép', 'Cập nhật lúc'].map((value) => cell(value, headerStyle)),
+        ...rosterStudents.map((student, index) => {
+          const status = student.attendanceStatus || 'Chưa ghi nhận';
+          const stripe = index % 2 ? '#F4F8FC' : '#FFFFFF';
+          return [
+            cell(index + 1, { backgroundColor: stripe, align: 'center' }),
+            cell(student.studentId || '', { backgroundColor: stripe }),
+            cell(student.studentName || '', { backgroundColor: stripe }),
+            cell(status, { backgroundColor: stripe }),
+            cell(status === 'Vắng có phép' ? '✓' : '', { backgroundColor: status === 'Vắng có phép' ? '#EAF0FF' : stripe, align: 'center' }),
+            cell(status === 'Vắng mặt' ? '✓' : '', { backgroundColor: status === 'Vắng mặt' ? '#FCE8E7' : stripe, align: 'center' }),
+            cell(student.checkedInAt ? formatDate(student.checkedInAt) : '', { backgroundColor: stripe }),
+          ];
+        }),
+      ];
+      const { default: writeExcelFile } = await import('write-excel-file/universal');
+      const workbook = await writeExcelFile(rows, {
+        sheet: 'Điểm danh',
+        columns: [{ width: 8 }, { width: 20 }, { width: 30 }, { width: 20 }, { width: 14 }, { width: 16 }, { width: 22 }],
+      });
+      const url = URL.createObjectURL(await workbook.toBlob());
+      const link = document.createElement('a');
+      link.href = url;
+      const safeName = (value) => String(value || '').replace(/[^A-Za-z0-9._-]+/g, '_');
+      link.download = `diem_danh_${safeName(session.subjectId || session.subjectName)}_${safeName(session.classId)}_${safeName(session.sessionName || session.id)}.xlsx`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (exception) {
+      setRosterError(exception instanceof Error ? exception.message : 'Không thể tải file Excel điểm danh.');
+    } finally {
+      setExportingSessionId('');
+    }
+  };
+
+  if (manualAttendancePage || attendanceExportMode) {
+    const manualOptions = [
+      ['present', 'Có mặt'],
+      ['late', 'Đi muộn'],
+      ['excused', 'Có phép'],
+      ['absent', 'Không phép'],
+    ];
+    const students = itemsOf(roster);
+    return <main className="rp-manual-attendance-page">
+      <div className="rp-manual-page-heading">
+        <button type="button" className="rp-secondary-button" onClick={() => {
+          if (selected) { setSelected(null); setRoster(null); setRosterError(''); }
+          else if (selectedSubjectId) setSelectedSubjectId('');
+          else { setManualAttendancePage(false); setAttendanceExportMode(false); setRosterError(''); }
+        }}><ChevronLeft size={17} /> {selected ? 'Chọn buổi khác' : selectedSubjectId ? 'Chọn môn khác' : 'Quay lại điểm danh'}</button>
+        <div><span className="rp-detail-eyebrow">GIẢNG VIÊN · ĐIỂM DANH</span><h1>{attendanceExportMode ? selectedSubjectId ? 'Chọn buổi để tải Excel' : 'Tải Excel điểm danh' : selected ? 'Điểm danh sinh viên' : selectedSubjectId ? 'Chọn buổi học' : 'Điểm danh thủ công'}</h1><p>{attendanceExportMode ? selectedSubjectId ? `Môn học: ${subjects.find((subject) => subject.id === selectedSubjectId)?.name || 'Môn học'} · Chọn buổi học để tải danh sách điểm danh.` : 'Chọn môn học trước, sau đó chọn buổi cần tải danh sách điểm danh.' : selected ? `${selected.classLabel || selected.className || selected.classId} · ${selected.sessionName || 'Buổi học'}` : selectedSubjectId ? `Môn học: ${subjects.find((subject) => subject.id === selectedSubjectId)?.name || 'Môn học'} · Chọn buổi cần điểm danh.` : 'Chọn môn học trước, sau đó chọn buổi cần ghi nhận trạng thái tham dự.'}</p></div>
+        {selected && <button type="button" className="rp-secondary-button" onClick={() => openRoster(selected)} disabled={rosterLoading}><RefreshCw size={16} /> Làm mới</button>}
+      </div>
+      {!selected ? !selectedSubjectId ? <>
+        {error && <ErrorPanel message={error} onRetry={onRefresh} />}
+        {attendanceExportMode && rosterError && <ErrorPanel message={rosterError} />}
+        {loading ? <LoadingPanel /> : subjects.length ? <div className="rp-manual-session-grid">{subjects.map((subject) => <button key={subject.id} className="rp-manual-session-card rp-manual-subject-card" onClick={() => setSelectedSubjectId(subject.id)}><span className="rp-attendance-session-icon"><BookOpen size={20} /></span><span className="rp-manual-session-copy"><strong>{subject.name}</strong><small>{subject.code}{subject.className && subject.className !== subject.name ? ` · ${subject.className}` : ''}</small><small>{subject.sessions.length} buổi học có phiên điểm danh</small></span><ChevronRight size={18} /></button>)}</div> : <EmptyPanel title="Chưa có môn học" message="Chưa có môn học nào có phiên điểm danh để quản lý." />}
+      </> : <>
+        {attendanceExportMode && rosterError && <ErrorPanel message={rosterError} />}
+        {subjectSessions.length ? <div className="rp-manual-session-grid">{subjectSessions.map((item) => <button key={item.id} className="rp-manual-session-card" onClick={() => attendanceExportMode ? exportAttendanceSession(item) : openRoster(item)} disabled={attendanceExportMode && Boolean(exportingSessionId)}><span className="rp-attendance-session-icon">{attendanceExportMode && exportingSessionId === String(item.id) ? <RefreshCw size={20} className="rp-spin" /> : attendanceExportMode ? <Download size={20} /> : <ClipboardCheck size={20} />}</span><span className="rp-manual-session-copy"><strong>{item.sessionName || 'Buổi học'}</strong><small>{item.classLabel}</small><small>{item.openedAt ? `Mở lúc ${formatDate(item.openedAt)}` : ''}{item.closedAt ? ` · Đóng lúc ${formatDate(item.closedAt)}` : ''}</small></span><span className="rp-manual-session-cta">{attendanceExportMode ? exportingSessionId === String(item.id) ? 'Đang tải…' : 'Tải Excel' : ''}<ChevronRight size={18} /></span></button>)}</div> : <EmptyPanel title="Chưa có buổi học" message="Môn học này chưa có phiên điểm danh." />}
+      </> : <>
+        {rosterError && <ErrorPanel message={rosterError} onRetry={() => openRoster(selected)} />}
+        {rosterLoading ? <LoadingPanel /> : roster && <>
+          <div className={`rp-manual-session-state ${roster.session?.canEdit ? 'is-open' : 'is-closed'}`}><span className="rp-state-dot" /><div><strong>{roster.session?.canEdit ? 'Đang mở · Có thể cập nhật điểm danh' : 'Phiên đã đóng · Chỉ xem kết quả'}</strong><small>{roster.session?.canEdit ? 'Tích trạng thái cho từng sinh viên, sau đó bấm Áp dụng điểm danh để lưu.' : 'Các trạng thái được khóa theo cấu hình của phiên điểm danh.'}</small></div><span className="rp-manual-student-count">{students.length} sinh viên</span></div>
+          <div className="rp-manual-bulk-toolbar">
+            <span className="rp-manual-selected-count">Đã đánh dấu <strong>{pendingAttendanceStatuses.size}</strong> / {students.length} sinh viên</span>
+            <button type="button" className="rp-attendance-manual-button" onClick={applyBulkAttendanceStatus} disabled={!roster.session?.canEdit || !pendingAttendanceStatuses.size || bulkSaving}>{bulkSaving ? 'Đang lưu…' : `Áp dụng điểm danh (${pendingAttendanceStatuses.size})`}</button>
+          </div>
+          <div className="rp-manual-table-wrap"><table className="rp-manual-table"><thead><tr><th>STT</th><th>Mã sinh viên</th><th>Họ tên</th>{manualOptions.map(([value, label]) => <th className="rp-manual-status-check-column" key={value}>{label}</th>)}<th>Cập nhật lúc</th></tr></thead><tbody>{students.map((student, index) => {
+            const currentStatus = statusValue(student.attendanceStatus);
+            const studentId = String(student.studentId);
+            const displayedStatus = pendingAttendanceStatuses.get(studentId) ?? currentStatus;
+            return <tr key={student.studentId} className={pendingAttendanceStatuses.has(studentId) ? 'is-selected' : ''}>
+              <td className="rp-manual-row-number">{index + 1}</td><td className="rp-manual-student-code">{student.studentId}</td><td className="rp-manual-student-name">{student.studentName || 'Sinh viên'}</td>
+              {manualOptions.map(([value, label]) => <td className={`rp-manual-status-check-column is-${value}`} key={value}><input type="checkbox" aria-label={`${label}: ${student.studentName}`} checked={displayedStatus === value} disabled={!roster.session?.canEdit || bulkSaving} onChange={(event) => setPendingAttendanceStatuses((current) => {
+                const next = new Map(current);
+                const nextStatus = event.target.checked ? value : 'present';
+                if (nextStatus === currentStatus) next.delete(studentId);
+                else next.set(studentId, nextStatus);
+                return next;
+              })} /></td>)}
+              <td className="rp-manual-student-time">{student.checkedInAt ? formatDate(student.checkedInAt) : '—'}</td>
+            </tr>;
+          })}</tbody></table></div>
+          {!students.length && <EmptyPanel title="Chưa có sinh viên" message="Buổi học này chưa có sinh viên trong danh sách." />}
+        </>}
+      </>}
+    </main>;
+  }
   return (
     <>
-      <PageTitle title="Điểm danh" subtitle={lecturerOrAdmin ? 'Phiên học và kết quả tham dự từ cơ sở dữ liệu.' : 'Tổng hợp điểm danh các sự kiện thuộc đơn vị.'} onRefresh={onRefresh} loading={loading} action={lecturerOrAdmin && <ClassQrGenerator onCreated={onRefresh} />} />
+      <PageTitle title="Điểm danh" subtitle={lecturerOrAdmin ? 'Phiên học và kết quả tham dự từ cơ sở dữ liệu.' : 'Tổng hợp điểm danh các sự kiện thuộc đơn vị.'} onRefresh={onRefresh} loading={loading} action={lecturerOrAdmin && <div className="rp-attendance-top-actions"><button type="button" className="rp-attendance-manual-button" onClick={() => { setSelected(null); setRoster(null); setQuery(''); setAttendanceExportMode(false); setManualAttendancePage(true); }}><ClipboardCheck size={16} /> Điểm danh thủ công</button><button type="button" className="rp-secondary-button" onClick={() => { setSelected(null); setRoster(null); setQuery(''); setSelectedSubjectId(''); setRosterError(''); setManualAttendancePage(false); setAttendanceExportMode(true); }}><Download size={16} /> Tải Excel điểm danh</button><ClassQrGenerator onCreated={onRefresh} /></div>} />
       <div className="rp-metrics-grid rp-metrics-compact">{stats.map(([label, value]) => <article className="rp-metric-card" key={label}><span className="rp-metric-icon"><ClipboardCheck size={19} /></span><div><span>{label}</span><strong>{value}</strong></div></article>)}</div>
       <SearchBox value={query} onChange={setQuery} placeholder="Tìm mã lớp, sự kiện, trạng thái..." />
       {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : lecturerOrAdmin
         ? <DataTable items={items} columns={[[ 'Lớp', 'classLabel'], ['Buổi học', 'sessionName'], ['Mở lúc', 'openedAt'], ['Đóng lúc', 'closedAt'], ['Phương thức', 'method'], ['Có mặt', 'present'], ['Đi trễ', 'late'], ['Vắng', 'absent']]} />
         : <EventAttendanceView items={items} />}
-      {lecturerOrAdmin && <div className="rp-attendance-session-actions">{items.map((item) => <button key={item.id} className="rp-secondary-button" onClick={() => openRoster(item)}>{item.classLabel} · {item.sessionName || 'Buổi học'} · Danh sách</button>)}</div>}
-      {selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>Danh sách điểm danh</h2><p>{selected.classLabel || selected.className || selected.classId} · {selected.sessionName || 'Buổi học'}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header>{rosterError && <ErrorPanel message={rosterError} onRetry={() => openRoster(selected)} />}{rosterLoading ? <LoadingPanel /> : roster && <><div className="rp-roster-summary"><span>{roster.session?.canEdit ? 'Phiên đang mở · có thể cập nhật' : 'Phiên đã đóng · chỉ xem'}</span><button className="rp-secondary-button" onClick={() => openRoster(selected)}><RefreshCw size={15} /> Làm mới</button></div><div className="rp-table-wrap"><table className="rp-table"><thead><tr><th>Mã sinh viên</th><th>Họ tên</th><th>Trạng thái</th><th>Thời gian</th></tr></thead><tbody>{itemsOf(roster).map((student) => <tr key={student.studentId}><td>{student.studentId}</td><td>{student.studentName}</td><td>{roster.session?.canEdit ? <select aria-label={`Trạng thái ${student.studentName}`} value={statusValue(student.attendanceStatus)} disabled={savingStudent === student.studentId} onChange={(event) => updateStudentStatus(student.studentId, event.target.value)}><option value="">Chưa ghi nhận</option><option value="present">Có mặt</option><option value="late">Đi muộn</option><option value="absent">Vắng mặt</option><option value="excused">Vắng có phép</option></select> : student.attendanceStatus || 'Chưa ghi nhận'}</td><td>{formatDate(student.checkedInAt)}</td></tr>)}</tbody></table></div>{!itemsOf(roster).length && <EmptyPanel title="Chưa có sinh viên" message="Lớp chưa có sinh viên tham gia." />}</>}</section></div>}
     </>
   );
 }
