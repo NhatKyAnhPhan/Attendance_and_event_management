@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_controller.dart';
 import '../core/constants/role.dart';
@@ -13,6 +14,11 @@ class NotificationController extends GetxController {
   Timer? _refreshTimer;
   Worker? _authWorker;
   bool _refreshingAttendance = false;
+  String? _readStateUserId;
+  final Set<String> _persistedReadIds = {};
+
+  String get _readStateKey =>
+      'readNotifications:${_readStateUserId ?? 'anonymous'}';
 
   /// Chỉ đồng bộ thông báo thật sau khi trạng thái đăng nhập đã được xác minh.
   @override
@@ -47,6 +53,18 @@ class NotificationController extends GetxController {
     if (!auth.isReady.value || !auth.isAuthed.value) return;
     _refreshingAttendance = true;
     try {
+      final userId = auth.currentUser.value?['id']?.toString() ?? 'anonymous';
+      if (_readStateUserId != userId) {
+        _readStateUserId = userId;
+        final prefs = await SharedPreferences.getInstance();
+        final readIds = prefs.getStringList(_readStateKey)?.toSet() ?? {};
+        _persistedReadIds
+          ..clear()
+          ..addAll(readIds);
+        items.assignAll(items.map(
+          (item) => item.copyWith(read: readIds.contains(item.id)),
+        ));
+      }
       final response = await _apiClient.get('/api/notifications');
       final responseItems = response['items'];
       if (responseItems is! List) return;
@@ -81,7 +99,7 @@ class NotificationController extends GetxController {
           createdAt:
               DateTime.tryParse(item['createdAt']?.toString() ?? '') ??
               DateTime.now(),
-          read: previousAttendance[id]?.read ?? false,
+          read: previousAttendance[id]?.read ?? _persistedReadIds.contains(id),
           actionLabel: 'Điểm danh',
           route: '/student',
         );
@@ -131,6 +149,8 @@ class NotificationController extends GetxController {
     if (index < 0) return;
     final current = items[index];
     items[index] = current.copyWith(read: true);
+    _persistedReadIds.add(id);
+    unawaited(_persistReadState());
   }
 
   // Đánh dấu toàn bộ thông báo thuộc vai trò hiện tại là đã đọc.
@@ -139,7 +159,19 @@ class NotificationController extends GetxController {
       final item = items[i];
       if (item.recipients.contains(role) && !item.read) {
         items[i] = item.copyWith(read: true);
+        _persistedReadIds.add(item.id);
       }
     }
+    unawaited(_persistReadState());
+  }
+
+  Future<void> _persistReadState() async {
+    final auth = Get.find<AuthController>();
+    _readStateUserId ??= auth.currentUser.value?['id']?.toString() ?? 'anonymous';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _readStateKey,
+      _persistedReadIds.toList(),
+    );
   }
 }

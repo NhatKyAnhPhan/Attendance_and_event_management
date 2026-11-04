@@ -225,6 +225,8 @@ class _StudentClassDetailsPageState extends State<StudentClassDetailsPage> {
                     .toList(),
         ),
         const SizedBox(height: 14),
+        StudentClassFeedback(classId: detail.id, colors: colors),
+        const SizedBox(height: 14),
         _DetailSection(
           title: 'Danh sách sinh viên (${detail.students.length})',
           colors: colors,
@@ -362,6 +364,151 @@ class _AttendanceSessionRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class StudentClassFeedback extends StatefulWidget {
+  const StudentClassFeedback({super.key, required this.classId, required this.colors});
+
+  final String classId;
+  final AppColors colors;
+
+  @override
+  State<StudentClassFeedback> createState() => _StudentClassFeedbackState();
+}
+
+class _StudentClassFeedbackState extends State<StudentClassFeedback> {
+  final ClassRepository _repository = ClassRepository();
+  late Future<Map<String, dynamic>> _feedbackFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _feedbackFuture = _repository.getClassFeedback(widget.classId);
+  }
+
+  void _reload() {
+    setState(() => _feedbackFuture = _repository.getClassFeedback(widget.classId));
+  }
+
+  Future<void> _openForm({required bool ratingMode}) async {
+    final commentController = TextEditingController();
+    var rating = 0;
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(ratingMode ? 'Đánh giá lớp học' : 'Gửi phản hồi'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (ratingMode) ...[
+                const Text('Mức độ hài lòng của bạn'),
+                const SizedBox(height: 8),
+                Wrap(
+                  children: List.generate(5, (index) {
+                    final value = index + 1;
+                    return IconButton(
+                      tooltip: '$value sao',
+                      onPressed: () => setDialogState(() => rating = value),
+                      icon: Icon(value <= rating ? Icons.star : Icons.star_border, color: Colors.amber),
+                    );
+                  }),
+                ),
+              ],
+              TextField(
+                controller: commentController,
+                minLines: 3,
+                maxLines: 5,
+                maxLength: 2000,
+                decoration: InputDecoration(
+                  labelText: ratingMode ? 'Nhận xét thêm' : 'Nội dung phản hồi',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Hủy')),
+            FilledButton(
+              onPressed: () async {
+                final comment = commentController.text.trim();
+                if (ratingMode && rating == 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Vui lòng chọn số sao.')));
+                  return;
+                }
+                if (!ratingMode && comment.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Vui lòng nhập nội dung phản hồi.')));
+                  return;
+                }
+                try {
+                  if (ratingMode) {
+                    await _repository.submitClassRating(classId: widget.classId, rating: rating, comment: comment);
+                  } else {
+                    await _repository.submitClassComment(classId: widget.classId, comment: comment);
+                  }
+                  if (dialogContext.mounted) Navigator.pop(dialogContext, true);
+                } catch (error) {
+                  if (!dialogContext.mounted) return;
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('Không thể gửi: $error')));
+                }
+              },
+              child: const Text('Gửi'),
+            ),
+          ],
+        ),
+      ),
+    );
+    commentController.dispose();
+    if (submitted == true && mounted) {
+      _reload();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã gửi ý kiến của bạn.')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.colors;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: c.card, border: Border.all(color: c.border), borderRadius: BorderRadius.circular(14)),
+      child: FutureBuilder<Map<String, dynamic>>(
+        future: _feedbackFuture,
+        builder: (context, snapshot) {
+          final data = snapshot.data ?? const <String, dynamic>{};
+          final rawItems = data['items'];
+          final items = rawItems is List ? rawItems.whereType<Map>().toList() : <Map>[];
+          final count = (data['ratingCount'] as num?)?.toInt() ?? 0;
+          final average = (data['averageRating'] as num?)?.toDouble() ?? 0;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Đánh giá & phản hồi lớp học', style: AppTextStyles.displayXs(c.foreground)),
+              const SizedBox(height: 6),
+              if (snapshot.connectionState == ConnectionState.waiting)
+                const LinearProgressIndicator()
+              else if (snapshot.hasError)
+                Text('Không tải được đánh giá: ${snapshot.error}', style: AppTextStyles.bodySm(c.danger))
+              else ...[
+                Text(count > 0 ? '${average.toStringAsFixed(1)} / 5 sao · $count lượt đánh giá' : 'Chưa có lượt đánh giá.', style: AppTextStyles.bodySm(c.mutedForeground)),
+                for (final item in items.take(5))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text('${item['rating'] == null ? '' : '${item['rating']} / 5 ★ · '}${item['comment'] ?? item['content'] ?? ''}', style: AppTextStyles.bodySm(c.foreground)),
+                  ),
+              ],
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                OutlinedButton.icon(onPressed: () => _openForm(ratingMode: false), icon: const Icon(Icons.chat_bubble_outline), label: const Text('Gửi phản hồi')),
+                OutlinedButton.icon(onPressed: () => _openForm(ratingMode: true), icon: const Icon(Icons.star_outline), label: const Text('Đánh giá')),
+                if (snapshot.hasError) IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: 'Tải lại'),
+              ]),
+            ],
+          );
+        },
       ),
     );
   }
