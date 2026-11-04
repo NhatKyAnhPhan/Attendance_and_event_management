@@ -427,6 +427,14 @@ class _ClassesPageState extends State<ClassesPage> {
           'Mỗi lần chỉ có thể nhập tối đa 2.000 sinh viên.',
         );
       }
+      final confirmed = await _confirmExcelImport(
+        context,
+        title: 'Xác nhận import sinh viên vào lớp',
+        subtitle:
+            '${item.name} (${item.code}) · ${studentIds.length} sinh viên.',
+        lines: [studentIds.join(', ')],
+      );
+      if (confirmed != true || !context.mounted) return;
 
       final result = await controller.importStudents(
         classId: item.id,
@@ -458,12 +466,10 @@ class _ClassesPageState extends State<ClassesPage> {
       );
     } on FormatException catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+      await _showExcelError(context, error.message.toString());
     } catch (exception) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(exception.toString())));
+      await _showExcelError(context, exception.toString());
     } finally {
       if (mounted) setState(() => _importingClassIds.remove(item.id));
     }
@@ -508,6 +514,47 @@ class _ClassesPageState extends State<ClassesPage> {
         targetIdHeaders: const {'MaLop', 'Mã lớp', 'classId', 'classCode'},
         targetNameHeaders: const {'TenLop', 'Tên lớp', 'className'},
       );
+      final preview = groups.map((group) {
+        final matchingClasses = controller.items.where(
+          (item) =>
+              item.id.toUpperCase() == group.targetId.toUpperCase() ||
+              item.code.toUpperCase() == group.targetId.toUpperCase(),
+        );
+        final item = matchingClasses.length == 1
+            ? matchingClasses.single
+            : null;
+        final issue = matchingClasses.isEmpty
+            ? 'không tìm thấy lớp'
+            : matchingClasses.length > 1
+            ? 'mã lớp bị trùng'
+            : item!.isArchived
+            ? 'lớp đã đóng/lưu trữ'
+            : group.studentIds.length > 2000
+            ? 'vượt giới hạn 2.000 sinh viên'
+            : null;
+        return (
+          group: group,
+          item: item,
+          issue: issue,
+        );
+      }).toList();
+      final confirmed = await _confirmExcelImport(
+        context,
+        title: 'Xác nhận thêm sinh viên vào lớp',
+        subtitle:
+            '${groups.length} lớp, ${groups.fold<int>(0, (total, group) => total + group.studentIds.length)} mã sinh viên trong file.',
+        lines: preview.map((entry) {
+          final group = entry.group;
+          final target = entry.item?.name ??
+              (group.targetName.isNotEmpty
+                  ? group.targetName
+                  : group.targetId);
+          final status = entry.issue == null ? '' : ' — Bỏ qua: ${entry.issue}';
+          return '$target (${group.targetId}) — ${group.studentIds.length} sinh viên$status\n'
+              '${group.studentIds.join(', ')}';
+        }).toList(),
+      );
+      if (confirmed != true || !context.mounted) return;
       var importedCount = 0;
       var alreadyMemberCount = 0;
       var unknownStudentCount = 0;
@@ -524,6 +571,13 @@ class _ClassesPageState extends State<ClassesPage> {
           skipped.add(
             '${group.targetName.isEmpty ? group.targetId : group.targetName} '
             '(${group.targetId}): không có trong danh sách lớp bạn phụ trách.',
+          );
+          continue;
+        }
+        if (matchingClasses.length > 1) {
+          skipped.add(
+            '${group.targetName.isEmpty ? group.targetId : group.targetName} '
+            '(${group.targetId}): mã lớp bị trùng trong hệ thống.',
           );
           continue;
         }
@@ -583,15 +637,69 @@ class _ClassesPageState extends State<ClassesPage> {
       );
     } on FormatException catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+      await _showExcelError(context, error.message.toString());
     } catch (exception) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(exception.toString())));
+      await _showExcelError(context, exception.toString());
     } finally {
       if (mounted) setState(() => _importingClassIds.remove('__excel__'));
     }
+  }
+
+  Future<bool?> _confirmExcelImport(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required List<String> lines,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(subtitle),
+              const SizedBox(height: 12),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Text(lines.join('\n\n')),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Xác nhận nhập'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showExcelError(BuildContext context, String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Không thể nhập file Excel'),
+        content: SingleChildScrollView(child: SelectableText(message)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showClassDetails(

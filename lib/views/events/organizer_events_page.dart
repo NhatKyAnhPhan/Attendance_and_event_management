@@ -142,6 +142,22 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       }
       final unitMappings = await _chooseEventUnits(context, events, controller);
       if (unitMappings == null || !context.mounted) return;
+      final confirmed = await _confirmExcelImport(
+        context,
+        title: 'Xác nhận thêm sự kiện từ Excel',
+        subtitle: '${events.length} sự kiện sẽ được thêm vào hệ thống.',
+        lines: events
+            .map(
+              (event) =>
+                  '${event.name} (${event.sourceId})\n'
+                  '${DateFormat('dd/MM/yyyy').format(event.eventDate)} · '
+                  '${event.startMinutes == null ? '09:00 mặc định' : _formatMinutes(event.startMinutes!)} · '
+                  '${event.location} · '
+                  '${controller.units.firstWhere((unit) => unit.id == unitMappings[event.organizerName]).name}',
+            )
+            .toList(),
+      );
+      if (confirmed != true || !context.mounted) return;
 
       setState(() => _importingEventsFromExcel = true);
       var importedCount = 0;
@@ -222,15 +238,71 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       );
     } on FormatException catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+      await _showExcelError(context, error.message.toString());
     } catch (exception) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(exception.toString())));
+      await _showExcelError(context, exception.toString());
     } finally {
       if (mounted) setState(() => _importingEventsFromExcel = false);
     }
+  }
+
+  String _formatMinutes(int minutes) =>
+      '${(minutes ~/ 60).toString().padLeft(2, '0')}:'
+      '${(minutes % 60).toString().padLeft(2, '0')}';
+
+  Future<bool?> _confirmExcelImport(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required List<String> lines,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(subtitle),
+              const SizedBox(height: 12),
+              Flexible(
+                child: SingleChildScrollView(child: Text(lines.join('\n\n'))),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Xác nhận nhập'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showExcelError(BuildContext context, String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Không thể nhập file Excel'),
+        content: SingleChildScrollView(child: SelectableText(message)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<Map<String, String>?> _chooseEventUnits(
@@ -369,6 +441,47 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         },
         targetNameHeaders: const {'TenSuKien', 'Tên sự kiện', 'eventName'},
       );
+      final previewLines = <String>[];
+      for (final group in groups) {
+        var matches = controller.items
+            .where(
+              (event) => event.id.toUpperCase() == group.targetId.toUpperCase(),
+            )
+            .toList();
+        if (matches.isEmpty && group.targetName.isNotEmpty) {
+          matches = controller.items
+              .where(
+                (event) =>
+                    _normalizeMatchText(event.name) ==
+                    _normalizeMatchText(group.targetName),
+              )
+              .toList();
+        }
+        final eventName = matches.length == 1
+            ? matches.single.name
+            : group.targetName.isEmpty
+            ? group.targetId
+            : group.targetName;
+        final issue = matches.isEmpty
+            ? ' — Bỏ qua: chưa có sự kiện tương ứng'
+            : matches.length > 1
+            ? ' — Bỏ qua: mã/tên sự kiện bị trùng'
+            : group.studentIds.length > 2000
+            ? ' — Bỏ qua: vượt giới hạn 2.000 sinh viên'
+            : '';
+        previewLines.add(
+          '$eventName (${group.targetId}) — ${group.studentIds.length} sinh viên$issue\n'
+          '${group.studentIds.join(', ')}',
+        );
+      }
+      final confirmed = await _confirmExcelImport(
+        context,
+        title: 'Xác nhận import sinh viên',
+        subtitle:
+            '${groups.length} danh sách, ${groups.fold<int>(0, (total, group) => total + group.studentIds.length)} mã sinh viên được đọc từ file.',
+        lines: previewLines,
+      );
+      if (confirmed != true || !context.mounted) return;
       var importedCount = 0;
       var alreadyRegisteredCount = 0;
       var unknownStudentCount = 0;
@@ -453,12 +566,10 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       );
     } on FormatException catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.message.toString())));
+      await _showExcelError(context, error.message.toString());
     } catch (exception) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(exception.toString())));
+      await _showExcelError(context, exception.toString());
     } finally {
       if (mounted) setState(() => _importingStudentsFromExcel = false);
     }

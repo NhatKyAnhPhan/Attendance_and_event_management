@@ -356,6 +356,11 @@
 .rp-detail-list-item { margin: 0 0 8px !important; padding: 10px 12px; border: 1px solid var(--rp-border); border-radius: 8px; color: var(--rp-text) !important; line-height: 1.55; }
 .rp-modal-muted { color: var(--rp-muted); font-size: 12px; line-height: 1.55; }
 .rp-detail-error { margin: 12px 0; padding: 11px 12px; border: 1px solid #fca5a5; border-radius: 8px; background: color-mix(in srgb, #fee2e2 30%, var(--rp-card)); color: #b91c1c; font-size: 12px; line-height: 1.5; }
+.rp-import-preview { display: grid; max-height: 42vh; gap: 8px; overflow: auto; margin-top: 14px; }
+.rp-import-preview > div { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--rp-border); border-radius: 8px; background: var(--rp-bg); }
+.rp-import-preview strong { color: var(--rp-text); font-size: 12px; }
+.rp-import-preview span,.rp-import-preview code { color: var(--rp-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.rp-import-preview code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 @media (max-width: 760px) {
   .rp-sidebar { z-index: 40; transform: translateX(-100%); transition: transform .2s ease; }
   .rp-sidebar.rp-sidebar-open { transform: translateX(0); }
