@@ -2420,8 +2420,8 @@ function SettingsView({ darkMode, setDarkMode }) {
       });
       setAllowEarlyAttendance(Boolean(result.allowEarlyAttendance));
       setNotice(enabled
-        ? 'Đã cho phép mở điểm danh trước giờ bắt đầu trên toàn hệ thống.'
-        : 'Đã tắt quyền mở điểm danh trước giờ bắt đầu.');
+        ? 'Đã cho phép mở phiên và điểm danh sự kiện trước giờ bắt đầu trên toàn hệ thống.'
+        : 'Đã tắt quyền mở phiên và điểm danh sự kiện trước giờ bắt đầu.');
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : 'Không thể lưu cài đặt mở điểm danh sớm.');
     } finally {
@@ -2470,8 +2470,8 @@ function SettingsView({ darkMode, setDarkMode }) {
               disabled={savingEarlyAttendance}
               onChange={(event) => updateEarlyAttendance(event.target.checked)}
             />
-            <span>Cho phép mở điểm danh trước giờ bắt đầu</span>
-            <small>Áp dụng cho toàn bộ lớp học, sự kiện, giảng viên và nhân viên; phù hợp khi demo.{savingEarlyAttendance ? ' Đang lưu...' : ''}</small>
+            <span>Cho phép mở phiên và điểm danh sự kiện trước giờ bắt đầu</span>
+            <small>Cho phép ban tổ chức mở phiên sớm và sinh viên điểm danh sự kiện trước giờ bắt đầu. Áp dụng toàn hệ thống; phù hợp khi demo.{savingEarlyAttendance ? ' Đang lưu...' : ''}</small>
           </label>
         </div>
         <div className="rp-parameter-grid">

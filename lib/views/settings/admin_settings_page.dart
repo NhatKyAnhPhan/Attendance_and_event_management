@@ -191,8 +191,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       );
       _showMessage(
         enabled
-            ? 'Đã cho phép mở điểm danh trước giờ bắt đầu trên toàn hệ thống.'
-            : 'Đã tắt quyền mở điểm danh trước giờ bắt đầu.',
+            ? 'Đã cho phép mở phiên và điểm danh sự kiện trước giờ bắt đầu trên toàn hệ thống.'
+            : 'Đã tắt quyền mở phiên và điểm danh sự kiện trước giờ bắt đầu.',
       );
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -307,11 +307,11 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
               ? null
               : _setEarlyAttendance,
           title: Text(
-            'Cho phép mở điểm danh trước giờ bắt đầu',
+            'Cho phép mở phiên và điểm danh sự kiện trước giờ bắt đầu',
             style: AppTextStyles.bodyMd(colors.foreground),
           ),
           subtitle: Text(
-            'Áp dụng cho tất cả lớp học, sự kiện, giảng viên và nhân viên; phù hợp khi demo.',
+            'Cho phép ban tổ chức mở phiên sớm và sinh viên điểm danh sự kiện trước giờ bắt đầu. Áp dụng toàn hệ thống; phù hợp khi demo.',
             style: AppTextStyles.bodySm(colors.mutedForeground),
           ),
           secondary: _updatingEarlyAttendance

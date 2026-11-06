@@ -2988,6 +2988,10 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
   if (typeof payload.eventId !== 'string' || !payload.eventId) {
     return response.status(410).json({ message: 'Mã QR sự kiện không hợp lệ.' });
   }
+  const { global: globalParameters } = await getEffectiveAttendanceParameters(
+    'global',
+  );
+  const allowEarlyAttendance = globalParameters.allowEarlyAttendance;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -2998,7 +3002,7 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
               sk.Thoigianketthuc AS endTime,
               sk.Trangthaisukien AS status,
               CASE
-                WHEN NOW() >= sk.Thoigianbatdau
+                WHEN (? = 1 OR NOW() >= sk.Thoigianbatdau)
                   AND NOW() < sk.Thoigianketthuc
                   AND sk.Trangthaisukien <> 'Đã đóng' THEN 1
                 ELSE 0
@@ -3015,14 +3019,17 @@ async function checkInEventAttendance(request, response, payload, deviceId, coor
          AND eas.closed_at IS NULL
          AND eas.expires_at > NOW()
          AND (eas.period_start IS NULL
+           OR ? = 1
            OR (NOW() >= eas.period_start AND NOW() < eas.period_end))
        ORDER BY eas.opened_at DESC, eas.session_id DESC
        LIMIT 1
        FOR UPDATE`,
       [
+        allowEarlyAttendance ? 1 : 0,
         payload.eventId,
         typeof payload.sessionId === 'string' ? payload.sessionId : null,
         typeof payload.sessionId === 'string' ? payload.sessionId : null,
+        allowEarlyAttendance ? 1 : 0,
       ],
     );
     if (!event || Number(event.isOpen) !== 1) {
@@ -3152,6 +3159,10 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
       return response.status(410).json({ message: 'Mã QR không phải mã điểm danh sự kiện.' });
     }
     if (previewOnly) {
+      const { global: globalParameters } = await getEffectiveAttendanceParameters(
+        'global',
+      );
+      const allowEarlyAttendance = globalParameters.allowEarlyAttendance;
       const [[preview]] = await pool.execute(
         `SELECT sk.Masukien AS eventId, sk.Tensukien AS eventName,
                 COALESCE(sk.Diadiem, '') AS location,
@@ -3171,7 +3182,7 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
                 nd.Mand AS studentId,
                 COALESCE(nd.Hoten, nd.Mand) AS studentName,
                 CASE
-                  WHEN NOW() >= sk.Thoigianbatdau
+                  WHEN (? = 1 OR NOW() >= sk.Thoigianbatdau)
                     AND NOW() < sk.Thoigianketthuc
                     AND sk.Trangthaisukien <> 'Đã đóng' THEN 1
                   ELSE 0
@@ -3187,14 +3198,17 @@ app.post('/api/events/attendance/check-in', requireAuth, async (request, respons
            AND eas.closed_at IS NULL
            AND eas.expires_at > NOW()
            AND (eas.period_start IS NULL
+             OR ? = 1
              OR (NOW() >= eas.period_start AND NOW() < eas.period_end))
          ORDER BY eas.opened_at DESC, eas.session_id DESC
          LIMIT 1`,
         [
+          allowEarlyAttendance ? 1 : 0,
           request.auth.sub,
           payload.eventId,
           typeof payload.sessionId === 'string' ? payload.sessionId : null,
           typeof payload.sessionId === 'string' ? payload.sessionId : null,
+          allowEarlyAttendance ? 1 : 0,
         ],
       );
       if (!preview || Number(preview.isOpen) !== 1) {
@@ -4223,6 +4237,10 @@ app.get('/api/attendance/face-options', requireAuth, async (request, response) =
     });
   }
   try {
+    const { global: globalParameters } = await getEffectiveAttendanceParameters(
+      'global',
+    );
+    const allowEarlyAttendance = globalParameters.allowEarlyAttendance ? 1 : 0;
     const [classSessions] = await pool.execute(
       `SELECT 'class' AS type, bpd.Mabuoidiemdanh AS sessionId,
               COALESCE(mh.Tenmon, '') AS title,
@@ -4268,8 +4286,9 @@ app.get('/api/attendance/face-options', requireAuth, async (request, response) =
        LEFT JOIN DonVi dv ON dv.Madv = sk.Madv
        WHERE eas.expires_at > NOW()
          AND eas.closed_at IS NULL
-         AND NOW() >= sk.Thoigianbatdau
+         AND (? = 1 OR NOW() >= sk.Thoigianbatdau)
          AND NOW() < sk.Thoigianketthuc
+         AND (eas.period_start IS NULL OR ? = 1 OR NOW() >= eas.period_start)
          AND sk.Trangthaisukien <> 'Đã đóng'
          AND LOWER(TRIM(COALESCE(dk.Trangthaidangky, ''))) NOT IN ('từ chối', 'đã hủy', 'hủy')
          AND NOT EXISTS (
@@ -4279,7 +4298,7 @@ app.get('/api/attendance/face-options', requireAuth, async (request, response) =
              AND ear.student_id = dk.Masv
          )
        ORDER BY eas.opened_at DESC`,
-      [request.auth.sub],
+      [request.auth.sub, allowEarlyAttendance, allowEarlyAttendance],
     );
     return response.json({ items: [...classSessions, ...events] });
   } catch (error) {
@@ -4511,6 +4530,10 @@ async function checkInEventFace(
   { sessionId, previewOnly, deviceId, coordinates },
 ) {
   try {
+    const { global: globalParameters } = await getEffectiveAttendanceParameters(
+      'global',
+    );
+    const allowEarlyAttendance = globalParameters.allowEarlyAttendance ? 1 : 0;
     const [[event]] = await pool.execute(
       `SELECT sk.Masukien AS eventId, sk.Tensukien AS eventName,
               COALESCE(sk.Diadiem, '') AS location,
@@ -4540,13 +4563,14 @@ async function checkInEventFace(
          AND eas.expires_at > NOW()
          AND eas.closed_at IS NULL
          AND (eas.period_start IS NULL
+           OR ? = 1
            OR (NOW() >= eas.period_start AND NOW() < eas.period_end))
-         AND NOW() >= sk.Thoigianbatdau
+         AND (? = 1 OR NOW() >= sk.Thoigianbatdau)
          AND NOW() < sk.Thoigianketthuc
          AND sk.Trangthaisukien <> 'Đã đóng'
          AND LOWER(TRIM(COALESCE(dk.Trangthaidangky, ''))) NOT IN ('từ chối', 'đã hủy', 'hủy')
        LIMIT 1`,
-      [request.auth.sub, sessionId],
+      [request.auth.sub, sessionId, allowEarlyAttendance, allowEarlyAttendance],
     );
     if (!event) {
       return response.status(404).json({
@@ -4592,11 +4616,12 @@ async function checkInEventFace(
          JOIN SuKien sk ON sk.Masukien = eas.event_id
          WHERE eas.session_id = ? AND eas.expires_at > NOW()
            AND eas.closed_at IS NULL
-           AND NOW() >= sk.Thoigianbatdau
+           AND (eas.period_start IS NULL OR ? = 1 OR NOW() >= eas.period_start)
+           AND (? = 1 OR NOW() >= sk.Thoigianbatdau)
            AND NOW() < sk.Thoigianketthuc
            AND sk.Trangthaisukien <> 'Đã đóng'
          FOR UPDATE`,
-        [sessionId],
+        [sessionId, allowEarlyAttendance, allowEarlyAttendance],
       );
       if (!activeSession) {
         await connection.rollback();
