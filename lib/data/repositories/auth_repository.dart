@@ -60,6 +60,7 @@ class AuthRepository {
     await _client.post(
       ApiEndpoints.requestPasswordReset,
       data: {'email': email.trim()},
+      receiveTimeout: const Duration(seconds: 30),
     );
   }
 

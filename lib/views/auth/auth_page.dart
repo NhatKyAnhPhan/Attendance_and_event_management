@@ -363,7 +363,8 @@ class _AuthPageState extends State<AuthPage> {
         Text('Quên mật khẩu', style: AppTextStyles.displayLg(c.foreground)),
         const SizedBox(height: 8),
         Text(
-          'Nhập email để nhận mã OTP xác thực.',
+          'Nhập email đã đăng ký. Nếu tài khoản tồn tại, mã OTP sẽ được gửi '
+          'đến hộp thư; hãy kiểm tra cả thư mục spam.',
           style: AppTextStyles.bodyMd(c.mutedForeground),
         ),
         const SizedBox(height: 24),
@@ -408,7 +409,7 @@ class _AuthPageState extends State<AuthPage> {
           TextSpan(
             style: AppTextStyles.bodyMd(c.mutedForeground),
             children: [
-              const TextSpan(text: 'Nhập mã 6 chữ số đã gửi đến '),
+              const TextSpan(text: 'Nếu email thuộc tài khoản, nhập mã 6 chữ số gửi đến '),
               TextSpan(
                 text: _emailCtrl.text.isEmpty
                     ? 'email của bạn'

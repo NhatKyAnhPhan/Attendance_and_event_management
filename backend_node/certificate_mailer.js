@@ -6,6 +6,30 @@ const QRCode = require('qrcode');
 
 const templatePath = path.join(__dirname, 'certificate-template.png');
 
+function parseSender(from) {
+  const value = typeof from === 'string' ? from.trim() : '';
+  const match = value.match(/^(?:[^<>]*<([^<>]+)>|([^<>]+))$/);
+  const address = (match?.[1] || match?.[2] || '').trim();
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(address)) return null;
+  const name = match?.[1] ? value.slice(0, value.indexOf('<')).trim() : '';
+  return { email: address, ...(name ? { name } : {}) };
+}
+
+function isValidResendFrom(from) {
+  return Boolean(parseSender(from));
+}
+
+function plainTextToHtml(text) {
+  return String(text)
+    .replace(/[&<>"]/g, (character) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+    })[character])
+    .replace(/\r?\n/g, '<br>');
+}
+
 function findCertificateFont() {
   const candidates = [
     process.env.CERTIFICATE_FONT_PATH,
@@ -27,9 +51,79 @@ function createMailTransport() {
   const from = process.env.MAIL_FROM || process.env.SMTP_FROM;
   const resendApiKey = process.env.RESEND_API_KEY;
 
+  if (provider === 'brevo') {
+    const brevoApiKey = process.env.BREVO_API_KEY;
+    const sender = parseSender(from);
+    if (!brevoApiKey) {
+      throw new Error('Brevo cần BREVO_API_KEY.');
+    }
+    if (!sender) {
+      throw new Error(
+        'MAIL_FROM phải là địa chỉ email người gửi đã xác thực trên Brevo, ví dụ "HUIT <chungnhan@example.com>".',
+      );
+    }
+    if (typeof fetch !== 'function') {
+      throw new Error('Brevo cần Node.js 18 trở lên để gọi API HTTPS.');
+    }
+    return {
+      async verify() {
+        return true;
+      },
+      async sendMail(message) {
+        const attachments = (message.attachments || []).map((attachment) => {
+          const content = Buffer.isBuffer(attachment.content)
+            ? attachment.content
+            : Buffer.from(String(attachment.content || ''));
+          return {
+            name: attachment.filename,
+            content: content.toString('base64'),
+          };
+        });
+        const recipients = Array.isArray(message.to) ? message.to : [message.to];
+        const payload = {
+          sender,
+          to: recipients.map((recipient) => (
+            typeof recipient === 'string'
+              ? { email: recipient }
+              : { email: recipient.email, ...(recipient.name ? { name: recipient.name } : {}) }
+          )),
+          subject: message.subject,
+          ...(message.text
+            ? { textContent: message.text, htmlContent: plainTextToHtml(message.text) }
+            : {}),
+          ...(message.html ? { htmlContent: message.html } : {}),
+          ...(attachments.length ? { attachment: attachments } : {}),
+        };
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'api-key': brevoApiKey,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = new Error(
+            result.message || result.code || `Brevo API trả về HTTP ${response.status}.`,
+          );
+          error.code = result.code || `BREVO_HTTP_${response.status}`;
+          throw error;
+        }
+        return { messageId: result.messageId };
+      },
+    };
+  }
+
   if (provider === 'resend' || (!provider && resendApiKey)) {
-    if (!resendApiKey || !from) {
-      throw new Error('Resend cần RESEND_API_KEY và MAIL_FROM (hoặc SMTP_FROM).');
+    if (!resendApiKey) {
+      throw new Error('Resend cần RESEND_API_KEY.');
+    }
+    if (!isValidResendFrom(from)) {
+      throw new Error(
+        'MAIL_FROM phải là địa chỉ email, ví dụ "HUIT <chungnhan@ten-mien-da-xac-minh>".',
+      );
     }
     if (typeof fetch !== 'function') {
       throw new Error('Resend cần Node.js 18 trở lên để gọi API HTTPS.');
@@ -82,7 +176,7 @@ function createMailTransport() {
   }
 
   if (provider && provider !== 'smtp') {
-    throw new Error('MAIL_PROVIDER chỉ hỗ trợ giá trị "resend" hoặc "smtp".');
+    throw new Error('MAIL_PROVIDER chỉ hỗ trợ giá trị "brevo", "resend" hoặc "smtp".');
   }
 
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM } = process.env;
@@ -104,8 +198,11 @@ function createMailTransport() {
 function isMailConfigured() {
   const provider = String(process.env.MAIL_PROVIDER || '').trim().toLowerCase();
   const from = process.env.MAIL_FROM || process.env.SMTP_FROM;
+  if (provider === 'brevo') {
+    return Boolean(process.env.BREVO_API_KEY && parseSender(from));
+  }
   if (provider === 'resend' || (!provider && process.env.RESEND_API_KEY)) {
-    return Boolean(process.env.RESEND_API_KEY && from);
+    return Boolean(process.env.RESEND_API_KEY && isValidResendFrom(from));
   }
   if (provider && provider !== 'smtp') return false;
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && from);

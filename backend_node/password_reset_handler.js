@@ -128,7 +128,11 @@ function createPasswordResetHandlers({
           'DELETE FROM password_reset_challenges WHERE user_id = ? AND code_hash = ?',
           [user.id, codeHash],
         );
-        console.error('Password reset email delivery failed:', error.code || error.name);
+        console.error(
+          'Password reset email delivery failed:',
+          error.code || error.name,
+          error.message,
+        );
         return response.status(202).json(genericResponse);
       }
 

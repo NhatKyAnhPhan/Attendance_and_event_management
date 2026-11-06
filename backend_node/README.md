@@ -37,8 +37,15 @@ signatures and names without changing issued certificates.
 
 For SMTP, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` and,
 when required by the provider, `SMTP_USER` / `SMTP_PASSWORD`. On hosts that
-block SMTP egress, use Resend's HTTPS API instead: set `MAIL_PROVIDER=resend`,
-`RESEND_API_KEY`, and `MAIL_FROM` to an address on a verified Resend domain.
+block SMTP egress, use an HTTPS email API. For Resend, set `MAIL_PROVIDER=resend`,
+`RESEND_API_KEY`, and `MAIL_FROM` to an address on a verified Resend domain,
+for example `HUIT <chungnhan@your-verified-domain.com>`. `MAIL_FROM` must be an
+email address, not just a domain name; verify the sending domain in Resend and
+publish its required DNS records before sending.
+For Brevo, set `MAIL_PROVIDER=brevo`, `BREVO_API_KEY`, and `MAIL_FROM` to the
+sender email configured and verified in Brevo, optionally with its display name
+(for example `HUIT <chungnhan@your-domain.com>`). The API sends transactional
+emails over HTTPS and supports the certificate PDF attachment.
 Both password recovery messages and certificate PDFs use the selected provider.
 Do not commit actual API keys or SMTP credentials. Set `PUBLIC_API_BASE_URL` to
 the externally reachable API base URL so the certificate QR code can open its
@@ -55,9 +62,13 @@ single-use reset token; the password is hashed by the API and never sent by
 email.
 
 Configure the SMTP variables above and set `PASSWORD_RESET_SECRET` in
-`backend_node/.env` to an independent random value of at least 32 bytes. Replace
-the example secrets in `.env.example` before use; do not commit `.env` or real
-SMTP credentials. Restart the backend after changing environment settings.
+the backend environment (or `backend_node/.env` locally) to an independent
+random value of at least 32 bytes. The password reset flow uses the same
+`MAIL_PROVIDER`, `MAIL_FROM`, and provider credentials configured above; both
+the Flutter app and student web client use the same backend endpoints and do
+not need provider keys in the client. Replace the example secrets in
+`.env.example` before use; do not commit `.env` or real email credentials.
+Restart or redeploy the backend after changing environment settings.
 
 Recovery uses the email currently stored for the account. Profile email edits
 are not verified yet, so users should use an email they can access; before

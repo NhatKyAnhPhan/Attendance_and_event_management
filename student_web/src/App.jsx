@@ -292,7 +292,11 @@ function LoginPage({ onLogin, notice, clearNotice }) {
     event.preventDefault();
     setError(''); setLoading(true);
     try {
-      await api('/api/auth/password-reset/request', { method: 'POST', body: { email: email.trim() } });
+      await api('/api/auth/password-reset/request', {
+        method: 'POST',
+        body: { email: email.trim() },
+        timeoutMs: 30000,
+      });
       setStep('otp'); setOtp(''); setResetToken(''); setResendSeconds(60);
     } catch (exception) { setError(getApiMessage(exception)); }
     finally { setLoading(false); }
@@ -369,10 +373,10 @@ function LoginPage({ onLogin, notice, clearNotice }) {
             </form>
             <div className="login-footnote"><ShieldCheck size={16} /> Kết nối bảo mật với tài khoản HUIT của bạn</div>
           </>}
-          {step === 'forgot' && <AuthStep title="Khôi phục mật khẩu" subtitle="Nhập email đã đăng ký. Mã xác nhận sẽ được gửi đến hộp thư của bạn." back={() => { setStep('login'); setError(''); }}>
+          {step === 'forgot' && <AuthStep title="Khôi phục mật khẩu" subtitle="Nhập email đã đăng ký. Nếu tài khoản tồn tại, mã OTP sẽ được gửi đến hộp thư; hãy kiểm tra cả thư mục spam." back={() => { setStep('login'); setError(''); }}>
             <form onSubmit={requestReset} className="auth-form"><label>Email tài khoản<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="ban@email.com" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary-button full" disabled={loading}>{loading ? 'Đang gửi...' : <>Gửi mã xác nhận <ArrowRight size={17} /></>}</button></form>
           </AuthStep>}
-          {step === 'otp' && <AuthStep title="Kiểm tra email nhé" subtitle={`Nhập mã gồm 6 chữ số đã gửi đến ${email}.`} back={() => { setStep('forgot'); setError(''); }}>
+          {step === 'otp' && <AuthStep title="Kiểm tra email nhé" subtitle={`Nếu email thuộc tài khoản, mã 6 chữ số sẽ được gửi đến ${email}. Hãy kiểm tra cả thư mục spam.`} back={() => { setStep('forgot'); setError(''); }}>
             <form onSubmit={verifyCode} className="auth-form"><label>Mã xác nhận<input inputMode="numeric" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" className="otp-input" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary-button full" disabled={loading}>{loading ? 'Đang xác minh...' : <>Xác minh mã <ArrowRight size={17} /></>}</button><button type="button" className="text-button resend-button" disabled={loading || resendSeconds > 0} onClick={requestReset}>{resendSeconds ? `Gửi lại mã sau ${resendSeconds}s` : 'Gửi lại mã'}</button></form>
           </AuthStep>}
           {step === 'new-password' && <AuthStep title="Tạo mật khẩu mới" subtitle="Mật khẩu mới cần có ít nhất 8 ký tự." back={() => { setStep('otp'); setError(''); }}>
