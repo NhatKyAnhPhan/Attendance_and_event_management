@@ -1,4 +1,5 @@
 import '../../core/utils/archive_policy.dart';
+import '../../core/utils/date_time_serialization.dart';
 
 enum EventRegistrationStatus { notRegistered, pending, approved, rejected }
 
@@ -54,8 +55,8 @@ class EventModel {
       name: json['name'] as String,
       organizerId: json['organizerId'] as String? ?? '',
       organizerName: json['organizerName'] as String? ?? '',
-      startTime: DateTime.parse(json['startTime'] as String),
-      endTime: DateTime.parse(json['endTime'] as String),
+      startTime: DateTime.parse(json['startTime'] as String).toLocal(),
+      endTime: DateTime.parse(json['endTime'] as String).toLocal(),
       location: json['location'] as String? ?? '',
       capacity: json['capacity'] as int? ?? 0,
       registeredCount: json['registeredCount'] as int? ?? 0,
@@ -72,8 +73,8 @@ class EventModel {
     'name': name,
     'organizerId': organizerId,
     'organizerName': organizerName,
-    'startTime': startTime.toIso8601String(),
-    'endTime': endTime.toIso8601String(),
+    'startTime': dateTimeToUtcIso8601(startTime),
+    'endTime': dateTimeToUtcIso8601(endTime),
     'location': location,
     'capacity': capacity,
     'registeredCount': registeredCount,
@@ -128,10 +129,10 @@ class OrganizerEventSummary {
       name: json['name']?.toString() ?? '',
       organizerId: json['organizerId']?.toString() ?? '',
       location: json['location']?.toString() ?? '',
-      startTime: DateTime.parse(json['startTime'].toString()),
+      startTime: DateTime.parse(json['startTime'].toString()).toLocal(),
       endTime: DateTime.parse(
         json['endTime']?.toString() ?? json['startTime'].toString(),
-      ),
+      ).toLocal(),
       storedStatus: json['status']?.toString() ?? '',
       capacity: (json['capacity'] as num?)?.toInt() ?? 0,
       registeredCount: (json['registeredCount'] as num?)?.toInt() ?? 0,

@@ -1,3 +1,4 @@
+import '../../core/utils/date_time_serialization.dart';
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
 import '../models/event_model.dart';
@@ -148,8 +149,8 @@ class EventRepository {
         if (sourceId != null && sourceId.isNotEmpty) 'sourceId': sourceId,
         'name': name,
         'organizerId': organizerId,
-        'startTime': startTime.toIso8601String(),
-        'endTime': endTime.toIso8601String(),
+        'startTime': dateTimeToUtcIso8601(startTime),
+        'endTime': dateTimeToUtcIso8601(endTime),
         'location': location,
         'capacity': capacity,
         'certificateEnabled': certificateEnabled,
@@ -182,8 +183,8 @@ class EventRepository {
       data: {
         'name': name,
         'organizerId': organizerId,
-        'startTime': startTime.toIso8601String(),
-        'endTime': endTime.toIso8601String(),
+        'startTime': dateTimeToUtcIso8601(startTime),
+        'endTime': dateTimeToUtcIso8601(endTime),
         'location': location,
         'capacity': capacity,
         'certificateEnabled': certificateEnabled,

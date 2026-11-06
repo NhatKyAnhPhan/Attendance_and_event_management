@@ -2313,7 +2313,7 @@ function SettingsView({ darkMode, setDarkMode }) {
   const [classes, setClasses] = useState([]);
   const [events, setEvents] = useState([]);
   const [allowEarlyAttendance, setAllowEarlyAttendance] = useState(false);
-  const [parameters, setParameters] = useState({ gpsRadiusMeters: '100', eventRegistrationLockHours: '24', qrDurationMinutes: '15', attendanceThresholdPercent: '100' });
+  const [parameters, setParameters] = useState({ gpsRadiusMeters: '100', eventRegistrationLockHours: '0', qrDurationMinutes: '15', attendanceThresholdPercent: '100' });
   const [inherit, setInherit] = useState({ gpsRadiusMeters: false, eventRegistrationLockHours: false, qrDurationMinutes: false, attendanceThresholdPercent: false });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

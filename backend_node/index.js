@@ -752,7 +752,13 @@ async function ensureSystemParametersTable() {
        (scope_type, scope_id, gps_radius_meters,
         event_registration_lock_hours, qr_duration_minutes,
         attendance_threshold_percent, allow_early_attendance)
-     VALUES ('global', '', 100, 24, 15, 100, 0)`,
+     VALUES ('global', '', 100, 0, 15, 100, 0)`,
+  );
+  await pool.execute(
+    `UPDATE system_parameters
+     SET event_registration_lock_hours = 0
+     WHERE scope_type = 'global' AND scope_id = ''
+       AND event_registration_lock_hours = 24 AND updated_by IS NULL`,
   );
 }
 
@@ -2836,7 +2842,7 @@ const classAttendanceRadiusMeters = 100;
 const eventAttendanceRadiusMeters = 300;
 const defaultAttendanceParameters = {
   gpsRadiusMeters: 100,
-  eventRegistrationLockHours: 24,
+  eventRegistrationLockHours: 0,
   qrDurationMinutes: 15,
   attendanceThresholdPercent: 100,
   allowEarlyAttendance: false,

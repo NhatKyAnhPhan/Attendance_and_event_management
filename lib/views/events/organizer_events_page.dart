@@ -10,6 +10,7 @@ import '../../controllers/organizer_events_controller.dart';
 import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../core/utils/date_time_serialization.dart';
 import '../../core/utils/excel_file_decoder.dart';
 import '../../data/models/event_model.dart';
 import '../../widgets/app_search_field.dart';
@@ -59,8 +60,8 @@ class _AttendancePeriodDraft {
 
   Map<String, dynamic> toJson() => {
     'name': nameController.text.trim(),
-    'startTime': startTime.toIso8601String(),
-    'endTime': endTime.toIso8601String(),
+    'startTime': dateTimeToUtcIso8601(startTime),
+    'endTime': dateTimeToUtcIso8601(endTime),
   };
 
   void dispose() => nameController.dispose();
@@ -2030,8 +2031,12 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             .map(
               (period) => _AttendancePeriodDraft(
                 name: period['name']?.toString() ?? '',
-                startTime: DateTime.parse(period['startTime'].toString()),
-                endTime: DateTime.parse(period['endTime'].toString()),
+                startTime: DateTime.parse(
+                  period['startTime'].toString(),
+                ).toLocal(),
+                endTime: DateTime.parse(
+                  period['endTime'].toString(),
+                ).toLocal(),
               ),
             )
             .toList();
