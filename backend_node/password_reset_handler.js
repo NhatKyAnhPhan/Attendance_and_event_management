@@ -79,7 +79,7 @@ function createPasswordResetHandlers({
     try {
       const [[user]] = await pool.execute(
         `SELECT Mand AS id, Email AS email
-         FROM nguoidung
+         FROM NguoiDung
          WHERE LOWER(TRIM(Email)) = ?
          LIMIT 1`,
         [email],
@@ -138,7 +138,11 @@ function createPasswordResetHandlers({
 
       return response.status(202).json(genericResponse);
     } catch (error) {
-      console.error('Password reset request failed:', error.code || error.name);
+      console.error(
+        'Password reset request failed:',
+        error.code || error.name,
+        error.message,
+      );
       return response.status(500).json({
         message: 'Không thể xử lý yêu cầu khôi phục mật khẩu.',
       });
