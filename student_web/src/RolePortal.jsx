@@ -2041,6 +2041,7 @@ function statusValue(status) {
 function ClassQrGenerator({ onCreated }) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState([]);
+  const [allowEarlyAttendance, setAllowEarlyAttendance] = useState(false);
   const [sessionId, setSessionId] = useState('');
   const [qr, setQr] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2053,6 +2054,7 @@ function ClassQrGenerator({ onCreated }) {
       setQr(null);
       api('/api/attendance/sessions').then((result) => {
         const nextSessions = itemsOf(result);
+        setAllowEarlyAttendance(Boolean(result.allowEarlyAttendance));
         setSessions(nextSessions);
         setSessionId((current) => nextSessions.some((session) => session.classSessionId === current)
           ? current
@@ -2064,6 +2066,7 @@ function ClassQrGenerator({ onCreated }) {
       setQr(null);
       api('/api/attendance/sessions').then((result) => {
         const nextSessions = itemsOf(result);
+        setAllowEarlyAttendance(Boolean(result.allowEarlyAttendance));
         setSessions(nextSessions);
         setSessionId((current) => nextSessions.some((session) => session.classSessionId === current)
           ? current
@@ -2080,6 +2083,7 @@ function ClassQrGenerator({ onCreated }) {
     try {
       const result = await api('/api/attendance/sessions');
       const nextSessions = itemsOf(result);
+      setAllowEarlyAttendance(Boolean(result.allowEarlyAttendance));
       setSessions(nextSessions);
       setSessionId(nextSessions[0]?.classSessionId || '');
     } catch (exception) {
@@ -2092,6 +2096,13 @@ function ClassQrGenerator({ onCreated }) {
   const createQr = async (event) => {
     event.preventDefault();
     setError('');
+    const selectedSession = sessions.find((session) => session.classSessionId === sessionId);
+    if (selectedSession?.startTime
+      && new Date(selectedSession.startTime).getTime() > Date.now()
+      && !allowEarlyAttendance) {
+      setError('Chưa đến giờ bắt đầu. Quản trị viên chưa cho phép mở điểm danh sớm.');
+      return;
+    }
     if (!navigator.geolocation) {
       setError('Trình duyệt này không hỗ trợ lấy vị trí.');
       return;
@@ -2126,7 +2137,10 @@ function ClassQrGenerator({ onCreated }) {
     }
   };
 
-  const activeSessionId = sessions.find((session) => session.classSessionId === sessionId)?.activeSessionId;
+  const selectedSession = sessions.find((session) => session.classSessionId === sessionId);
+  const startsInFuture = selectedSession?.startTime
+    && new Date(selectedSession.startTime).getTime() > Date.now();
+  const activeSessionId = selectedSession?.activeSessionId;
   const stopQr = async (targetSessionId) => {
     setLoading(true);
     setError('');
@@ -2150,8 +2164,8 @@ function ClassQrGenerator({ onCreated }) {
         <header><div><h2 id="rp-qr-title">Tạo mã QR điểm danh</h2><p>Mã do backend HUIT phát hành, tương thích với ứng dụng Flutter.</p></div><button className="rp-icon-button" onClick={() => setOpen(false)} aria-label="Đóng"><X size={18} /></button></header>
         {error && <ErrorPanel message={error} />}
         {qr ? <div className="rp-qr-result"><div className="rp-qr-image"><QRCodeSVG value={qr.qr} size={250} level="M" includeMargin /></div><strong>Phiên điểm danh đang mở</strong><span>Đóng lúc {formatDate(qr.closedAt)}</span><p>Sinh viên mở Flutter, chọn Điểm danh và quét mã này. Vị trí cần được bật trên cả hai thiết bị.</p><button className="rp-secondary-button" onClick={() => stopQr(qr.id)} disabled={loading}>{loading ? 'Đang tắt...' : 'Tắt mã QR để tạo mã mới'}</button></div> : <form onSubmit={createQr}>
-          {loading && !sessions.length ? <LoadingPanel /> : <div className="rp-form-grid"><label className="rp-form-wide">Buổi học<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">Chọn buổi học</option>{sessions.map((session) => <option key={session.classSessionId} value={session.classSessionId}>{session.className || session.classId} · {session.classId} · Buổi {session.classSessionId} · {formatDate(session.startTime)}{session.activeSessionId ? ' · Đang có QR' : ''}</option>)}</select></label><p className="rp-form-hint">QR có hiệu lực {sessions.find((session) => session.classSessionId === sessionId)?.qrDurationMinutes || 15} phút; phạm vi GPS {sessions.find((session) => session.classSessionId === sessionId)?.gpsRadiusMeters || 100} m theo cài đặt. Trình duyệt cần quyền vị trí và trang phải chạy qua HTTPS hoặc localhost.</p>{activeSessionId && <><p className="rp-form-hint">Buổi học đã có mã QR hoạt động. Tắt mã đó trước khi tạo mã mới.</p><button type="button" className="rp-secondary-button" onClick={() => stopQr(activeSessionId)} disabled={loading}>Tắt mã QR đang hoạt động</button></>}</div>}
-          <footer><button type="button" className="rp-secondary-button" onClick={() => setOpen(false)} disabled={loading}>Hủy</button><button className="rp-secondary-button" disabled={loading || !sessionId || Boolean(activeSessionId)}>{loading ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer>
+          {loading && !sessions.length ? <LoadingPanel /> : <div className="rp-form-grid"><label className="rp-form-wide">Buổi học<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">Chọn buổi học</option>{sessions.map((session) => <option key={session.classSessionId} value={session.classSessionId}>{session.className || session.classId} · {session.classId} · Buổi {session.classSessionId} · {formatDate(session.startTime)}{session.activeSessionId ? ' · Đang có QR' : ''}</option>)}</select></label><p className="rp-form-hint">QR có hiệu lực {sessions.find((session) => session.classSessionId === sessionId)?.qrDurationMinutes || 15} phút; phạm vi GPS {sessions.find((session) => session.classSessionId === sessionId)?.gpsRadiusMeters || 100} m theo cài đặt. Trình duyệt cần quyền vị trí và trang phải chạy qua HTTPS hoặc localhost.</p>{startsInFuture && !allowEarlyAttendance && <p className="rp-form-hint">Chưa đến giờ bắt đầu. Quản trị viên chưa cho phép mở điểm danh sớm.</p>}{activeSessionId && <><p className="rp-form-hint">Buổi học đã có mã QR hoạt động. Tắt mã đó trước khi tạo mã mới.</p><button type="button" className="rp-secondary-button" onClick={() => stopQr(activeSessionId)} disabled={loading}>Tắt mã QR đang hoạt động</button></>}</div>}
+            <footer><button type="button" className="rp-secondary-button" onClick={() => setOpen(false)} disabled={loading}>Hủy</button><button className="rp-secondary-button" disabled={loading || !sessionId || Boolean(activeSessionId) || Boolean(startsInFuture && !allowEarlyAttendance)}>{loading ? 'Đang tạo...' : 'Lấy vị trí và tạo QR'}</button></footer>
         </form>}
       </section>
     </div>}
@@ -2258,10 +2272,12 @@ function SettingsView({ darkMode, setDarkMode }) {
   const [scopeId, setScopeId] = useState('');
   const [classes, setClasses] = useState([]);
   const [events, setEvents] = useState([]);
+  const [allowEarlyAttendance, setAllowEarlyAttendance] = useState(false);
   const [parameters, setParameters] = useState({ gpsRadiusMeters: '100', eventRegistrationLockHours: '24', qrDurationMinutes: '15', attendanceThresholdPercent: '100' });
   const [inherit, setInherit] = useState({ gpsRadiusMeters: false, eventRegistrationLockHours: false, qrDurationMinutes: false, attendanceThresholdPercent: false });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingEarlyAttendance, setSavingEarlyAttendance] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const isSpecificScope = (type) => type === 'class' || type === 'event';
@@ -2279,6 +2295,7 @@ function SettingsView({ darkMode, setDarkMode }) {
         ? `?scopeType=${type}&scopeId=${encodeURIComponent(id)}`
         : `?scopeType=${type}`;
       const result = await api(`/api/admin/settings/parameters${query}`);
+      setAllowEarlyAttendance(Boolean(result.global?.allowEarlyAttendance));
       const keys = ['gpsRadiusMeters', 'eventRegistrationLockHours', 'qrDurationMinutes', 'attendanceThresholdPercent'];
       const nextParameters = {};
       const nextInherit = {};
@@ -2352,6 +2369,26 @@ function SettingsView({ darkMode, setDarkMode }) {
     }
   };
 
+  const updateEarlyAttendance = async (enabled) => {
+    setSavingEarlyAttendance(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await api('/api/admin/settings/early-attendance', {
+        method: 'PUT',
+        body: { allowEarlyAttendance: enabled },
+      });
+      setAllowEarlyAttendance(Boolean(result.allowEarlyAttendance));
+      setNotice(enabled
+        ? 'Đã cho phép mở điểm danh trước giờ bắt đầu trên toàn hệ thống.'
+        : 'Đã tắt quyền mở điểm danh trước giờ bắt đầu.');
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : 'Không thể lưu cài đặt mở điểm danh sớm.');
+    } finally {
+      setSavingEarlyAttendance(false);
+    }
+  };
+
   const updateParameter = (key, value) => setParameters((current) => ({ ...current, [key]: value }));
   const toggleInheritance = (key, value) => setInherit((current) => ({ ...current, [key]: value }));
   const parameterField = (key, label, unit, min, max) => (
@@ -2385,6 +2422,18 @@ function SettingsView({ darkMode, setDarkMode }) {
         {isSpecificScope(scopeType) && <SearchableOptionField label={scopeType === 'class' ? 'Lớp học phần' : 'Sự kiện'} options={selectedOptions} value={scopeId} onChange={(id) => { setScopeId(id); loadParameters(scopeType, id); }} />}
       </div>
       {loading ? <LoadingPanel /> : <>
+        <div className="rp-form-grid">
+          <label className="rp-form-wide rp-checkbox-field">
+            <input
+              type="checkbox"
+              checked={allowEarlyAttendance}
+              disabled={savingEarlyAttendance}
+              onChange={(event) => updateEarlyAttendance(event.target.checked)}
+            />
+            <span>Cho phép mở điểm danh trước giờ bắt đầu</span>
+            <small>Áp dụng cho toàn bộ lớp học, sự kiện, giảng viên và nhân viên; phù hợp khi demo.{savingEarlyAttendance ? ' Đang lưu...' : ''}</small>
+          </label>
+        </div>
         <div className="rp-parameter-grid">
           {parameterField('gpsRadiusMeters', 'GPS điểm danh', 'mét', 10, 5000)}
           {!isClassScope(scopeType) && parameterField('eventRegistrationLockHours', 'Khóa đăng ký trước khi sự kiện bắt đầu', 'giờ', 0, 720)}

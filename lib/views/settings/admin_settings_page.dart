@@ -30,10 +30,13 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   bool _inheritAttendanceThreshold = false;
   bool _loading = true;
   bool _saving = false;
+  bool _allowEarlyAttendance = false;
+  bool _updatingEarlyAttendance = false;
   String? _error;
 
   bool get _isSpecificScope => _scopeType == 'class' || _scopeType == 'event';
-  bool get _isClassScope => _scopeType == 'class' || _scopeType == 'all_classes';
+  bool get _isClassScope =>
+      _scopeType == 'class' || _scopeType == 'all_classes';
 
   @override
   void initState() {
@@ -89,22 +92,29 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       if (!mounted) return;
       final overrides = Map<String, dynamic>.from(body['overrides'] as Map);
       final effective = Map<String, dynamic>.from(body['effective'] as Map);
+      final global = Map<String, dynamic>.from(body['global'] as Map);
       setState(() {
-        _inheritGps = _scopeType != 'global' && overrides['gpsRadiusMeters'] == null;
-        _inheritLock = _scopeType != 'global' &&
+        _allowEarlyAttendance = global['allowEarlyAttendance'] == true;
+        _inheritGps =
+            _scopeType != 'global' && overrides['gpsRadiusMeters'] == null;
+        _inheritLock =
+            _scopeType != 'global' &&
             overrides['eventRegistrationLockHours'] == null;
-        _inheritQr = _scopeType != 'global' && overrides['qrDurationMinutes'] == null;
-        _inheritAttendanceThreshold = _scopeType != 'global' &&
+        _inheritQr =
+            _scopeType != 'global' && overrides['qrDurationMinutes'] == null;
+        _inheritAttendanceThreshold =
+            _scopeType != 'global' &&
             overrides['attendanceThresholdPercent'] == null;
-        _gpsController.text = (overrides['gpsRadiusMeters'] ??
-                effective['gpsRadiusMeters'])
-            .toString();
-        _lockController.text = (overrides['eventRegistrationLockHours'] ??
-                effective['eventRegistrationLockHours'])
-            .toString();
-        _qrController.text = (overrides['qrDurationMinutes'] ??
-                effective['qrDurationMinutes'])
-            .toString();
+        _gpsController.text =
+            (overrides['gpsRadiusMeters'] ?? effective['gpsRadiusMeters'])
+                .toString();
+        _lockController.text =
+            (overrides['eventRegistrationLockHours'] ??
+                    effective['eventRegistrationLockHours'])
+                .toString();
+        _qrController.text =
+            (overrides['qrDurationMinutes'] ?? effective['qrDurationMinutes'])
+                .toString();
         _attendanceThresholdController.text =
             (overrides['attendanceThresholdPercent'] ??
                     effective['attendanceThresholdPercent'])
@@ -124,8 +134,12 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     final gps = int.tryParse(_gpsController.text.trim());
     final lock = int.tryParse(_lockController.text.trim());
     final qr = int.tryParse(_qrController.text.trim());
-    final attendanceThreshold = int.tryParse(_attendanceThresholdController.text.trim());
-    if (gps == null || qr == null || attendanceThreshold == null ||
+    final attendanceThreshold = int.tryParse(
+      _attendanceThresholdController.text.trim(),
+    );
+    if (gps == null ||
+        qr == null ||
+        attendanceThreshold == null ||
         (!_isClassScope && lock == null)) {
       _showMessage('Vui lòng nhập tham số bằng số nguyên.');
       return;
@@ -144,11 +158,11 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           'eventRegistrationLockHours': _isClassScope
               ? null
               : _scopeType != 'global' && _inheritLock
-                  ? null
-                  : lock,
+              ? null
+              : lock,
           'qrDurationMinutes': _scopeType != 'global' && _inheritQr ? null : qr,
-          'attendanceThresholdPercent': _scopeType != 'global' &&
-                  _inheritAttendanceThreshold
+          'attendanceThresholdPercent':
+              _scopeType != 'global' && _inheritAttendanceThreshold
               ? null
               : attendanceThreshold,
         },
@@ -164,8 +178,33 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     }
   }
 
+  Future<void> _setEarlyAttendance(bool enabled) async {
+    setState(() => _updatingEarlyAttendance = true);
+    try {
+      final body = await _client.put(
+        ApiEndpoints.adminEarlyAttendance,
+        data: {'allowEarlyAttendance': enabled},
+      );
+      if (!mounted) return;
+      setState(
+        () => _allowEarlyAttendance = body['allowEarlyAttendance'] == true,
+      );
+      _showMessage(
+        enabled
+            ? 'Đã cho phép mở điểm danh trước giờ bắt đầu trên toàn hệ thống.'
+            : 'Đã tắt quyền mở điểm danh trước giờ bắt đầu.',
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _updatingEarlyAttendance = false);
+    }
+  }
+
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _changeScopeType(String? value) {
@@ -194,7 +233,10 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Cài đặt', style: AppTextStyles.displayLg(colors.foreground)),
+              Text(
+                'Cài đặt',
+                style: AppTextStyles.displayLg(colors.foreground),
+              ),
               const SizedBox(height: 5),
               Text(
                 'Quản lý giao diện và tham số vận hành.',
@@ -216,7 +258,10 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                           : Icons.light_mode_outlined,
                       color: colors.primary,
                     ),
-                    title: Text('Chế độ tối', style: AppTextStyles.bodyMd(colors.foreground)),
+                    title: Text(
+                      'Chế độ tối',
+                      style: AppTextStyles.bodyMd(colors.foreground),
+                    ),
                     subtitle: Text(
                       'Áp dụng trên toàn bộ ứng dụng.',
                       style: AppTextStyles.bodySm(colors.mutedForeground),
@@ -240,19 +285,45 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
 
   Widget _buildParameters(AppColors colors) {
     if (_loading && _classes.isEmpty && _events.isEmpty) {
-      return const Center(child: Padding(
-        padding: EdgeInsets.all(24),
-        child: CircularProgressIndicator(),
-      ));
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: CircularProgressIndicator(),
+        ),
+      );
     }
     final options = _scopeType == 'class'
         ? _classes
         : _scopeType == 'event'
-            ? _events
-            : <Map<String, dynamic>>[];
+        ? _events
+        : <Map<String, dynamic>>[];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          value: _allowEarlyAttendance,
+          onChanged: _loading || _updatingEarlyAttendance
+              ? null
+              : _setEarlyAttendance,
+          title: Text(
+            'Cho phép mở điểm danh trước giờ bắt đầu',
+            style: AppTextStyles.bodyMd(colors.foreground),
+          ),
+          subtitle: Text(
+            'Áp dụng cho tất cả lớp học, sự kiện, giảng viên và nhân viên; phù hợp khi demo.',
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+          secondary: _updatingEarlyAttendance
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(Icons.schedule_outlined, color: colors.primary),
+        ),
+        const Divider(),
+        const SizedBox(height: 8),
         Text(
           'Chọn toàn hệ thống, toàn bộ lớp/sự kiện hoặc cấu hình riêng. Cấu hình riêng được ưu tiên hơn phạm vi rộng.',
           style: AppTextStyles.bodySm(colors.mutedForeground),
@@ -263,9 +334,15 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           decoration: const InputDecoration(labelText: 'Phạm vi cài đặt'),
           items: const [
             DropdownMenuItem(value: 'global', child: Text('Toàn hệ thống')),
-            DropdownMenuItem(value: 'all_classes', child: Text('Toàn bộ lớp học phần')),
+            DropdownMenuItem(
+              value: 'all_classes',
+              child: Text('Toàn bộ lớp học phần'),
+            ),
             DropdownMenuItem(value: 'class', child: Text('Một lớp học phần')),
-            DropdownMenuItem(value: 'all_events', child: Text('Toàn bộ sự kiện')),
+            DropdownMenuItem(
+              value: 'all_events',
+              child: Text('Toàn bộ sự kiện'),
+            ),
             DropdownMenuItem(value: 'event', child: Text('Một sự kiện')),
           ],
           onChanged: _changeScopeType,
@@ -369,7 +446,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         Align(
           alignment: Alignment.centerRight,
           child: FilledButton.icon(
-            onPressed: _loading || _saving || (_isSpecificScope && _scopeId.isEmpty)
+            onPressed:
+                _loading || _saving || (_isSpecificScope && _scopeId.isEmpty)
                 ? null
                 : _save,
             icon: _saving
@@ -401,7 +479,12 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       children: [
         Row(
           children: [
-            Expanded(child: Text(label, style: AppTextStyles.bodyMd(colors.foreground))),
+            Expanded(
+              child: Text(
+                label,
+                style: AppTextStyles.bodyMd(colors.foreground),
+              ),
+            ),
             SizedBox(
               width: 150,
               child: TextFormField(

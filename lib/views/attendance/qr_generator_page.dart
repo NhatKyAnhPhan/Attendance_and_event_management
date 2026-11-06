@@ -23,6 +23,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
   DateTime? _expiresAt;
   bool _loading = true;
   bool _creating = false;
+  bool _allowEarlyAttendance = false;
   String? _error;
   Position? _lecturerPosition;
   int? _radiusMeters;
@@ -40,6 +41,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
       final items = body['items'];
       if (!mounted) return;
       setState(() {
+        _allowEarlyAttendance = body['allowEarlyAttendance'] == true;
         _sessions = items is List
             ? items
                   .map((item) => Map<String, dynamic>.from(item as Map))
@@ -348,11 +350,20 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
       }
     }
     final activeSessionId = selectedSession?['activeSessionId']?.toString();
+    final startsInFuture =
+        selectedSession != null && _isSessionInFuture(selectedSession);
     final details = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (selectedSession != null)
           _buildSelectedSession(colors, selectedSession),
+        if (startsInFuture && !_allowEarlyAttendance) ...[
+          const SizedBox(height: 10),
+          Text(
+            'Chưa đến giờ bắt đầu. Quản trị viên chưa cho phép mở điểm danh sớm.',
+            style: TextStyle(color: colors.warning),
+          ),
+        ],
         if (_error != null) ...[
           const SizedBox(height: 14),
           Text(_error!, style: TextStyle(color: colors.danger)),
@@ -454,6 +465,7 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
                 _creating ||
                     _qrToken != null ||
                     _selectedClassSession == null ||
+                    (startsInFuture && !_allowEarlyAttendance) ||
                     (activeSessionId != null && activeSessionId.isNotEmpty)
                 ? null
                 : _createQr,
@@ -473,6 +485,11 @@ class _QrGeneratorPageState extends State<QrGeneratorPage> {
         ],
       ),
     );
+  }
+
+  bool _isSessionInFuture(Map<String, dynamic> session) {
+    final startTime = DateTime.tryParse(session['startTime']?.toString() ?? '');
+    return startTime != null && startTime.isAfter(DateTime.now());
   }
 
   Widget _buildSelectedSession(AppColors colors, Map<String, dynamic> session) {

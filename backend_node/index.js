@@ -731,6 +731,7 @@ async function ensureSystemParametersTable() {
        event_registration_lock_hours INT NULL,
        qr_duration_minutes INT NULL,
        attendance_threshold_percent INT NULL,
+       allow_early_attendance TINYINT(1) NOT NULL DEFAULT 0,
        updated_by VARCHAR(30) NULL,
        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
          ON UPDATE CURRENT_TIMESTAMP,
@@ -741,12 +742,17 @@ async function ensureSystemParametersTable() {
   if (!columns.some((column) => column.Field === 'attendance_threshold_percent')) {
     await pool.query('ALTER TABLE system_parameters ADD COLUMN attendance_threshold_percent INT NULL AFTER qr_duration_minutes');
   }
+  if (!columns.some((column) => column.Field === 'allow_early_attendance')) {
+    await pool.query(
+      'ALTER TABLE system_parameters ADD COLUMN allow_early_attendance TINYINT(1) NOT NULL DEFAULT 0 AFTER attendance_threshold_percent',
+    );
+  }
   await pool.execute(
     `INSERT IGNORE INTO system_parameters
        (scope_type, scope_id, gps_radius_meters,
         event_registration_lock_hours, qr_duration_minutes,
-        attendance_threshold_percent)
-     VALUES ('global', '', 100, 24, 15, 100)`,
+        attendance_threshold_percent, allow_early_attendance)
+     VALUES ('global', '', 100, 24, 15, 100, 0)`,
   );
 }
 
@@ -2764,6 +2770,7 @@ const defaultAttendanceParameters = {
   eventRegistrationLockHours: 24,
   qrDurationMinutes: 15,
   attendanceThresholdPercent: 100,
+  allowEarlyAttendance: false,
 };
 
 async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = '', executor = pool) {
@@ -2772,7 +2779,8 @@ async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = 
       `SELECT gps_radius_meters AS gpsRadiusMeters,
               event_registration_lock_hours AS eventRegistrationLockHours,
               qr_duration_minutes AS qrDurationMinutes,
-              attendance_threshold_percent AS attendanceThresholdPercent
+              attendance_threshold_percent AS attendanceThresholdPercent,
+              allow_early_attendance AS allowEarlyAttendance
        FROM system_parameters WHERE scope_type = ? AND scope_id = ? LIMIT 1`,
       [type, id],
     );
@@ -2784,6 +2792,9 @@ async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = 
     ...(globalRow || {}),
     attendanceThresholdPercent: Number(
       globalRow?.attendanceThresholdPercent ?? defaultAttendanceParameters.attendanceThresholdPercent,
+    ),
+    allowEarlyAttendance: Boolean(
+      Number(globalRow?.allowEarlyAttendance ?? defaultAttendanceParameters.allowEarlyAttendance),
     ),
   };
   const isGroupScope = ['all_classes', 'all_events'].includes(scopeType);
@@ -2823,6 +2834,7 @@ async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = 
       attendanceThresholdPercent:
         overrides.attendanceThresholdPercent
           ?? groupRow?.attendanceThresholdPercent ?? global.attendanceThresholdPercent,
+      allowEarlyAttendance: global.allowEarlyAttendance,
     };
   return { global, overrides, effective };
 }
@@ -3295,7 +3307,11 @@ app.get('/api/attendance/sessions', requireAuth, requireRole('Quản trị viên
       row.gpsRadiusMeters = parameters.gpsRadiusMeters;
       row.qrDurationMinutes = parameters.qrDurationMinutes;
     }
-    return response.json({ items: rows });
+    const { global } = await getEffectiveAttendanceParameters();
+    return response.json({
+      items: rows,
+      allowEarlyAttendance: global.allowEarlyAttendance,
+    });
   } catch (error) {
     console.error('Attendance sessions error:', error.message);
     return response.status(500).json({ message: 'Không thể tải phiên điểm danh.' });
@@ -3786,6 +3802,7 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
     await closeExpiredClassAttendanceSessions();
     const [[classSession]] = await pool.execute(
       `SELECT b.Mabuoi AS id, b.Malop AS classId,
+              b.Thoigianbatdau > NOW() AS startsInFuture,
               lhp.Trangthailop AS classStatus,
               (lhp.Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived,
               COUNT(
@@ -3812,6 +3829,11 @@ app.post('/api/attendance/sessions', requireAuth, requireRole('Quản trị viê
     const { effective: classParameters } = await getEffectiveAttendanceParameters(
       'class', classSession.classId,
     );
+    if (!classParameters.allowEarlyAttendance && Number(classSession.startsInFuture)) {
+      return response.status(409).json({
+        message: 'Chưa đến giờ bắt đầu buổi học nên chưa thể mở điểm danh.',
+      });
+    }
     const duration = Number(classParameters.qrDurationMinutes);
     const radiusMeters = Number(classParameters.gpsRadiusMeters) || classAttendanceRadiusMeters;
     const [[activeSession]] = await pool.execute(
@@ -4661,6 +4683,8 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
   try {
     const [[event]] = await pool.execute(
       `SELECT sk.Masukien AS id, sk.Tensukien AS name,
+              sk.Thoigianbatdau AS startTime,
+              sk.Thoigianbatdau > NOW() AS startsInFuture,
               sk.Thoigianketthuc AS endTime,
               sk.Trangthaisukien AS status,
               COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,
@@ -4683,7 +4707,7 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
     }
     const [periods] = await pool.execute(
       `SELECT period_id AS id, name, starts_at AS startTime,
-              ends_at AS endTime
+              starts_at > NOW() AS startsInFuture, ends_at AS endTime
        FROM event_attendance_periods
        WHERE event_id = ?
        ORDER BY display_order, starts_at`,
@@ -4710,6 +4734,14 @@ app.post('/api/organizer/events/:eventId/attendance/qr', requireAuth, requireRol
     const { effective: eventParameters } = await getEffectiveAttendanceParameters(
       'event', event.id,
     );
+    const attendanceStartsInFuture = period
+      ? Number(period.startsInFuture)
+      : Number(event.startsInFuture);
+    if (!eventParameters.allowEarlyAttendance && attendanceStartsInFuture) {
+      return response.status(409).json({
+        message: 'Chưa đến giờ bắt đầu sự kiện hoặc khung điểm danh nên chưa thể mở điểm danh.',
+      });
+    }
     const periodEndsAt = new Date(period?.endTime ?? event.endTime);
     const configuredQrEndsAt = new Date(
       Date.now() + Number(eventParameters.qrDurationMinutes) * 60 * 1000,
@@ -7056,6 +7088,32 @@ app.get('/api/admin/events', requireAuth, requireRole('Quản trị viên', 'adm
   } catch (error) {
     console.error('Admin events error:', error.message);
     return response.status(500).json({ message: 'Không thể tải sự kiện.' });
+  }
+});
+
+app.put('/api/admin/settings/early-attendance', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  const { allowEarlyAttendance } = request.body || {};
+  if (typeof allowEarlyAttendance !== 'boolean') {
+    return response.status(400).json({
+      message: 'Trạng thái cho phép mở điểm danh sớm không hợp lệ.',
+    });
+  }
+  try {
+    await pool.execute(
+      `INSERT INTO system_parameters
+         (scope_type, scope_id, allow_early_attendance, updated_by)
+       VALUES ('global', '', ?, ?)
+       ON DUPLICATE KEY UPDATE
+         allow_early_attendance = VALUES(allow_early_attendance),
+         updated_by = VALUES(updated_by)`,
+      [allowEarlyAttendance ? 1 : 0, request.auth.sub],
+    );
+    return response.json({ allowEarlyAttendance });
+  } catch (error) {
+    console.error('Save early attendance setting error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể lưu cài đặt mở điểm danh sớm.',
+    });
   }
 });
 
