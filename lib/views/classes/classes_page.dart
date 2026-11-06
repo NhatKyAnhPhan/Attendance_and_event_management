@@ -714,12 +714,23 @@ class _ClassesPageState extends State<ClassesPage> {
         final colors = AppColors.of(
           Theme.of(dialogContext).brightness == Brightness.dark,
         );
+        final viewport = MediaQuery.sizeOf(dialogContext);
+        final compact = viewport.width <= 700;
         return AlertDialog(
+          insetPadding: EdgeInsets.symmetric(
+            horizontal: compact ? 12 : 40,
+            vertical: compact ? 12 : 24,
+          ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
           surfaceTintColor: Colors.transparent,
-          titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+          titlePadding: EdgeInsets.fromLTRB(
+            compact ? 16 : 24,
+            compact ? 16 : 22,
+            compact ? 16 : 24,
+            0,
+          ),
           title: Row(
             children: [
               Container(
@@ -733,125 +744,144 @@ class _ClassesPageState extends State<ClassesPage> {
                   color: colors.secondaryForeground,
                 ),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: compact ? 10 : 14),
               Expanded(
                 child: Text(
                   item.name,
-                  style: AppTextStyles.displayMd(colors.foreground),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.displayMd(colors.foreground)
+                      .copyWith(fontSize: compact ? 18 : null),
                 ),
               ),
             ],
           ),
-          contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
+          contentPadding: EdgeInsets.fromLTRB(
+            compact ? 16 : 24,
+            18,
+            compact ? 16 : 24,
+            8,
+          ),
           content: SizedBox(
-            width: 760,
-            height: MediaQuery.sizeOf(dialogContext).height * 0.74,
+            width: compact ? (viewport.width - 56).clamp(240.0, 760.0) : 760,
+            height: viewport.height * (compact ? 0.58 : 0.74),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: colors.muted.withValues(alpha: 0.55),
-                    border: Border.all(color: colors.border),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final twoColumns = constraints.maxWidth >= 600;
-                      final tileWidth = twoColumns
-                          ? (constraints.maxWidth - 12) / 2
-                          : constraints.maxWidth;
-                      return Wrap(
-                        spacing: 12,
-                        runSpacing: 14,
-                        children: [
-                          _classInfoTile(
-                            colors,
-                            Icons.tag_outlined,
-                            'Mã lớp',
-                            item.code,
-                            width: tileWidth,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.person_outline_rounded,
-                            'Giảng viên',
-                            item.lecturerName,
-                            width: tileWidth,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.calendar_month_outlined,
-                            'Học kỳ',
-                            item.semester,
-                            width: tileWidth,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.schedule_outlined,
-                            'Thời gian bắt đầu',
-                            _dateTimeLabel(item.startTime),
-                            width: tileWidth,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.menu_book_outlined,
-                            'Môn học',
-                            item.subjectCode,
-                            width: tileWidth,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.account_balance_outlined,
-                            'Bộ môn',
-                            item.majorName,
-                            width: tileWidth,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.groups_outlined,
-                            'Khóa',
-                            item.cohortCode,
-                            width: tileWidth,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.info_outline_rounded,
-                            'Trạng thái',
-                            item.status,
-                            width: tileWidth,
-                            badge: true,
-                          ),
-                          _classInfoTile(
-                            colors,
-                            Icons.people_outline_rounded,
-                            'Sĩ số',
-                            '${item.studentCount}',
-                            width: tileWidth,
-                          ),
-                        ],
-                      );
-                    },
+                Expanded(
+                  flex: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: colors.muted.withValues(alpha: 0.55),
+                      border: Border.all(color: colors.border),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: SingleChildScrollView(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final twoColumns = constraints.maxWidth >= 600;
+                          final tileWidth = twoColumns
+                              ? (constraints.maxWidth - 12) / 2
+                              : constraints.maxWidth;
+                          return Wrap(
+                            spacing: 12,
+                            runSpacing: 14,
+                            children: [
+                              _classInfoTile(
+                                colors,
+                                Icons.tag_outlined,
+                                'Mã lớp',
+                                item.code,
+                                width: tileWidth,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.person_outline_rounded,
+                                'Giảng viên',
+                                item.lecturerName,
+                                width: tileWidth,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.calendar_month_outlined,
+                                'Học kỳ',
+                                item.semester,
+                                width: tileWidth,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.schedule_outlined,
+                                'Thời gian bắt đầu',
+                                _dateTimeLabel(item.startTime),
+                                width: tileWidth,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.menu_book_outlined,
+                                'Môn học',
+                                item.subjectCode,
+                                width: tileWidth,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.account_balance_outlined,
+                                'Bộ môn',
+                                item.majorName,
+                                width: tileWidth,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.groups_outlined,
+                                'Khóa',
+                                item.cohortCode,
+                                width: tileWidth,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.info_outline_rounded,
+                                'Trạng thái',
+                                item.status,
+                                width: tileWidth,
+                                badge: true,
+                              ),
+                              _classInfoTile(
+                                colors,
+                                Icons.people_outline_rounded,
+                                'Sĩ số',
+                                '${item.studentCount}',
+                                width: tileWidth,
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 18),
+                SizedBox(height: compact ? 12 : 18),
                 Row(
                   children: [
                     Icon(
                       Icons.people_alt_outlined,
-                      size: 20,
+                      size: compact ? 18 : 20,
                       color: colors.primary,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Danh sách sinh viên (${item.studentCount})',
-                      style: AppTextStyles.displaySm(colors.foreground),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Danh sách sinh viên (${item.studentCount})',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.displaySm(colors.foreground)
+                            .copyWith(fontSize: compact ? 16 : null),
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Expanded(
+                  flex: 4,
                   child: FutureBuilder(
                     future: students,
                     builder: (context, snapshot) {
@@ -878,7 +908,12 @@ class _ClassesPageState extends State<ClassesPage> {
               ],
             ),
           ),
-          actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
+          actionsPadding: EdgeInsets.fromLTRB(
+            compact ? 16 : 24,
+            8,
+            compact ? 16 : 24,
+            compact ? 12 : 18,
+          ),
           actions: [
             FilledButton.tonal(
               onPressed: () => Navigator.pop(dialogContext),

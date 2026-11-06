@@ -1154,7 +1154,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             height: 48,
             child: ElevatedButton(
               onPressed: _reset,
-              child: const Text('Quét lại'),
+              child: const Text('Xác nhận'),
             ),
           ),
         ],

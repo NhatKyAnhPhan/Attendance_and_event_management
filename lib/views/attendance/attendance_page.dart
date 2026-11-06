@@ -48,7 +48,15 @@ class _AttendancePageState extends State<AttendancePage> {
         role == Role.organizer &&
         (sourceRole.isEmpty || RoleX.isEmployee(sourceRole));
     if (isEmployee) {
-      return EventAttendanceSection(key: _eventAttendanceKey);
+      return RefreshIndicator(
+        onRefresh: () =>
+            _eventAttendanceKey.currentState?.load() ?? Future<void>.value(),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          children: [EventAttendanceSection(key: _eventAttendanceKey)],
+        ),
+      );
     }
     final controller = Get.put(AttendanceController());
     final canCreateSession = role == Role.admin || role == Role.lecturer;
@@ -440,7 +448,9 @@ class _AttendancePageState extends State<AttendancePage> {
       final classId = session['classId']?.toString() ?? '';
       if (classId.isEmpty) continue;
       final className = session['className']?.toString().trim() ?? '';
-      if (className.isNotEmpty) classNames.putIfAbsent(classId, () => className);
+      if (className.isNotEmpty) {
+        classNames.putIfAbsent(classId, () => className);
+      }
       final counts = grouped.putIfAbsent(
         classId,
         () => {'present': 0, 'late': 0, 'absent': 0},

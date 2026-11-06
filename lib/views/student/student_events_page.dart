@@ -464,14 +464,29 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
           event.eventStatus,
         ].any((value) => value.toLowerCase().contains(query));
       }).toList();
-      final filteredEvents = searchedEvents.where((event) {
-        return switch (_statusFilter) {
-          'Sắp diễn ra' => event.eventStatus == 'Sắp diễn ra',
-          'Đang diễn ra' => event.eventStatus == 'Đang diễn ra',
-          'Đã kết thúc' => event.isEnded,
-          _ => true,
-        };
-      }).toList();
+      final filteredEvents =
+          searchedEvents.where((event) {
+            return switch (_statusFilter) {
+              'Sắp diễn ra' => event.eventStatus == 'Sắp diễn ra',
+              'Đang diễn ra' => event.eventStatus == 'Đang diễn ra',
+              'Đã kết thúc' => event.isEnded,
+              _ => true,
+            };
+          }).toList()..sort((a, b) {
+            int rank(StudentEventSummary event) {
+              if (event.eventStatus == 'Sắp diễn ra') return 0;
+              if (event.eventStatus == 'Đang diễn ra') return 1;
+              return 2;
+            }
+
+            final statusOrder = rank(a).compareTo(rank(b));
+            if (statusOrder != 0) return statusOrder;
+            final aStart = a.startTime;
+            final bStart = b.startTime;
+            if (aStart == null) return bStart == null ? 0 : 1;
+            if (bStart == null) return -1;
+            return aStart.compareTo(bStart);
+          });
       if (controller.loading.value && events.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -674,10 +689,10 @@ class _EventCard extends StatelessWidget {
                 AppBadge(
                   label: event.eventStatus,
                   status: event.isEnded
-                      ? BadgeStatus.blue
+                      ? BadgeStatus.absent
                       : event.eventStatus == 'Đang diễn ra'
                       ? BadgeStatus.late
-                      : BadgeStatus.pending,
+                      : BadgeStatus.present,
                 ),
               if (event.registered && event.registeredAt != null)
                 Text(

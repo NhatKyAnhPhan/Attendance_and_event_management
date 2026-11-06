@@ -424,34 +424,35 @@ class _AuthPageState extends State<AuthPage> {
         ),
         const SizedBox(height: 24),
         Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(6, (i) {
-            return Padding(
-              padding: EdgeInsets.only(right: i < 5 ? 10 : 0),
-              child: SizedBox(
-                width: 46,
-                height: 54,
-                child: TextField(
-                  controller: _otpCtrls[i],
-                  focusNode: _otpFocus[i],
-                  textAlign: TextAlign.center,
-                  keyboardType: TextInputType.number,
-                  maxLength: 1,
-                  style: AppTextStyles.mono(c.foreground, fontSize: 20),
-                  decoration: InputDecoration(
-                    counterText: '',
-                    filled: true,
-                    fillColor: c.card,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: c.border),
+          children: List.generate(
+            6,
+            (i) => Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(right: i < 5 ? 8 : 0),
+                child: SizedBox(
+                  height: 54,
+                  child: TextField(
+                    controller: _otpCtrls[i],
+                    focusNode: _otpFocus[i],
+                    textAlign: TextAlign.center,
+                    keyboardType: TextInputType.number,
+                    maxLength: 1,
+                    style: AppTextStyles.mono(c.foreground, fontSize: 20),
+                    decoration: InputDecoration(
+                      counterText: '',
+                      filled: true,
+                      fillColor: c.card,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: c.border),
+                      ),
                     ),
+                    onChanged: (v) => _handleOtpInput(i, v),
                   ),
-                  onChanged: (v) => _handleOtpInput(i, v),
                 ),
               ),
-            );
-          }),
+            ),
+          ),
         ),
         if (_error.isNotEmpty) ...[
           const SizedBox(height: 8),

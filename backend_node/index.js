@@ -5063,12 +5063,12 @@ app.post('/api/organizer/events/:eventId/certificates/issue', requireAuth, requi
         if (certificates.length) {
           await connection.execute(
             `UPDATE ChungNhan
-             SET Trangthaichungnhan = 'Đã cấp', Ngaycap = ?,
+             SET Trangthaichungnhan = 'Đã cấp', Ngaycap = NOW(),
                  SignatureSnapshot = ?, OrganizerSignatureSnapshot = ?,
                  SignatureNameSnapshot = ?, OrganizerSignatureNameSnapshot = ?,
                  SignatureSnapshotCaptured = 1, SignatureSnapshotVersion = 1
              WHERE Machungnhan = ?`,
-            [event.endTime, signatureSnapshot.signatureImage,
+            [signatureSnapshot.signatureImage,
               signatureSnapshot.organizerSignatureImage,
               signatureSnapshot.signatureName,
               signatureSnapshot.organizerSignatureName, certificateId],
@@ -5081,8 +5081,8 @@ app.post('/api/organizer/events/:eventId/certificates/issue', requireAuth, requi
               SignatureSnapshotCaptured, OrganizerSignatureSnapshot,
               SignatureNameSnapshot, OrganizerSignatureNameSnapshot,
               SignatureSnapshotVersion)
-             VALUES (?, ?, ?, ?, ?, 'Đã cấp', 'Chưa gửi', ?, 1, ?, ?, ?, 1)`,
-            [certificateId, attendee.studentId, event.id, event.endTime,
+             VALUES (?, ?, ?, NOW(), ?, 'Đã cấp', 'Chưa gửi', ?, 1, ?, ?, ?, 1)`,
+            [certificateId, attendee.studentId, event.id,
               `Giấy chứng nhận tham gia sự kiện ${event.name}`,
               signatureSnapshot.signatureImage,
               signatureSnapshot.organizerSignatureImage,
@@ -5298,7 +5298,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
             `INSERT INTO ChungNhan
               (Machungnhan, Masv, Masukien, Ngaycap, Noidung,
                Trangthaichungnhan, EmailTrangthai)
-             VALUES (?, ?, ?, NULL, ?, 'Chưa cấp', 'Đang gửi')`,
+             VALUES (?, ?, ?, NOW(), ?, 'Chưa cấp', 'Đang gửi')`,
             [
               certificateId,
               attendee.studentId,
@@ -5361,7 +5361,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
                Ngaycap = CASE
                  WHEN Trangthaichungnhan = 'Đã cấp' AND Ngaycap IS NOT NULL
                    THEN Ngaycap
-                 ELSE NULL
+                 ELSE COALESCE(Ngaycap, NOW())
                END
            WHERE Machungnhan = ?`,
           [signatureSnapshot.signatureImage,
@@ -5940,20 +5940,10 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         'SELECT COUNT(*) AS total FROM DangKySuKien WHERE Masukien = ?',
         [request.params.eventId],
       );
-      const hasRegistrations = Number(registrationCount.total) > 0;
-      if (hasRegistrations && (
-        new Date(existing.startTime).valueOf() !== parsedStart.valueOf()
-        || new Date(existing.endTime).valueOf() !== parsedEnd.valueOf()
-      )) {
+      if (Number(registrationCount.total) > 0) {
         await connection.rollback();
         return response.status(409).json({
-          message: 'Không thể đổi lịch sự kiện sau khi đã có người đăng ký.',
-        });
-      }
-      if (parsedCapacity < Number(registrationCount.total)) {
-        await connection.rollback();
-        return response.status(409).json({
-          message: 'Sức chứa không thể thấp hơn số người đã đăng ký.',
+          message: 'Không thể chỉnh sửa sự kiện vì đã có sinh viên đăng ký.',
         });
       }
       const [result] = await connection.execute(

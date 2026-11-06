@@ -1822,6 +1822,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       if (!context.mounted) return;
       final issued = result['issued'] as int? ?? 0;
       final skipped = result['skipped'] as int? ?? 0;
+      final message = result['message']?.toString().trim();
       final failures = result['failures'] is List
           ? (result['failures'] as List)
                 .whereType<Map>()
@@ -1834,7 +1835,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         builder: (dialogContext) => AlertDialog(
           title: const Text('Kết quả cấp trong app'),
           content: Text(
-            'Đã cấp: $issued\nĐã có trước đó: $skipped\nThất bại: ${failures.length}${failures.isEmpty ? '' : '\n${failures.join('\n')}'}',
+            [
+              if (message != null && message.isNotEmpty) message,
+              'Đã cấp: $issued',
+              'Đã có trước đó: $skipped',
+              'Thất bại: ${failures.length}',
+              if (failures.isNotEmpty) failures.join('\n'),
+            ].join('\n'),
           ),
           actions: [
             TextButton(
