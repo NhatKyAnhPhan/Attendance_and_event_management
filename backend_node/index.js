@@ -92,7 +92,7 @@ function createCertificatePdfForRequest(request, certificate) {
     || `${request.protocol}://${request.get('host')}`
   ).replace(/\/+$/, '');
   const verificationUrl =
-    `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificate.certificateId)}`;
+    `${publicBaseUrl}/certificates/${encodeURIComponent(certificate.certificateId)}`;
 
   return createCertificatePdf({
     studentName: certificate.studentName,
@@ -116,6 +116,129 @@ function createCertificatePdfForRequest(request, certificate) {
       : null,
     deanName: certificate.deanName || '',
   });
+}
+
+async function findPublicCertificate(certificateId) {
+  const [[certificate]] = await pool.execute(
+    `SELECT cn.Machungnhan AS certificateId,
+            COALESCE(nd.Hoten, cn.Masv) AS studentName,
+            cn.Masv AS studentId, sk.Tensukien AS eventName,
+            sk.Thoigianbatdau AS startTime,
+            sk.Thoigianketthuc AS endTime, sk.Diadiem AS location,
+            cn.Ngaycap AS issuedAt, cn.Noidung AS content,
+            cn.SignatureSnapshot AS signatureImage,
+            cn.OrganizerSignatureSnapshot AS organizerSignatureImage,
+            cn.SignatureNameSnapshot AS signatureName,
+            cn.OrganizerSignatureNameSnapshot AS organizerSignatureName,
+            CASE
+              WHEN cn.Trangthaichungnhan = 'Đã cấp' AND cn.Ngaycap IS NOT NULL THEN 'Đã cấp'
+              WHEN cn.EmailTrangthai = 'Đã gửi' THEN 'Đã gửi qua email'
+              ELSE cn.Trangthaichungnhan
+            END AS status
+     FROM ChungNhan cn
+     INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
+     LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
+     WHERE cn.Machungnhan = ?
+       AND ((cn.Trangthaichungnhan = 'Đã cấp' AND cn.Ngaycap IS NOT NULL)
+         OR cn.EmailTrangthai = 'Đã gửi')
+     LIMIT 1`,
+    [certificateId],
+  );
+  return certificate;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character]);
+}
+
+function formatCertificateDate(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }).format(date);
+}
+
+function renderCertificatePage(certificate) {
+  const certificateId = encodeURIComponent(certificate.certificateId);
+  const pdfUrl = `/api/certificates/${certificateId}/pdf`;
+  const details = [
+    ['Người nhận', certificate.studentName],
+    ['Mã sinh viên', certificate.studentId],
+    ['Sự kiện', certificate.eventName],
+    ['Thời gian', [
+      formatCertificateDate(certificate.startTime),
+      formatCertificateDate(certificate.endTime),
+    ].filter(Boolean).join(' - ')],
+    ['Địa điểm', certificate.location],
+    ['Mã chứng nhận', certificate.certificateId],
+    ['Ngày cấp', formatCertificateDate(certificate.issuedAt)],
+    ['Trạng thái', certificate.status],
+  ].filter(([, value]) => value);
+  const detailRows = details.map(([label, value]) => (
+    `<div class="detail"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`
+  )).join('');
+
+  return `<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Xác minh chứng nhận ${escapeHtml(certificate.certificateId)}</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; color: #172b3a; background: #f3f6f5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px 16px; }
+    main { max-width: 900px; margin: 0 auto; }
+    header { padding: 22px 24px; background: #176b58; color: white; border-radius: 8px 8px 0 0; }
+    h1 { margin: 0; font-size: 24px; }
+    .status { margin: 8px 0 0; }
+    section { padding: 20px 24px; background: white; border: 1px solid #dce5e1; border-top: 0; }
+    dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 0; }
+    .detail { min-width: 0; }
+    dt { color: #5c7069; font-size: 13px; }
+    dd { margin: 4px 0 0; overflow-wrap: anywhere; font-weight: 600; }
+    .pdf-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    h2 { margin: 0; font-size: 19px; }
+    a { color: #075e9b; font-weight: 600; }
+    iframe { display: block; width: 100%; height: min(72vh, 850px); min-height: 480px; margin-top: 16px; border: 1px solid #dce5e1; }
+    @media (max-width: 600px) {
+      body { padding: 12px 8px; }
+      header, section { padding: 18px 16px; }
+      h1 { font-size: 21px; }
+      dl { grid-template-columns: 1fr; gap: 12px; }
+      .pdf-heading { align-items: flex-start; flex-direction: column; }
+      iframe { min-height: 55vh; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Chứng nhận hợp lệ</h1>
+      <p class="status">${escapeHtml(certificate.status)}</p>
+    </header>
+    <section aria-label="Thông tin chứng nhận"><dl>${detailRows}</dl></section>
+    <section>
+      <div class="pdf-heading">
+        <h2>Chứng nhận PDF</h2>
+        <a href="${pdfUrl}?download=1">Tải PDF</a>
+      </div>
+      <iframe title="Bản PDF chứng nhận" src="${pdfUrl}"></iframe>
+    </section>
+  </main>
+</body>
+</html>`;
 }
 
 function certificateSignatureSnapshot(certificate) {
@@ -5065,7 +5188,7 @@ app.post('/api/organizer/events/:eventId/certificates/send', requireAuth, requir
           : await getCertificateSignatureSettings(connection);
 
         const verificationUrl =
-          `${publicBaseUrl}/api/certificates/${encodeURIComponent(certificateId)}`;
+          `${publicBaseUrl}/certificates/${encodeURIComponent(certificateId)}`;
         const pdf = await createCertificatePdf({
           studentName: attendee.studentName,
           studentId: attendee.studentId,
@@ -5858,35 +5981,46 @@ app.delete('/api/organizer/events/:eventId', requireAuth, requireRole(...eventMa
   }
 });
 
-app.get('/api/certificates/:certificateId', async (request, response) => {
+app.get('/certificates/:certificateId', async (request, response) => {
   try {
-    const [[certificate]] = await pool.execute(
-      `SELECT cn.Machungnhan AS certificateId,
-              COALESCE(nd.Hoten, cn.Masv) AS studentName,
-              cn.Masv AS studentId, sk.Tensukien AS eventName,
-              sk.Thoigianketthuc AS issuedAt, cn.EmailTrangthai AS emailStatus,
-              CASE
-                WHEN cn.Trangthaichungnhan = 'Đã cấp' AND cn.Ngaycap IS NOT NULL THEN 'Đã cấp'
-                WHEN cn.EmailTrangthai = 'Đã gửi' THEN 'Đã gửi Gmail'
-                ELSE cn.Trangthaichungnhan
-              END AS status
-       FROM ChungNhan cn
-       INNER JOIN SuKien sk ON sk.Masukien = cn.Masukien
-       LEFT JOIN NguoiDung nd ON nd.Mand = cn.Masv
-       WHERE cn.Machungnhan = ?
-       LIMIT 1`,
-      [request.params.certificateId],
-    );
+    const certificate = await findPublicCertificate(request.params.certificateId);
     if (!certificate) {
-      return response.status(404).json({ message: 'Không tìm thấy chứng nhận.' });
+      return response.status(404).send('Không tìm thấy chứng nhận đã cấp.');
     }
-    return response.json(certificate);
+    response.set('Cache-Control', 'no-store');
+    return response.type('html').send(renderCertificatePage(certificate));
   } catch (error) {
-    console.error('Verify certificate error:', error.message);
-    return response.status(500).json({
-      message: 'Không thể xác minh chứng nhận.',
-    });
+    console.error('Public certificate page error:', error.message);
+    return response.status(500).send('Không thể tải thông tin chứng nhận.');
   }
+});
+
+app.get('/api/certificates/:certificateId/pdf', async (request, response) => {
+  try {
+    const certificate = await findPublicCertificate(request.params.certificateId);
+    if (!certificate) {
+      return response.status(404).json({ message: 'Không tìm thấy chứng nhận đã cấp.' });
+    }
+    const pdf = await createCertificatePdfForRequest(request, certificate);
+    const disposition = request.query.download === '1' ? 'attachment' : 'inline';
+    response.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `${disposition}; filename="${certificate.certificateId}.pdf"`,
+      'Content-Length': pdf.length,
+      'Cache-Control': 'private, no-store',
+    });
+    return response.send(pdf);
+  } catch (error) {
+    console.error('Public certificate PDF error:', error.message);
+    return response.status(500).json({ message: 'Không thể tải PDF chứng nhận.' });
+  }
+});
+
+app.get('/api/certificates/:certificateId', async (request, response) => {
+  return response.redirect(
+    302,
+    `/certificates/${encodeURIComponent(request.params.certificateId)}`,
+  );
 });
 
 // Sinh viên chỉ xem chứng nhận đã cấp gắn với mã tài khoản trong token.
