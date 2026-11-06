@@ -1,6 +1,11 @@
 .statistics-chart { --chart-bg: var(--surface, #fff); --chart-text: var(--text, #202b3c); --chart-muted: var(--muted, #8290a4); --chart-border: var(--border, #e8edf5); min-width: 0; margin: 16px 0; padding: 16px; border: 1px solid var(--chart-border); border-radius: 8px; background: var(--chart-bg); color: var(--chart-text); }
 .role-portal .statistics-chart { --chart-bg: var(--rp-card); --chart-text: var(--rp-text); --chart-muted: var(--rp-muted); --chart-border: var(--rp-border); }
 .statistics-chart h2 { margin: 0 0 14px; color: var(--chart-text); font-family: Manrope, Nunito, sans-serif; font-size: 15px; font-weight: 750; }
+.semester-attendance-controls { display: flex; align-items: center; gap: 12px; margin: 16px 0 0; color: var(--text, #202b3c); font-size: 13px; font-weight: 700; }
+.semester-attendance-controls select { min-width: 150px; min-height: 38px; padding: 7px 10px; border: 1px solid var(--border, #e8edf5); border-radius: 8px; background: var(--surface, #fff); color: inherit; font: inherit; }
+.semester-attendance-empty { margin: 12px 0; color: var(--muted, #8290a4); font-size: 13px; }
+.role-portal .semester-attendance-controls { color: var(--rp-text); }
+.role-portal .semester-attendance-controls select { border-color: var(--rp-border); background: var(--rp-bg); color: var(--rp-text); }
 .statistics-donut-layout { display: flex; min-height: 186px; align-items: center; justify-content: center; gap: 25px; flex-wrap: wrap; }
 .statistics-donut { position: relative; display: grid; width: 176px; height: 176px; flex: 0 0 auto; place-items: center; border-radius: 50%; }
 .statistics-donut::before { position: absolute; inset: 24px; border-radius: 50%; background: var(--chart-bg); content: ''; }

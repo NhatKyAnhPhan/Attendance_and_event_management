@@ -357,6 +357,8 @@
 .rp-dashboard-filter-group h2 svg { color: var(--rp-primary); }
 .rp-dashboard-filter-group .rp-search { width: 100%; min-height: 38px; margin-bottom: 8px; padding: 0 10px; }
 .rp-dashboard-filter-group > select { width: 100%; min-height: 38px; padding: 7px 10px; border: 1px solid var(--rp-border); border-radius: 8px; background: var(--rp-bg); color: var(--rp-text); font: inherit; font-size: 12px; }
+.rp-semester-filter { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 12px 14px; border: 1px solid var(--rp-border); border-radius: 10px; background: var(--rp-card); color: var(--rp-text); font-size: 13px; font-weight: 700; }
+.rp-semester-filter select { min-width: 160px; min-height: 38px; padding: 7px 10px; border: 1px solid var(--rp-border); border-radius: 8px; background: var(--rp-bg); color: var(--rp-text); font: inherit; }
 .rp-filter-error,.rp-filter-hint { margin: 8px 0 0; color: var(--rp-muted); font-size: 12px; }
 .rp-filter-error { color: #dc2626; }
 .rp-calendar-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }

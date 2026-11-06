@@ -9,6 +9,7 @@ import {
 import { api } from './api.js';
 import { QRCodeSVG } from 'qrcode.react';
 import { AttendanceDonutChart } from './StatisticsCharts.jsx';
+import { semesterForDate } from './semester.js';
 import AdminMasterDataImport from './AdminMasterDataImport.jsx';
 import { parseStudentIds } from './studentIds.js';
 import './role-portal.css';
@@ -292,6 +293,13 @@ function PageTitle({ title, subtitle, onRefresh, loading, action }) {
 
 function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
   const metrics = Array.isArray(data?.metrics) ? data.metrics : [];
+  const [selectedSemester, setSelectedSemester] = useState(() =>
+    semesterForDate(new Date()),
+  );
+  const [semesterAttendance, setSemesterAttendance] = useState(null);
+  const [semesterAttendanceLoading, setSemesterAttendanceLoading] = useState(false);
+  const [semesterAttendanceError, setSemesterAttendanceError] = useState('');
+  const [semesterReload, setSemesterReload] = useState(0);
   const [attendanceReport, setAttendanceReport] = useState(null);
   const [attendanceReportLoading, setAttendanceReportLoading] = useState(false);
   const [attendanceReportError, setAttendanceReportError] = useState('');
@@ -311,6 +319,32 @@ function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
   const canViewAttendanceReport = isAdminRole(role) || isLecturerRole(role);
   const canViewClasses = canViewAttendanceReport;
   const canViewEvents = !isLecturerRole(role);
+  const refreshDashboard = () => {
+    onRefresh?.();
+    setSemesterReload((value) => value + 1);
+  };
+  useEffect(() => {
+    if (!canViewAttendanceReport) return undefined;
+    let active = true;
+    setSemesterAttendanceLoading(true);
+    setSemesterAttendanceError('');
+    setSemesterAttendance(null);
+    api(`/api/dashboard?semester=${encodeURIComponent(selectedSemester)}`)
+      .then((result) => {
+        if (active) setSemesterAttendance(result.attendanceBreakdown || null);
+      })
+      .catch((exception) => {
+        if (active) {
+          setSemesterAttendanceError(
+            exception instanceof Error ? exception.message : 'Không thể tải thống kê học kỳ.',
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setSemesterAttendanceLoading(false);
+      });
+    return () => { active = false; };
+  }, [canViewAttendanceReport, selectedSemester, semesterReload]);
   const loadAttendanceReport = useCallback(async () => {
     setAttendanceReportLoading(true);
     setAttendanceReportError('');
@@ -404,7 +438,9 @@ function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
     ? classBreakdown
     : isEventSelected
       ? eventBreakdown
-      : data?.attendanceBreakdown || attendanceReport?.summary || (!canViewAttendanceReport ? aggregateEventBreakdown : null);
+      : canViewAttendanceReport
+        ? semesterAttendance
+        : data?.attendanceBreakdown || attendanceReport?.summary || aggregateEventBreakdown;
   const chartData = attendanceBreakdown ? [
     { label: 'Có mặt', value: Number(attendanceBreakdown.present) || 0, color: '#28a76c' },
     { label: 'Đi muộn', value: Number(attendanceBreakdown.late) || 0, color: '#e7a639' },
@@ -429,7 +465,7 @@ function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
 
   return (
     <>
-      <PageTitle title="Trang chủ" subtitle={`Số liệu hiện tại · ${isAdminRole(role) ? 'Quản trị viên' : isLecturerRole(role) ? 'Giảng viên' : 'Công nhân viên'}`} onRefresh={onRefresh} loading={loading} />
+      <PageTitle title="Trang chủ" subtitle={`Số liệu hiện tại · ${isAdminRole(role) ? 'Quản trị viên' : isLecturerRole(role) ? 'Giảng viên' : 'Công nhân viên'}`} onRefresh={refreshDashboard} loading={loading} />
       {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading && !metrics.length ? <LoadingPanel /> : metrics.length === 0 ? <EmptyPanel title="Chưa có dữ liệu tổng quan" message="Thống kê sẽ hiển thị khi có dữ liệu trong hệ thống." /> : (
         <>
           <div className="rp-metrics-grid">
@@ -462,6 +498,16 @@ function Dashboard({ data, loading, error, onRefresh, role, onNavigate }) {
             {!eventOptionsError && eventOptions.length > 0 && filteredEvents.length === 0 && <p className="rp-filter-hint">Không tìm thấy sự kiện phù hợp.</p>}
             </div>}
           </section>
+          {canViewAttendanceReport && !isClassSelected && !isEventSelected && <div className="rp-semester-filter">
+            <label htmlFor="role-dashboard-semester">Học kỳ thống kê</label>
+            <select id="role-dashboard-semester" value={selectedSemester} onChange={(event) => setSelectedSemester(event.target.value)}>
+              <option value="HK1">Học kỳ 1</option>
+              <option value="HK2">Học kỳ 2</option>
+              <option value="HK3">Học kỳ 3</option>
+            </select>
+          </div>}
+          {canViewAttendanceReport && !isClassSelected && !isEventSelected && semesterAttendanceLoading && <LoadingPanel />}
+          {canViewAttendanceReport && !isClassSelected && !isEventSelected && semesterAttendanceError && <ErrorPanel message={semesterAttendanceError} onRetry={() => setSemesterReload((value) => value + 1)} />}
           {selectedClassLoading && <LoadingPanel />}
           {selectedClassError && <ErrorPanel message={selectedClassError} onRetry={() => setClassReportReload((value) => value + 1)} />}
           {attendanceBreakdown && chartTotal > 0 && <AttendanceDonutChart title={chartTitle} data={chartData} />}
@@ -1020,7 +1066,6 @@ function EventRegistrationFormField({ form, setForm }) {
       <input
         type="file"
         accept="application/pdf,.pdf"
-        required={!form.id}
         onChange={(event) => {
           const registrationFormFile = event.target.files?.[0] || null;
           setForm((current) => current && ({
@@ -1030,7 +1075,7 @@ function EventRegistrationFormField({ form, setForm }) {
         }}
       />
       <small className="rp-image-help">
-        Tệp PDF tối đa 10 MB. Bắt buộc khi tạo sự kiện mới.
+        Tệp PDF tối đa 10 MB. Không bắt buộc.
       </small>
       {form.registrationFormFile && (
         <small>{form.registrationFormFile.name}</small>
@@ -1175,11 +1220,6 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     event.preventDefault();
     setSaving(true);
     setFormError('');
-    if (!form.id && !form.registrationFormFile) {
-      setFormError('Vui lòng đính kèm đơn đăng ký PDF có mộc khi tạo sự kiện.');
-      setSaving(false);
-      return;
-    }
     let parsePeriods;
     try {
       parsePeriods = form.periods.map((period) => {

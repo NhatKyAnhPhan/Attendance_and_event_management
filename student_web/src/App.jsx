@@ -8,6 +8,7 @@ import {
 import { api, ApiError } from './api.js';
 import RolePortal from './RolePortal.jsx';
 import { AttendanceBarChart, AttendanceDonutChart } from './StatisticsCharts.jsx';
+import { semesterForDate } from './semester.js';
 
 const NAV_ITEMS = [
   { id: 'home', label: 'Tổng quan', icon: Home },
@@ -468,6 +469,40 @@ function LoadError({ errors, onRetry }) {
 
 function DashboardPage({ user, goTo, showNotice }) {
   const { classes, events, notifications, dashboard, loading, errors, refresh } = useStudentData();
+  const [selectedSemester, setSelectedSemester] = useState(() =>
+    semesterForDate(new Date()),
+  );
+  const [semesterAttendance, setSemesterAttendance] = useState(null);
+  const [semesterAttendanceLoading, setSemesterAttendanceLoading] = useState(true);
+  const [semesterAttendanceError, setSemesterAttendanceError] = useState('');
+  const [semesterReload, setSemesterReload] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setSemesterAttendanceLoading(true);
+    setSemesterAttendanceError('');
+    setSemesterAttendance(null);
+    api(`/api/dashboard?semester=${encodeURIComponent(selectedSemester)}`)
+      .then((result) => {
+        if (active) {
+          setSemesterAttendance(result.attendanceBreakdown || {
+            present: result.present,
+            late: result.late,
+            absent: result.absent,
+          });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setSemesterAttendanceError(
+            error instanceof Error ? error.message : 'Không thể tải thống kê học kỳ.',
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setSemesterAttendanceLoading(false);
+      });
+    return () => { active = false; };
+  }, [selectedSemester, semesterReload]);
   const todayClasses = classes.filter((item) => item.todaySchedule);
   const upcoming = events.filter((event) => {
     const start = new Date(event.startTime);
@@ -480,11 +515,12 @@ function DashboardPage({ user, goTo, showNotice }) {
     { label: 'Tỉ lệ chuyên cần', value: Number(dashboard.present || 0) + Number(dashboard.late || 0) + Number(dashboard.absent || 0) > 0 ? `${Math.round(100 * Number(dashboard.present || 0) / (Number(dashboard.present || 0) + Number(dashboard.late || 0) + Number(dashboard.absent || 0)))}%` : '—', icon: Activity, color: 'amber' },
   ];
   return <>
-    <PageHeading eyebrow="THỨ HẠNG CỦA BẠN, HÀNH TRÌNH CỦA BẠN" title="Tổng quan" description={`${new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())} · Chào ${nameOf(user)}, chúc bạn một ngày học tập hiệu quả!`} actions={<button className="outline-button" onClick={refresh}><Activity size={16} /> Làm mới</button>} />
+    <PageHeading eyebrow="THỨ HẠNG CỦA BẠN, HÀNH TRÌNH CỦA BẠN" title="Tổng quan" description={`${new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())} · Chào ${nameOf(user)}, chúc bạn một ngày học tập hiệu quả!`} actions={<button className="outline-button" onClick={() => { refresh(); setSemesterReload((value) => value + 1); }}><Activity size={16} /> Làm mới</button>} />
     <LoadError errors={errors} onRetry={refresh} />
     <div className="welcome-banner"><div className="welcome-copy"><span className="welcome-tag"><Sparkles size={14} /> KHÔNG GIAN CỦA BẠN</span><h2>Xin chào, {nameOf(user).split(' ').slice(-1)[0]} <span>✦</span></h2><p>Theo dõi lịch học, khám phá sự kiện và lưu lại từng cột mốc đáng nhớ.</p><button className="banner-button" onClick={() => goTo('calendar')}>Xem lịch của tôi <ArrowRight size={16} /></button></div><div className="welcome-illustration"><div className="illustration-ring ring-a" /><div className="illustration-ring ring-b" /><div className="illustration-cap"><GraduationCap size={75} strokeWidth={1.25} /></div><span className="float-star star-a">✦</span><span className="float-star star-b">✧</span><span className="float-dot dot-a" /><span className="float-dot dot-b" /></div></div>
     <div className="stats-grid">{stats.map(({ label, value, icon: Icon, color }) => <article className="stat-card" key={label}><div className={`stat-icon ${color}`}><Icon size={19} /></div><div><span>{label}</span><strong>{loading ? '—' : value}</strong></div><div className={`stat-spark ${color}`}>↗</div></article>)}</div>
-    {!loading && Number(dashboard.present || 0) + Number(dashboard.late || 0) + Number(dashboard.absent || 0) > 0 && <AttendanceDonutChart title="Kết quả điểm danh" data={[{ label: 'Có mặt', value: Number(dashboard.present || 0), color: '#28a76c' }, { label: 'Đi muộn', value: Number(dashboard.late || 0), color: '#e7a639' }, { label: 'Vắng', value: Number(dashboard.absent || 0), color: '#d95d54' }]} />}
+    <div className="semester-attendance-controls"><label htmlFor="student-dashboard-semester">Học kỳ thống kê</label><select id="student-dashboard-semester" value={selectedSemester} onChange={(event) => setSelectedSemester(event.target.value)}><option value="HK1">Học kỳ 1</option><option value="HK2">Học kỳ 2</option><option value="HK3">Học kỳ 3</option></select></div>
+    {semesterAttendanceLoading ? <LoadingLine /> : semesterAttendanceError ? <div className="alert warning">{semesterAttendanceError}</div> : Number(semesterAttendance?.present || 0) + Number(semesterAttendance?.late || 0) + Number(semesterAttendance?.absent || 0) > 0 ? <AttendanceDonutChart title={`Kết quả điểm danh · ${selectedSemester}`} data={[{ label: 'Có mặt', value: Number(semesterAttendance.present || 0), color: '#28a76c' }, { label: 'Đi muộn', value: Number(semesterAttendance.late || 0), color: '#e7a639' }, { label: 'Vắng', value: Number(semesterAttendance.absent || 0), color: '#d95d54' }]} /> : <p className="semester-attendance-empty">Học kỳ này chưa có kết quả điểm danh.</p>}
     {notifications.length > 0 && <button className="active-session-banner" onClick={() => goTo('attendance')}><span className="pulse-dot" /><span><strong>{notifications.length} phiên điểm danh đang mở</strong><small>Chuyển sang ứng dụng Android để thực hiện điểm danh.</small></span><ArrowRight size={18} /></button>}
     <div className="dashboard-grid">
       <section className="panel-card"><div className="section-title"><div><h2>Lịch học hôm nay</h2><p>Các lớp có lịch trong ngày</p></div><button className="text-button" onClick={() => goTo('classes')}>Tất cả lớp <ArrowRight size={15} /></button></div>
@@ -528,7 +564,7 @@ function ClassesPage({ showNotice }) {
     <LoadError errors={errors} onRetry={refresh} />
     <form className="join-class-form" onSubmit={joinClass}><div className="join-icon"><Plus size={19} /></div><div className="join-copy"><strong>Tham gia lớp học</strong><span>Nhập mã lớp do giảng viên cung cấp.</span></div><input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="Nhập mã lớp" required aria-label="Mã lớp" /><button className="primary-button" disabled={joining}>{joining ? 'Đang tham gia...' : 'Tham gia lớp'}</button></form>
     <div className="toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm theo tên lớp hoặc giảng viên..." /></div><span className="result-count">{loading ? 'Đang tải...' : `${filtered.length} lớp học`}</span></div>
-    {!loading && filtered.some((item) => Number(item.present || 0) + Number(item.late || 0) + Number(item.absent || 0) > 0) && <AttendanceBarChart title="Kết quả điểm danh theo lớp" categories={filtered.map((item) => item.id || item.code)} series={[{ label: 'Có mặt', color: '#28a76c', values: filtered.map((item) => Number(item.present || 0)) }, { label: 'Đi muộn', color: '#e7a639', values: filtered.map((item) => Number(item.late || 0)) }, { label: 'Vắng', color: '#d95d54', values: filtered.map((item) => Number(item.absent || 0)) }]} />}
+    {!loading && filtered.some((item) => Number(item.present || 0) + Number(item.late || 0) + Number(item.absent || 0) > 0) && <AttendanceBarChart title="Kết quả điểm danh theo lớp" categories={filtered.map((item) => item.name || item.code || item.id)} series={[{ label: 'Có mặt', color: '#28a76c', values: filtered.map((item) => Number(item.present || 0)) }, { label: 'Đi muộn', color: '#e7a639', values: filtered.map((item) => Number(item.late || 0)) }, { label: 'Vắng', color: '#d95d54', values: filtered.map((item) => Number(item.absent || 0)) }]} />}
     {loading ? <LoadingGrid /> : filtered.length ? <div className="class-grid">{filtered.map((item, index) => <button className="class-card" key={item.id} onClick={() => openClass(item)}><div className={`class-card-art art-${index % 4}`}><span className="class-code">{item.id}</span><BookOpen size={42} strokeWidth={1.2} /><span className="art-label">HỌC PHẦN</span></div><div className="class-card-body"><div className="card-title-row"><h3>{item.name}</h3><ArrowRight size={17} /></div><p><GraduationCap size={14} /> {item.lecturer || 'Chưa cập nhật giảng viên'}</p><p><Clock3 size={14} /> {item.time || 'Chưa có lịch học'}</p><div className="class-card-footer"><span>{item.room ? <><MapPin size={13} /> {item.room}</> : 'Lớp học phần'}</span><span className="progress-caption">{item.rate || 0}% chuyên cần</span></div><div className="progress-track"><span style={{ width: `${Math.min(100, Number(item.rate) || 0)}%` }} /></div></div></button>)}</div> : <EmptyState icon={BookOpen} title={query ? 'Không tìm thấy lớp phù hợp' : 'Bạn chưa tham gia lớp học nào'} text={query ? 'Thử từ khóa khác để tìm lớp học.' : 'Nhập mã lớp ở trên để tham gia lớp học phần của bạn.'} />}
     {selected && <Modal title="Chi tiết lớp học" onClose={() => setSelected(null)}>
       <div className="detail-title">

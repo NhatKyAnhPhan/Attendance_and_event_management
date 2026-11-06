@@ -13,6 +13,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../data/models/notification_model.dart';
 import '../../data/models/student_summaries.dart';
 import '../../widgets/app_badge.dart';
+import '../../widgets/semester_selector.dart';
 import '../../widgets/statistics_charts.dart';
 import '../notifications/notifications_page.dart';
 import 'student_checkin_page.dart';
@@ -153,9 +154,20 @@ class _HomeTabContent extends StatelessWidget {
       }).toList()..sort((a, b) => a.startTime!.compareTo(b.startTime!));
       final user = auth.currentUser.value ?? const <String, dynamic>{};
       final dashboard = dashboardController.summary;
-      final present = _countValue(dashboard['present']);
-      final late = _countValue(dashboard['late']);
-      final absent = _countValue(dashboard['absent']);
+      final rawAttendanceBreakdown = dashboard['attendanceBreakdown'];
+      final attendanceBreakdown = rawAttendanceBreakdown is Map
+          ? Map<String, dynamic>.from(rawAttendanceBreakdown)
+          : null;
+      final present = _countValue(
+        attendanceBreakdown?['present'] ?? dashboard['present'],
+      );
+      final late = _countValue(
+        attendanceBreakdown?['late'] ?? dashboard['late'],
+      );
+      final absent = _countValue(
+        attendanceBreakdown?['absent'] ?? dashboard['absent'],
+      );
+      final selectedSemester = dashboardController.selectedSemester.value;
       final hasAttendanceData =
           present != null &&
           late != null &&
@@ -170,31 +182,50 @@ class _HomeTabContent extends StatelessWidget {
             notifications.unreadCount(Role.student),
             dashboard,
           ),
-          if (hasAttendanceData)
+          if (attendanceBreakdown != null) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: StatisticsDonutChart(
-                title: 'Kết quả điểm danh',
-                colors: c,
-                data: [
-                  StatisticsChartDatum(
-                    label: 'Có mặt',
-                    value: present,
-                    color: c.success,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SemesterSelector(
+                    value: selectedSemester,
+                    colors: c,
+                    onChanged: (semester) =>
+                        dashboardController.load(semester: semester),
                   ),
-                  StatisticsChartDatum(
-                    label: 'Muộn',
-                    value: late,
-                    color: c.warning,
-                  ),
-                  StatisticsChartDatum(
-                    label: 'Vắng',
-                    value: absent,
-                    color: c.danger,
-                  ),
+                  const SizedBox(height: 8),
+                  if (hasAttendanceData)
+                    StatisticsDonutChart(
+                      title: 'Kết quả điểm danh · $selectedSemester',
+                      colors: c,
+                      data: [
+                        StatisticsChartDatum(
+                          label: 'Có mặt',
+                          value: present,
+                          color: c.success,
+                        ),
+                        StatisticsChartDatum(
+                          label: 'Muộn',
+                          value: late,
+                          color: c.warning,
+                        ),
+                        StatisticsChartDatum(
+                          label: 'Vắng',
+                          value: absent,
+                          color: c.danger,
+                        ),
+                      ],
+                    )
+                  else
+                    Text(
+                      'Học kỳ này chưa có kết quả điểm danh.',
+                      style: AppTextStyles.bodySm(c.mutedForeground),
+                    ),
                 ],
               ),
             ),
+          ],
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(

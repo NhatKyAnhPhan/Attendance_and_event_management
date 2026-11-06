@@ -9,6 +9,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../data/api/api_client.dart';
 import '../../data/api/endpoints.dart';
 import '../../widgets/app_search_field.dart';
+import 'certificate_signature_dialog.dart';
 import '../../widgets/statistics_charts.dart';
 
 /// Loại dữ liệu cán bộ có thể xem trong khu vực này.
@@ -171,6 +172,15 @@ class _StaffRecordsPageState extends State<StaffRecordsPage> {
             ],
           ),
         ),
+        if (isCertificates)
+          IconButton(
+            tooltip: 'Thiết lập chữ ký chứng nhận',
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (_) => const CertificateSignatureDialog(),
+            ),
+            icon: const Icon(Icons.draw_outlined),
+          ),
         Text(
           '$count bản ghi',
           style: AppTextStyles.bodySm(colors.mutedForeground),

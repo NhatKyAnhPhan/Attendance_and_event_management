@@ -2614,6 +2614,18 @@ app.get('/api/public/stats', async (_request, response) => {
 // Tổng hợp số lớp, sự kiện và kết quả điểm danh của sinh viên.
 app.get('/api/dashboard', requireAuth, async (request, response) => {
   try {
+    const semesterParam = request.query.semester;
+    const validSemesters = ['HK1', 'HK2', 'HK3'];
+    if (
+      semesterParam !== undefined
+      && (typeof semesterParam !== 'string'
+        || !validSemesters.includes(semesterParam.trim()))
+    ) {
+      return response.status(400).json({ message: 'Học kỳ không hợp lệ.' });
+    }
+    const semester = typeof semesterParam === 'string'
+      ? semesterParam.trim()
+      : '';
     await recordExpiredClassAbsences();
     const currentRole = String(request.auth.role || '').trim().toLowerCase();
     const userId = request.auth.sub;
@@ -2641,6 +2653,24 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
                 SUM(CASE WHEN Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
          FROM KetQuaDiemDanh`,
       );
+      let semesterAttendance = attendance;
+      if (semester) {
+        [[semesterAttendance]] = await pool.execute(
+          `SELECT SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+                  SUM(CASE WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
+                  SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+           FROM KetQuaDiemDanh kd
+           WHERE EXISTS (
+             SELECT 1
+             FROM BuoiDiemDanh bpd
+             INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+             INNER JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+             WHERE bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+               AND lhp.Hocky = ?
+           )`,
+          [semester],
+        );
+      }
       const rate = Number(attendance.total || 0) === 0
         ? 0
         : Math.round(Number(attendance.present || 0) * 100 / Number(attendance.total));
@@ -2654,9 +2684,9 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
           { label: 'Tỷ lệ có mặt', value: `${rate}%` },
         ],
         attendanceBreakdown: {
-          present: Number(attendance.present || 0),
-          late: Number(attendance.late || 0),
-          absent: Number(attendance.absent || 0),
+          present: Number(semesterAttendance.present || 0),
+          late: Number(semesterAttendance.late || 0),
+          absent: Number(semesterAttendance.absent || 0),
         },
       });
     }
@@ -2711,6 +2741,21 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
          WHERE lhp.Magv = ?`,
         [userId],
       );
+      let semesterAttendance = attendance;
+      if (semester) {
+        [[semesterAttendance]] = await pool.execute(
+          `SELECT COUNT(kd.Maketqua) AS total,
+                  SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+                  SUM(CASE WHEN kd.Trangthaiketqua IN ('Đi trễ', 'Đi muộn') THEN 1 ELSE 0 END) AS late,
+                  SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+           FROM KetQuaDiemDanh kd
+           INNER JOIN BuoiDiemDanh bpd ON bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+           INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+           INNER JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+           WHERE lhp.Magv = ? AND lhp.Hocky = ?`,
+          [userId, semester],
+        );
+      }
       const rate = Number(attendance.total || 0) === 0
         ? 0
         : Math.round(Number(attendance.present || 0) * 100 / Number(attendance.total));
@@ -2722,9 +2767,9 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
           { label: 'Tỷ lệ có mặt', value: `${rate}%` },
         ],
         attendanceBreakdown: {
-          present: Number(attendance.present || 0),
-          late: Number(attendance.late || 0),
-          absent: Number(attendance.absent || 0),
+          present: Number(semesterAttendance.present || 0),
+          late: Number(semesterAttendance.late || 0),
+          absent: Number(semesterAttendance.absent || 0),
         },
       });
     }
@@ -2745,12 +2790,36 @@ app.get('/api/dashboard', requireAuth, async (request, response) => {
       FROM KetQuaDiemDanh WHERE Masv = ?`,
           [userId],
     );
+    let semesterAttendance = attendance;
+    if (semester) {
+      [[semesterAttendance]] = await pool.execute(
+        `SELECT SUM(CASE WHEN kd.Trangthaiketqua = 'Có mặt' THEN 1 ELSE 0 END) AS present,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Đi trễ' THEN 1 ELSE 0 END) AS late,
+                SUM(CASE WHEN kd.Trangthaiketqua = 'Vắng mặt' THEN 1 ELSE 0 END) AS absent
+         FROM KetQuaDiemDanh kd
+         WHERE kd.Masv = ?
+           AND EXISTS (
+             SELECT 1
+             FROM BuoiDiemDanh bpd
+             INNER JOIN Buoi b ON b.Mabuoi = bpd.Mabuoi
+             INNER JOIN LopHocPhan lhp ON lhp.Malop = b.Malop
+             WHERE bpd.Mabuoidiemdanh = kd.Mabuoidiemdanh
+               AND lhp.Hocky = ?
+           )`,
+        [userId, semester],
+      );
+    }
     return response.json({
       classes: Number(classes.total || 0),
       events: Number(events.total || 0),
       present: Number(attendance.present || 0),
       late: Number(attendance.late || 0),
       absent: Number(attendance.absent || 0),
+      attendanceBreakdown: {
+        present: Number(semesterAttendance.present || 0),
+        late: Number(semesterAttendance.late || 0),
+        absent: Number(semesterAttendance.absent || 0),
+      },
     });
   } catch (error) {
     console.error('Dashboard error:', error.message);

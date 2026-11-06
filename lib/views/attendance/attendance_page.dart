@@ -394,7 +394,12 @@ class _AttendancePageState extends State<AttendancePage> {
             colors: colors,
             verticalCategories: true,
             categories: classSummaries
-                .map((item) => item['classId'].toString())
+                .map((item) {
+                  final className = item['className']?.toString().trim() ?? '';
+                  return className.isNotEmpty
+                      ? className
+                      : item['classId'].toString();
+                })
                 .toList(),
             series: [
               StatisticsChartSeries(
@@ -430,9 +435,12 @@ class _AttendancePageState extends State<AttendancePage> {
     List<Map<String, dynamic>> sessions,
   ) {
     final grouped = <String, Map<String, int>>{};
+    final classNames = <String, String>{};
     for (final session in sessions) {
       final classId = session['classId']?.toString() ?? '';
       if (classId.isEmpty) continue;
+      final className = session['className']?.toString().trim() ?? '';
+      if (className.isNotEmpty) classNames.putIfAbsent(classId, () => className);
       final counts = grouped.putIfAbsent(
         classId,
         () => {'present': 0, 'late': 0, 'absent': 0},
@@ -442,7 +450,13 @@ class _AttendancePageState extends State<AttendancePage> {
       counts['absent'] = counts['absent']! + _count(session['absent']);
     }
     return grouped.entries
-        .map((entry) => <String, dynamic>{'classId': entry.key, ...entry.value})
+        .map(
+          (entry) => <String, dynamic>{
+            'classId': entry.key,
+            'className': classNames[entry.key] ?? '',
+            ...entry.value,
+          },
+        )
         .toList();
   }
 }

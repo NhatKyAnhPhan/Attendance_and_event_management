@@ -5,6 +5,7 @@ import '../../controllers/dashboard_controller.dart';
 import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../widgets/semester_selector.dart';
 import '../../widgets/statistics_charts.dart';
 
 class DashboardPage extends StatelessWidget {
@@ -28,6 +29,7 @@ class DashboardPage extends StatelessWidget {
       final attendanceBreakdown = rawAttendanceBreakdown is Map
           ? Map<String, dynamic>.from(rawAttendanceBreakdown)
           : null;
+      final selectedSemester = controller.selectedSemester.value;
 
       return RefreshIndicator(
         onRefresh: controller.load,
@@ -91,8 +93,14 @@ class DashboardPage extends StatelessWidget {
               ),
             if (attendanceBreakdown != null) ...[
               const SizedBox(height: 16),
+              SemesterSelector(
+                value: selectedSemester,
+                colors: colors,
+                onChanged: (semester) => controller.load(semester: semester),
+              ),
+              const SizedBox(height: 8),
               StatisticsDonutChart(
-                title: 'Kết quả điểm danh',
+                title: 'Kết quả điểm danh · $selectedSemester',
                 colors: colors,
                 data: [
                   StatisticsChartDatum(

@@ -433,6 +433,14 @@ class StudentEventsPage extends StatefulWidget {
 
 class _StudentEventsPageState extends State<StudentEventsPage> {
   String _query = '';
+  String _statusFilter = 'Tất cả';
+
+  static const _eventStatusFilters = [
+    'Tất cả',
+    'Sắp diễn ra',
+    'Đang diễn ra',
+    'Đã kết thúc',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -447,7 +455,7 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
       controller.statusRefreshTick.value;
       final events = controller.items;
       final query = _query.trim().toLowerCase();
-      final filteredEvents = events.where((event) {
+      final searchedEvents = events.where((event) {
         return [
           event.id,
           event.name,
@@ -455,6 +463,14 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
           event.date,
           event.eventStatus,
         ].any((value) => value.toLowerCase().contains(query));
+      }).toList();
+      final filteredEvents = searchedEvents.where((event) {
+        return switch (_statusFilter) {
+          'Sắp diễn ra' => event.eventStatus == 'Sắp diễn ra',
+          'Đang diễn ra' => event.eventStatus == 'Đang diễn ra',
+          'Đã kết thúc' => event.isEnded,
+          _ => true,
+        };
       }).toList();
       if (controller.loading.value && events.isEmpty) {
         return const Center(child: CircularProgressIndicator());
@@ -497,6 +513,20 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
                     colors: c,
                     hintText: 'Tìm tên sự kiện, đơn vị, ngày tổ chức...',
                     onChanged: (value) => setState(() => _query = value),
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _eventStatusFilters
+                        .map(
+                          (status) => ChoiceChip(
+                            label: Text(status),
+                            selected: _statusFilter == status,
+                            onSelected: (_) =>
+                                setState(() => _statusFilter = status),
+                          ),
+                        )
+                        .toList(),
                   ),
                   const SizedBox(height: 16),
                   if (filteredEvents.isEmpty)
