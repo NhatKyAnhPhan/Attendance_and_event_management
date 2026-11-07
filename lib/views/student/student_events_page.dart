@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 
 import '../../data/api/api_client.dart';
+import '../../controllers/auth_controller.dart';
 import '../../controllers/events_controller.dart';
 import '../../controllers/classes_controller.dart';
 import '../../core/theme/app_colors.dart';
@@ -457,10 +458,12 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
   String _query = '';
   String _statusFilter = 'all';
   String _searchField = 'all';
+  bool _myFacultyOnly = false;
 
-  Future<void> _showFilters(AppColors c) async {
+  Future<void> _showFilters(AppColors c, String studentMajor) async {
     var status = _statusFilter;
     var searchField = _searchField;
+    var myFacultyOnly = _myFacultyOnly;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -518,7 +521,7 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
                   DropdownMenuItem(value: 'location', child: Text('Địa điểm')),
                   DropdownMenuItem(
                     value: 'faculty',
-                    child: Text('Khoa/đơn vị tổ chức'),
+                    child: Text('Đơn vị tổ chức'),
                   ),
                 ],
                 onChanged: (value) {
@@ -527,6 +530,20 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
                   }
                 },
               ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: myFacultyOnly,
+                onChanged: studentMajor.trim().isEmpty
+                    ? null
+                    : (value) => setSheetState(() => myFacultyOnly = value),
+                title: Text(
+                  studentMajor.trim().isEmpty
+                      ? 'Khoa/ngành của tôi chưa có trong hồ sơ'
+                      : 'Khoa/ngành của tôi: $studentMajor',
+                ),
+                subtitle: const Text('Lọc sự kiện do đơn vị này tổ chức'),
+              ),
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -534,6 +551,7 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
                     onPressed: () => setSheetState(() {
                       status = 'all';
                       searchField = 'all';
+                      myFacultyOnly = false;
                     }),
                     child: const Text('Xóa lọc'),
                   ),
@@ -543,6 +561,7 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
                       setState(() {
                         _statusFilter = status;
                         _searchField = searchField;
+                        _myFacultyOnly = myFacultyOnly;
                       });
                       Navigator.pop(sheetContext);
                     },
@@ -565,6 +584,9 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
     final classesController = Get.isRegistered<ClassesController>()
         ? Get.find<ClassesController>()
         : Get.put(ClassesController());
+    final studentMajor =
+        Get.find<AuthController>().currentUser.value?['major']?.toString() ??
+        '';
 
     return Obx(() {
       controller.statusRefreshTick.value;
@@ -587,8 +609,24 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
         };
         return fields.any((value) => value.toLowerCase().contains(query));
       }).toList();
+      final normalizedMajor = studentMajor.trim().toLowerCase().replaceFirst(
+        RegExp(r'^(khoa|ngành|ngành học|viện)\s+'),
+        '',
+      );
       final filteredEvents =
           searchedEvents.where((event) {
+            if (_myFacultyOnly) {
+              final organizer = event.org.trim().toLowerCase().replaceFirst(
+                RegExp(r'^(khoa|ngành|ngành học|viện)\s+'),
+                '',
+              );
+              if (normalizedMajor.isEmpty ||
+                  organizer.isEmpty ||
+                  (!organizer.contains(normalizedMajor) &&
+                      !normalizedMajor.contains(organizer))) {
+                return false;
+              }
+            }
             return switch (_statusFilter) {
               'closed' => event.eventStatus == 'Đã đóng',
               'upcoming' => event.eventStatus == 'Sắp diễn ra',
@@ -667,7 +705,7 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
                       ),
                       const SizedBox(width: 8),
                       OutlinedButton.icon(
-                        onPressed: () => _showFilters(c),
+                        onPressed: () => _showFilters(c, studentMajor),
                         icon: const Icon(Icons.filter_list_rounded),
                         label: const Text('Lọc'),
                       ),

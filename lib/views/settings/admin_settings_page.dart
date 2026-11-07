@@ -19,7 +19,6 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   final _gpsController = TextEditingController();
   final _lockController = TextEditingController();
   final _qrController = TextEditingController();
-  final _attendanceThresholdController = TextEditingController();
   List<Map<String, dynamic>> _classes = [];
   List<Map<String, dynamic>> _events = [];
   String _scopeType = 'global';
@@ -27,7 +26,6 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   bool _inheritGps = false;
   bool _inheritLock = false;
   bool _inheritQr = false;
-  bool _inheritAttendanceThreshold = false;
   bool _loading = true;
   bool _saving = false;
   bool _allowEarlyAttendance = false;
@@ -49,7 +47,6 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     _gpsController.dispose();
     _lockController.dispose();
     _qrController.dispose();
-    _attendanceThresholdController.dispose();
     super.dispose();
   }
 
@@ -102,9 +99,6 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
             overrides['eventRegistrationLockHours'] == null;
         _inheritQr =
             _scopeType != 'global' && overrides['qrDurationMinutes'] == null;
-        _inheritAttendanceThreshold =
-            _scopeType != 'global' &&
-            overrides['attendanceThresholdPercent'] == null;
         _gpsController.text =
             (overrides['gpsRadiusMeters'] ?? effective['gpsRadiusMeters'])
                 .toString();
@@ -114,10 +108,6 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                 .toString();
         _qrController.text =
             (overrides['qrDurationMinutes'] ?? effective['qrDurationMinutes'])
-                .toString();
-        _attendanceThresholdController.text =
-            (overrides['attendanceThresholdPercent'] ??
-                    effective['attendanceThresholdPercent'])
                 .toString();
         _loading = false;
       });
@@ -134,13 +124,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     final gps = int.tryParse(_gpsController.text.trim());
     final lock = int.tryParse(_lockController.text.trim());
     final qr = int.tryParse(_qrController.text.trim());
-    final attendanceThreshold = int.tryParse(
-      _attendanceThresholdController.text.trim(),
-    );
-    if (gps == null ||
-        qr == null ||
-        attendanceThreshold == null ||
-        (!_isClassScope && lock == null)) {
+    if (gps == null || qr == null || (!_isClassScope && lock == null)) {
       _showMessage('Vui lòng nhập tham số bằng số nguyên.');
       return;
     }
@@ -161,10 +145,6 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
               ? null
               : lock,
           'qrDurationMinutes': _scopeType != 'global' && _inheritQr ? null : qr,
-          'attendanceThresholdPercent':
-              _scopeType != 'global' && _inheritAttendanceThreshold
-              ? null
-              : attendanceThreshold,
         },
       );
       await _loadConfiguration();
@@ -423,25 +403,6 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           maximum: 180,
         ),
         const SizedBox(height: 10),
-        _parameterField(
-          colors,
-          label: 'Tỷ lệ điểm danh tối thiểu để đạt',
-          unit: '%',
-          controller: _attendanceThresholdController,
-          inherited: _inheritAttendanceThreshold,
-          onInheritanceChanged: _scopeType == 'global'
-              ? null
-              : (value) => setState(() => _inheritAttendanceThreshold = value),
-          minimum: 0,
-          maximum: 100,
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Text(
-            'Có mặt và đi trễ được tính là tham dự; buổi vắng có phép vẫn tính là vắng.',
-            style: AppTextStyles.bodySm(colors.mutedForeground),
-          ),
-        ),
         const SizedBox(height: 16),
         Align(
           alignment: Alignment.centerRight,

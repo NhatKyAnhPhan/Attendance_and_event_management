@@ -17,6 +17,7 @@ const {
 } = require('./certificate_mailer');
 const { createPasswordResetHandlers } = require('./password_reset_handler');
 const { sendClassAttendancePush, tokenHash } = require('./push_notifications');
+const { isValidEventAttendanceThreshold } = require('./event_attendance_threshold');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -429,6 +430,34 @@ async function ensureEventCertificateColumn() {
   } catch (error) {
     if (error.code !== 'ER_DUP_FIELDNAME') throw error;
   }
+}
+
+async function ensureEventAttendanceThresholdColumn() {
+  const [columns] = await pool.query(
+    "SHOW COLUMNS FROM SuKien LIKE 'attendance_threshold_percent'",
+  );
+  if (columns.length) return;
+  await pool.query(
+    'ALTER TABLE SuKien ADD COLUMN attendance_threshold_percent INT NOT NULL DEFAULT 100',
+  );
+  await pool.query(
+    `UPDATE SuKien sk
+     LEFT JOIN system_parameters event_parameters
+       ON event_parameters.scope_type = 'event'
+     AND BINARY event_parameters.scope_id = BINARY sk.Masukien
+     LEFT JOIN system_parameters group_parameters
+       ON group_parameters.scope_type = 'all_events'
+      AND group_parameters.scope_id = ''
+     LEFT JOIN system_parameters global_parameters
+       ON global_parameters.scope_type = 'global'
+      AND global_parameters.scope_id = ''
+     SET sk.attendance_threshold_percent = COALESCE(
+       event_parameters.attendance_threshold_percent,
+       group_parameters.attendance_threshold_percent,
+       global_parameters.attendance_threshold_percent,
+       100
+     )`,
+  );
 }
 
 async function ensureCertificateEmailColumns() {
@@ -2076,6 +2105,7 @@ app.get('/api/events/:eventId', requireAuth, async (request, response) => {
         "sk.Thoigianbatdau AS startTime, sk.Thoigianketthuc AS endTime,",
         "COALESCE(sk.Soluongtoida, 0) AS capacity,",
         "COALESCE(sk.Capchungnhan, 0) AS certificateEnabled,",
+        "COALESCE(sk.attendance_threshold_percent, 100) AS attendanceThresholdPercent,",
         "dv.Tendv AS organizerName,",
         "(SELECT COUNT(*) FROM DangKySuKien allRegs",
         "WHERE allRegs.Masukien = sk.Masukien) AS registeredCount,",
@@ -2916,15 +2946,33 @@ async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = 
 
 async function filterEligibleEventAttendees(eventId, attendees) {
   if (attendees.length === 0) return [];
-  const { effective } = await getEffectiveAttendanceParameters('event', eventId);
-  const [[sessionSummary]] = await pool.execute(
-    `SELECT COUNT(*) AS totalSessions FROM event_attendance_sessions WHERE event_id = ?`,
+  const [[event]] = await pool.execute(
+    `SELECT attendance_threshold_percent AS attendanceThresholdPercent
+     FROM SuKien WHERE Masukien = ? LIMIT 1`,
     [eventId],
   );
-  const [sessionAttendance] = await pool.execute(
-    `SELECT student_id AS studentId, COUNT(DISTINCT session_id) AS attendedSessions
-     FROM event_attendance_records WHERE event_id = ? GROUP BY student_id`,
+  const [[sessionSummary]] = await pool.execute(
+    `SELECT COUNT(*) AS totalSessions FROM event_attendance_sessions
+     WHERE event_id = ?`,
     [eventId],
+  );
+  const [[periodSummary]] = await pool.execute(
+    `SELECT COUNT(*) AS totalPeriods FROM event_attendance_periods
+     WHERE event_id = ?`,
+    [eventId],
+  );
+  const totalPeriods = Number(periodSummary.totalPeriods);
+  const [sessionAttendance] = await pool.execute(
+    `SELECT ear.student_id AS studentId,
+            COUNT(DISTINCT CASE
+              WHEN ? > 0 THEN eas.period_id ELSE ear.session_id
+            END) AS attendedSessions
+     FROM event_attendance_records ear
+     INNER JOIN event_attendance_sessions eas
+       ON eas.session_id = ear.session_id AND eas.event_id = ear.event_id
+     WHERE ear.event_id = ?
+     GROUP BY ear.student_id`,
+    [totalPeriods, eventId],
   );
   const [legacyAttendance] = Number(sessionSummary.totalSessions) === 0
     ? await pool.execute(
@@ -2936,13 +2984,13 @@ async function filterEligibleEventAttendees(eventId, attendees) {
     String(row.studentId), Number(row.attendedSessions),
   ]));
   for (const row of legacyAttendance) attendedByStudent.set(String(row.studentId), 1);
-  const totalSessions = Number(sessionSummary.totalSessions);
-  const threshold = Number(effective.attendanceThresholdPercent);
+  const totalAttendanceUnits = totalPeriods || Number(sessionSummary.totalSessions);
+  const threshold = Number(event?.attendanceThresholdPercent ?? 100);
   return attendees.filter((attendee) => {
     const attended = attendedByStudent.get(String(attendee.studentId)) || 0;
-    return totalSessions === 0
+    return totalAttendanceUnits === 0
       ? threshold === 0 || attended > 0
-      : attended * 100 >= threshold * totalSessions;
+      : attended * 100 >= threshold * totalAttendanceUnits;
   });
 }
 
@@ -5410,6 +5458,8 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
       `SELECT sk.Masukien AS id,
               sk.Trangthaisukien AS status,
               sk.Thoigianketthuc AS endTime,
+              COALESCE(sk.attendance_threshold_percent, 100)
+                AS attendanceThresholdPercent,
               EXISTS (
                 SELECT 1 FROM DonVi dv
                 WHERE dv.Madv = sk.Madv AND dv.Manv = ?
@@ -5428,17 +5478,27 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
       });
     }
 
-    const { effective: eventParameters } = await getEffectiveAttendanceParameters(
-      'event', event.id,
-    );
     const [[sessionSummary]] = await pool.execute(
       'SELECT COUNT(*) AS totalSessions FROM event_attendance_sessions WHERE event_id = ?',
       [event.id],
     );
-    const [sessionAttendance] = await pool.execute(
-      `SELECT student_id AS studentId, COUNT(DISTINCT session_id) AS attendedSessions
-       FROM event_attendance_records WHERE event_id = ? GROUP BY student_id`,
+    const [[periodSummary]] = await pool.execute(
+      'SELECT COUNT(*) AS totalPeriods FROM event_attendance_periods WHERE event_id = ?',
       [event.id],
+    );
+    const totalAttendanceUnits = Number(periodSummary.totalPeriods)
+      || Number(sessionSummary.totalSessions);
+    const [sessionAttendance] = await pool.execute(
+      `SELECT ear.student_id AS studentId,
+              COUNT(DISTINCT CASE
+                WHEN ? > 0 THEN eas.period_id ELSE ear.session_id
+              END) AS attendedSessions
+       FROM event_attendance_records ear
+       INNER JOIN event_attendance_sessions eas
+         ON eas.session_id = ear.session_id AND eas.event_id = ear.event_id
+       WHERE ear.event_id = ?
+       GROUP BY ear.student_id`,
+      [Number(periodSummary.totalPeriods), event.id],
     );
     const eventAttendanceCounts = new Map(sessionAttendance.map((row) => [
       String(row.studentId), Number(row.attendedSessions),
@@ -5550,28 +5610,25 @@ app.get('/api/organizer/events/:eventId/students', requireAuth, requireRole(...e
         attendanceStatus,
         checkedInAt: attendance?.checkedInAt || null,
         attendedSessions: eventAttendanceCounts.get(String(row.studentId)) || 0,
-        totalAttendanceSessions: Number(sessionSummary.totalSessions),
-        attendanceThresholdPercent: Number(eventParameters.attendanceThresholdPercent),
+        totalAttendanceSessions: totalAttendanceUnits,
+        attendanceThresholdPercent: Number(event.attendanceThresholdPercent),
         requiredAttendanceSessions: Math.ceil(
-          Number(sessionSummary.totalSessions)
-            * Number(eventParameters.attendanceThresholdPercent) / 100,
+          totalAttendanceUnits * Number(event.attendanceThresholdPercent) / 100,
         ),
-        maxAttendanceAbsences: Number(sessionSummary.totalSessions) - Math.ceil(
-          Number(sessionSummary.totalSessions)
-            * Number(eventParameters.attendanceThresholdPercent) / 100,
+        maxAttendanceAbsences: totalAttendanceUnits - Math.ceil(
+          totalAttendanceUnits * Number(event.attendanceThresholdPercent) / 100,
         ),
-        attendancePercent: Number(sessionSummary.totalSessions) > 0
+        attendancePercent: totalAttendanceUnits > 0
           ? Math.round((eventAttendanceCounts.get(String(row.studentId)) || 0) * 100
-            / Number(sessionSummary.totalSessions))
+            / totalAttendanceUnits)
           : (eventAttendanceCounts.has(String(row.studentId)) ? 100 : 0),
-        attendanceEligible: (Number(eventParameters.attendanceThresholdPercent) === 0
+        attendanceEligible: (Number(event.attendanceThresholdPercent) === 0
           || eventAttendanceCounts.has(String(row.studentId)))
-          && (Number(sessionSummary.totalSessions) === 0
-            ? Number(eventParameters.attendanceThresholdPercent) === 0
+          && (totalAttendanceUnits === 0
+            ? Number(event.attendanceThresholdPercent) === 0
               || eventAttendanceCounts.has(String(row.studentId))
             : (eventAttendanceCounts.get(String(row.studentId)) || 0) * 100
-              >= Number(eventParameters.attendanceThresholdPercent)
-                * Number(sessionSummary.totalSessions)),
+              >= Number(event.attendanceThresholdPercent) * totalAttendanceUnits),
         certificateStatus: certificateByStudent.get(String(row.studentId))?.certificateStatus || 'Chưa cấp',
         emailStatus: certificateByStudent.get(String(row.studentId))?.emailStatus || 'Chưa gửi',
       };
@@ -5750,6 +5807,9 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
     new Date(startTime),
     new Date(endTime),
   );
+  const attendanceThresholdPercent = Number(
+    body.attendanceThresholdPercent ?? 100,
+  );
   const parsedCapacity = Number(capacity);
   const parsedStart = new Date(startTime);
   const parsedEnd = new Date(endTime);
@@ -5782,6 +5842,14 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
       message: attendancePeriodsResult.message,
     });
   }
+  if (!isValidEventAttendanceThreshold(
+    attendanceThresholdPercent,
+    attendancePeriodsResult.value.length,
+  )) {
+    return response.status(400).json({
+      message: 'Tỷ lệ điểm danh phải là một trong các mức phù hợp với số khung điểm danh.',
+    });
+  }
 
   try {
     if (!await managesUnit(pool, request.auth, organizerId.trim())) {
@@ -5799,8 +5867,8 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
           `INSERT INTO SuKien
            (Masukien, Tensukien, Madv, Mota, HinhAnh, DonDangKy, Thoigianbatdau,
             Thoigianketthuc, Diadiem, Soluongtoida, Trangthaisukien,
-            Capchungnhan)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra', ?)`,
+            Capchungnhan, attendance_threshold_percent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sắp diễn ra', ?, ?)`,
           [
             id,
             name.trim(),
@@ -5813,6 +5881,7 @@ app.post('/api/organizer/events', requireAuth, requireRole(...eventManagerRoles)
             location.trim(),
             parsedCapacity,
             certificateEnabled ? 1 : 0,
+            attendanceThresholdPercent,
           ],
         );
         await replaceEventContent(connection, id, contentResult.value);
@@ -5857,6 +5926,10 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
     });
   }
   const hasAttendancePeriods = Object.hasOwn(body, 'attendancePeriods');
+  const hasAttendanceThreshold = Object.hasOwn(body, 'attendanceThresholdPercent');
+  const parsedAttendanceThreshold = hasAttendanceThreshold
+    ? Number(body.attendanceThresholdPercent)
+    : null;
   const parsedCapacity = Number(capacity);
   const parsedStart = new Date(startTime);
   const parsedEnd = new Date(endTime);
@@ -5908,6 +5981,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         `SELECT Madv AS organizerId,
                 Thoigianbatdau AS startTime, Thoigianketthuc AS endTime,
                 Trangthaisukien AS status,
+                attendance_threshold_percent AS attendanceThresholdPercent,
                 (Thoigianbatdau < DATE_SUB(NOW(), INTERVAL 1 YEAR)) AS isArchived
          FROM SuKien WHERE Masukien = ? FOR UPDATE`,
         [request.params.eventId],
@@ -5946,13 +6020,41 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
           message: 'Không thể chỉnh sửa sự kiện vì đã có sinh viên đăng ký.',
         });
       }
+      let attendancePeriodCount;
+      if (hasAttendancePeriods) {
+        attendancePeriodCount = attendancePeriodsResult.value.length;
+      } else {
+        const [[periodSummary]] = await connection.execute(
+          `SELECT COUNT(*) AS totalPeriods
+           FROM event_attendance_periods WHERE event_id = ?`,
+          [request.params.eventId],
+        );
+        attendancePeriodCount = Number(periodSummary.totalPeriods);
+      }
+      if (hasAttendanceThreshold && !isValidEventAttendanceThreshold(
+        parsedAttendanceThreshold,
+        attendancePeriodCount,
+      )) {
+        await connection.rollback();
+        return response.status(400).json({
+          message: 'Tỷ lệ điểm danh phải là một trong các mức phù hợp với số khung điểm danh.',
+        });
+      }
+      const attendanceThresholdPercent = hasAttendanceThreshold
+        ? parsedAttendanceThreshold
+        : Number(existing.attendanceThresholdPercent ?? 100);
+      const normalizedAttendanceThreshold = isValidEventAttendanceThreshold(
+        attendanceThresholdPercent,
+        attendancePeriodCount,
+      ) ? attendanceThresholdPercent : 100;
       const [result] = await connection.execute(
         `UPDATE SuKien
          SET Tensukien = ?, Madv = ?,
            HinhAnh = ?, DonDangKy = COALESCE(?, DonDangKy),
            Thoigianbatdau = ?, Thoigianketthuc = ?,
            Diadiem = ?, Soluongtoida = ?,
-           Capchungnhan = COALESCE(?, Capchungnhan)
+           Capchungnhan = COALESCE(?, Capchungnhan),
+           attendance_threshold_percent = ?
          WHERE Masukien = ?`,
       [
         name.trim(),
@@ -5966,6 +6068,7 @@ app.put('/api/organizer/events/:eventId', requireAuth, requireRole(...eventManag
         body.certificateEnabled === undefined
           ? null
           : body.certificateEnabled ? 1 : 0,
+        normalizedAttendanceThreshold,
         request.params.eventId,
       ],
       );
@@ -7267,7 +7370,6 @@ app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị
     gpsRadiusMeters: body.gpsRadiusMeters,
     eventRegistrationLockHours: body.eventRegistrationLockHours,
     qrDurationMinutes: body.qrDurationMinutes,
-    attendanceThresholdPercent: body.attendanceThresholdPercent,
   };
   const ranges = {
     gpsRadiusMeters: [10, 5000],
@@ -7286,7 +7388,7 @@ app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị
     }
     if (values[key] === null || values[key] === undefined || values[key] === '') {
       if (scopeType === 'global') {
-        return response.status(400).json({ message: 'Cấu hình toàn hệ thống cần đủ cả bốn tham số.' });
+        return response.status(400).json({ message: 'Cấu hình toàn hệ thống cần đủ ba tham số.' });
       }
       values[key] = null;
       continue;
@@ -7314,18 +7416,16 @@ app.put('/api/admin/settings/parameters', requireAuth, requireRole('Quản trị
     await pool.execute(
       `INSERT INTO system_parameters
          (scope_type, scope_id, gps_radius_meters,
-          event_registration_lock_hours, qr_duration_minutes,
-          attendance_threshold_percent, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+          event_registration_lock_hours, qr_duration_minutes, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          gps_radius_meters = VALUES(gps_radius_meters),
          event_registration_lock_hours = VALUES(event_registration_lock_hours),
          qr_duration_minutes = VALUES(qr_duration_minutes),
-         attendance_threshold_percent = VALUES(attendance_threshold_percent),
          updated_by = VALUES(updated_by)`,
       [scopeType, scopeId, values.gpsRadiusMeters,
         values.eventRegistrationLockHours, values.qrDurationMinutes,
-        values.attendanceThresholdPercent, request.auth.sub],
+        request.auth.sub],
     );
     return response.json(await getEffectiveAttendanceParameters(scopeType, scopeId));
   } catch (error) {
@@ -7342,6 +7442,7 @@ ensureAttendanceLocationColumns()
     await ensureEventImageColumn();
     await ensureEventRegistrationFormColumn();
     await ensureEventCertificateColumn();
+    await ensureEventAttendanceThresholdColumn();
     await ensureCertificateEmailColumns();
     await ensureCertificateSignatureSnapshots();
     await ensurePasswordResetChallengesTable();

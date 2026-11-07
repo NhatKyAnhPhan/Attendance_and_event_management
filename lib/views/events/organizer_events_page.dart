@@ -67,6 +67,10 @@ class _AttendancePeriodDraft {
   void dispose() => nameController.dispose();
 }
 
+List<int> _eventAttendanceThresholdOptions(int periodCount) => periodCount <= 0
+    ? [100]
+    : List.generate(periodCount, (index) => ((index + 1) * 100) ~/ periodCount);
+
 class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
@@ -242,6 +246,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             location: event.location,
             capacity: 2000,
             certificateEnabled: false,
+            attendanceThresholdPercent: 100,
             description: event.description,
             benefits: const [],
             rules: const [],
@@ -599,16 +604,16 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         ].any((value) => value.toLowerCase().contains(query));
       }).toList()
         ..sort((a, b) {
-          int rank(OrganizerEventSummary event) {
-            if (event.isClosed) return 4;
-            if (event.status == 'Sắp diễn ra') return 0;
-            if (event.status == 'Đang diễn ra') return 1;
-            return 3;
-          }
-          final rankOrder = rank(a).compareTo(rank(b));
-          if (rankOrder != 0) return rankOrder;
-          return a.startTime.compareTo(b.startTime);
-        });
+            int rank(OrganizerEventSummary event) {
+              if (event.isClosed) return 4;
+              if (event.status == 'Sắp diễn ra') return 0;
+              if (event.status == 'Đang diễn ra') return 1;
+              return 3;
+            }
+            final rankOrder = rank(a).compareTo(rank(b));
+            if (rankOrder != 0) return rankOrder;
+            return a.startTime.compareTo(b.startTime);
+          });
       if (controller.loading.value && controller.items.isEmpty) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -2050,6 +2055,15 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     var certificateEnabled =
         currentDetails['certificateEnabled'] == true ||
         currentDetails['certificateEnabled']?.toString() == '1';
+    var attendanceThresholdPercent =
+        int.tryParse(
+          currentDetails['attendanceThresholdPercent']?.toString() ?? '',
+        ) ??
+        100;
+    if (!_eventAttendanceThresholdOptions(attendancePeriods.length)
+        .contains(attendanceThresholdPercent)) {
+      attendanceThresholdPercent = 100;
+    }
 
     await showDialog<void>(
       context: context,
@@ -2057,6 +2071,9 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
         builder: (context, setState) {
           final colors = AppColors.of(
             Theme.of(context).brightness == Brightness.dark,
+          );
+          final attendanceThresholdOptions = _eventAttendanceThresholdOptions(
+            attendancePeriods.length,
           );
           return AlertDialog(
             shape: RoundedRectangleBorder(
@@ -2262,6 +2279,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                                           attendancePeriods
                                               .removeAt(index)
                                               .dispose();
+                                          attendanceThresholdPercent = 100;
                                         }),
                                         icon: const Icon(Icons.delete_outline),
                                       ),
@@ -2336,6 +2354,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                             alignment: Alignment.centerLeft,
                             child: TextButton.icon(
                               onPressed: () => setState(() {
+                                attendanceThresholdPercent = 100;
                                 final defaultStart = startTime;
                                 final defaultEnd =
                                     endTime.isBefore(
@@ -2356,6 +2375,34 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                               label: const Text('Thêm khung điểm danh'),
                             ),
                           ),
+                          if (certificateEnabled) ...[
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<int>(
+                              key: ValueKey(attendancePeriods.length),
+                              initialValue: attendanceThresholdPercent,
+                              decoration: _eventInputDecoration(
+                                'Điều kiện điểm danh để đạt chứng nhận',
+                              ),
+                              items: attendanceThresholdOptions
+                                  .map(
+                                    (threshold) => DropdownMenuItem(
+                                      value: threshold,
+                                      child: Text('$threshold%'),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) => setState(
+                                () => attendanceThresholdPercent = value ?? 100,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Các mức được tính theo số khung điểm danh đã tạo.',
+                              style: AppTextStyles.bodySm(
+                                colors.mutedForeground,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 16),
@@ -2577,6 +2624,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         location: location,
                         capacity: capacity,
                         certificateEnabled: certificateEnabled,
+                        attendanceThresholdPercent: attendanceThresholdPercent,
                         description: descriptionController.text.trim(),
                         benefits: eventBenefits,
                         rules: eventRules,
@@ -2591,6 +2639,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         location: location,
                         capacity: capacity,
                         certificateEnabled: certificateEnabled,
+                        attendanceThresholdPercent: attendanceThresholdPercent,
                         description: descriptionController.text.trim(),
                         benefits: eventBenefits,
                         rules: eventRules,

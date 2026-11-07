@@ -92,6 +92,13 @@ const formatDate = (value, options = { day: '2-digit', month: '2-digit', year: '
 };
 const formatTime = (value) => formatDate(value, { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
 const getApiMessage = (error) => error instanceof Error ? error.message : 'Đã xảy ra lỗi. Vui lòng thử lại.';
+const normalizeDepartmentName = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/đ/g, 'd')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\b(khoa|nganh|vien)\b/g, ' ')
+  .trim();
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -231,7 +238,7 @@ export default function App() {
         <section className="page-content">
           {activePage === 'home' && <DashboardPage user={user} goTo={goTo} showNotice={showNotice} />}
           {activePage === 'classes' && <ClassesPage showNotice={showNotice} />}
-          {activePage === 'events' && <EventsPage showNotice={showNotice} />}
+          {activePage === 'events' && <EventsPage user={user} showNotice={showNotice} />}
           {activePage === 'calendar' && <CalendarPage showNotice={showNotice} />}
           {activePage === 'attendance' && <AttendancePage />}
           {activePage === 'notifications' && <NotificationsPage goTo={goTo} />}
@@ -643,7 +650,7 @@ function ClassFeedback({ classId, showNotice }) {
   return <section className="feedback-panel"><h4 className="modal-section-title">Đánh giá & phản hồi lớp học</h4><p className="feedback-summary">{summary?.ratingCount ? `${Number(summary.averageRating).toFixed(1)} / 5 sao · ${summary.ratingCount} lượt đánh giá` : 'Chưa có lượt đánh giá.'}</p><FeedbackEntryList items={summary?.items || []} />{error && <div className="alert error">{error}</div>}{mode ? <form onSubmit={submit} className="feedback-form">{mode === 'rating' && <div className="rating-stars" role="group" aria-label="Chọn số sao">{[1, 2, 3, 4, 5].map((value) => <button type="button" key={value} className={value <= rating ? 'chosen' : ''} aria-label={`${value} sao`} onClick={() => setRating(value)}>★</button>)}</div>}<label>{mode === 'rating' ? 'Nhận xét thêm' : 'Nội dung phản hồi'}<textarea value={comment} maxLength={2000} onChange={(event) => setComment(event.target.value)} placeholder="Chia sẻ ý kiến của bạn..." required={mode === 'feedback'} /></label><div className="feedback-actions"><button type="button" className="text-button" onClick={() => { setMode(''); setError(''); }}>Hủy</button><button className="primary-button compact" disabled={saving}>{saving ? 'Đang gửi...' : 'Gửi'}</button></div></form> : <div className="feedback-actions"><button className="outline-button compact" onClick={() => setMode('feedback')}>Gửi phản hồi</button><button className="outline-button compact" onClick={() => setMode('rating')}>Đánh giá</button></div>}</section>;
 }
 
-function EventsPage({ showNotice }) {
+function EventsPage({ user, showNotice }) {
   const { events, loading, errors, refresh } = useStudentData();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -653,7 +660,9 @@ function EventsPage({ showNotice }) {
   const [feedbackVersion, setFeedbackVersion] = useState(0);
   const [filter, setFilter] = useState('all');
   const [searchBy, setSearchBy] = useState('all');
+  const [myFacultyOnly, setMyFacultyOnly] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const studentMajor = String(user?.major || '').trim();
   const filtered = useMemo(() => {
     const statusLabels = {
       closed: 'Đã đóng',
@@ -662,24 +671,31 @@ function EventsPage({ showNotice }) {
       ongoing: 'Đang diễn ra',
     };
     const normalizedQuery = query.trim().toLocaleLowerCase('vi');
+    const normalizedMajor = normalizeDepartmentName(studentMajor);
     const matches = events.filter((event) => {
       const matchesStatus = filter === 'all' || filter === 'latest' || event.status === statusLabels[filter];
+      const normalizedOrganizer = normalizeDepartmentName(event.organizerName);
+      const matchesMyFaculty = !myFacultyOnly || (
+        normalizedMajor
+        && normalizedOrganizer
+        && (normalizedOrganizer.includes(normalizedMajor) || normalizedMajor.includes(normalizedOrganizer))
+      );
       const searchFields = {
         name: [event.name],
         location: [event.location],
-        faculty: [event.facultyName, event.departmentName, event.organizerName],
-        all: [event.name, event.location, event.facultyName, event.departmentName, event.organizerName],
+        faculty: [event.organizerName],
+        all: [event.name, event.location, event.organizerName],
       }[searchBy];
       const matchesQuery = !normalizedQuery || searchFields
         .filter(Boolean)
         .some((value) => String(value).toLocaleLowerCase('vi').includes(normalizedQuery));
-      return matchesStatus && matchesQuery;
+      return matchesStatus && matchesMyFaculty && matchesQuery;
     });
     if (filter === 'latest') {
       return matches.sort((first, second) => new Date(second.startTime) - new Date(first.startTime));
     }
     return matches;
-  }, [events, query, filter, searchBy]);
+  }, [events, query, filter, searchBy, studentMajor, myFacultyOnly]);
   const openEvent = async (event) => {
     setSelected(event); setDetails(null); setDetailsLoading(true);
     try { setDetails(await api(`/api/events/${encodeURIComponent(event.id)}`)); }
@@ -730,7 +746,7 @@ function EventsPage({ showNotice }) {
       <div className="search-box event-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sự kiện, địa điểm..." /></div>
       <div className="event-filter-wrap">
         <button
-          className={`outline-button event-filter-button${filter !== 'all' || searchBy !== 'all' ? ' active' : ''}`}
+          className={`outline-button event-filter-button${filter !== 'all' || searchBy !== 'all' || myFacultyOnly ? ' active' : ''}`}
           aria-expanded={filterOpen}
           aria-haspopup="dialog"
           onClick={() => setFilterOpen((open) => !open)}
@@ -750,10 +766,22 @@ function EventsPage({ showNotice }) {
             <option value="all">Tất cả</option>
             <option value="name">Tên sự kiện</option>
             <option value="location">Địa điểm</option>
-            <option value="faculty">Khoa/đơn vị tổ chức</option>
+            <option value="faculty">Đơn vị tổ chức</option>
           </select></label>
+          <label className="event-faculty-filter">
+            <input
+              type="checkbox"
+              checked={myFacultyOnly}
+              disabled={!studentMajor}
+              onChange={(event) => setMyFacultyOnly(event.target.checked)}
+            />
+            <span>
+              <strong>{studentMajor ? `Khoa/ngành của tôi: ${studentMajor}` : 'Khoa/ngành chưa có trong hồ sơ'}</strong>
+              <small>Lọc sự kiện do đơn vị này tổ chức</small>
+            </span>
+          </label>
           <div className="event-filter-actions">
-            <button className="text-button" onClick={() => { setFilter('all'); setSearchBy('all'); }}>Xóa lọc</button>
+            <button className="text-button" onClick={() => { setFilter('all'); setSearchBy('all'); setMyFacultyOnly(false); }}>Xóa lọc</button>
             <button className="primary-button compact" onClick={() => setFilterOpen(false)}>Áp dụng</button>
           </div>
         </div>}
