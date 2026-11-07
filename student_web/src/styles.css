@@ -283,7 +283,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .role-employee .auth-form .primary-button { background: #7251a3; box-shadow: 0 4px 10px rgb(114 81 163 / 17%); }
 .role-employee .auth-form .primary-button:hover:not(:disabled) { background: #62428f; }
 .role-employee .text-button { color: #7251a3; }
-.login-role-badge { display: inline-flex; min-height: 29px; align-items: center; gap: 7px; margin-bottom: 12px; padding: 0 9px; border-radius: 7px; background: #edf2ff; color: #315ed7; font-size: 12px; font-weight: 800; letter-spacing: .1em; }
+.login-role-badge { display: flex; width: fit-content; min-height: 29px; align-items: center; gap: 7px; margin-bottom: 12px; padding: 0 9px; border-radius: 7px; background: #edf2ff; color: #315ed7; font-size: 12px; font-weight: 800; letter-spacing: .1em; }
+.login-form-wrap > .form-kicker { display: block; }
 .badge-lecturer { background: #e8f4f8; color: #287e9d; }
 .badge-employee { background: #f1ecf8; color: #7251a3; }
 .login-art::before { position: absolute; top: 20%; right: -25%; width: 570px; height: 570px; border: 1px solid rgb(255 255 255 / 10%); border-radius: 50%; content: ''; }.login-art::after { position: absolute; right: -14%; bottom: -39%; width: 580px; height: 580px; border: 1px solid rgb(255 255 255 / 9%); border-radius: 50%; content: ''; }
