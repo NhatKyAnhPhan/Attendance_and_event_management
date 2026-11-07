@@ -38,7 +38,7 @@ async function changePassword(pool, request, response) {
 
   try {
     const [rows] = await pool.execute(
-      'SELECT Matkhau AS password FROM nguoidung WHERE Mand = ? LIMIT 1',
+      'SELECT Matkhau AS password FROM NguoiDung WHERE Mand = ? LIMIT 1',
       [request.auth.sub],
     );
     const user = rows[0];
@@ -54,7 +54,7 @@ async function changePassword(pool, request, response) {
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await pool.execute(
-      'UPDATE nguoidung SET Matkhau = ? WHERE Mand = ?',
+      'UPDATE NguoiDung SET Matkhau = ? WHERE Mand = ?',
       [passwordHash, request.auth.sub],
     );
     return response.json({ message: 'Đổi mật khẩu thành công.' });

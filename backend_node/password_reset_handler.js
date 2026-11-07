@@ -255,7 +255,7 @@ function createPasswordResetHandlers({
 
       const passwordHash = await bcrypt.hash(newPassword, 12);
       await connection.execute(
-        'UPDATE nguoidung SET Matkhau = ? WHERE Mand = ?',
+        'UPDATE NguoiDung SET Matkhau = ? WHERE Mand = ?',
         [passwordHash, challenge.userId],
       );
       await connection.execute(

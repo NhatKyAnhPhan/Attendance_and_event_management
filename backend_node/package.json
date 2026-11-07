@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node --check index.js && node --check certificate_mailer.js && node --check password_reset_handler.js && node --test certificate_mailer.test.js"
+    "test": "node --check index.js && node --check certificate_mailer.js && node --check password_reset_handler.js && node --check profile_handler.js && node --test certificate_mailer.test.js password_reset_handler.test.js"
   },
   "keywords": [],
   "author": "",
