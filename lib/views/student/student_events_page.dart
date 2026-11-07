@@ -323,27 +323,49 @@ Future<void> showStudentEventDetails(
                                         title: const Text('Chi tiết đánh giá'),
                                         content: SingleChildScrollView(
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              Text('${(item['rating'] as num?)?.round() ?? 0} / 5 sao'),
+                                              Text(
+                                                '${(item['rating'] as num?)?.round() ?? 0} / 5 sao',
+                                              ),
                                               const SizedBox(height: 12),
-                                              Text(item['comment']?.toString().trim().isNotEmpty == true ? item['comment'].toString() : 'Không có nhận xét.'),
-                                              if (item['createdAt'] != null) ...[
+                                              Text(
+                                                item['comment']
+                                                            ?.toString()
+                                                            .trim()
+                                                            .isNotEmpty ==
+                                                        true
+                                                    ? item['comment'].toString()
+                                                    : 'Không có nhận xét.',
+                                              ),
+                                              if (item['createdAt'] !=
+                                                  null) ...[
                                                 const SizedBox(height: 12),
-                                                Text('Gửi lúc ${item['createdAt']}'),
+                                                Text(
+                                                  'Gửi lúc ${item['createdAt']}',
+                                                ),
                                               ],
                                             ],
                                           ),
                                         ),
-                                        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Đóng'))],
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(dialogContext),
+                                            child: const Text('Đóng'),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                     child: Text(
                                       '${List.filled(((item['rating'] as num?)?.round() ?? 0).clamp(0, 5), '★').join()}'
                                       '${List.filled(5 - ((item['rating'] as num?)?.round() ?? 0).clamp(0, 5), '☆').join()}'
                                       '  ${item['comment'] ?? ''}',
-                                      style: AppTextStyles.bodySm(c.mutedForeground),
+                                      style: AppTextStyles.bodySm(
+                                        c.mutedForeground,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -433,14 +455,107 @@ class StudentEventsPage extends StatefulWidget {
 
 class _StudentEventsPageState extends State<StudentEventsPage> {
   String _query = '';
-  String _statusFilter = 'Tất cả';
+  String _statusFilter = 'all';
+  String _searchField = 'all';
 
-  static const _eventStatusFilters = [
-    'Tất cả',
-    'Sắp diễn ra',
-    'Đang diễn ra',
-    'Đã kết thúc',
-  ];
+  Future<void> _showFilters(AppColors c) async {
+    var status = _statusFilter;
+    var searchField = _searchField;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: c.card,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            8,
+            20,
+            20 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Lọc sự kiện', style: AppTextStyles.displaySm(c.foreground)),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: status,
+                decoration: const InputDecoration(labelText: 'Trạng thái'),
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('Tất cả')),
+                  DropdownMenuItem(value: 'latest', child: Text('Mới nhất')),
+                  DropdownMenuItem(value: 'closed', child: Text('Đã đóng')),
+                  DropdownMenuItem(
+                    value: 'upcoming',
+                    child: Text('Sắp diễn ra'),
+                  ),
+                  DropdownMenuItem(value: 'ended', child: Text('Đã kết thúc')),
+                  DropdownMenuItem(
+                    value: 'ongoing',
+                    child: Text('Đang diễn ra'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setSheetState(() => status = value);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: searchField,
+                decoration: const InputDecoration(labelText: 'Tìm theo'),
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('Tất cả')),
+                  DropdownMenuItem(value: 'name', child: Text('Tên sự kiện')),
+                  DropdownMenuItem(value: 'location', child: Text('Địa điểm')),
+                  DropdownMenuItem(
+                    value: 'faculty',
+                    child: Text('Khoa/đơn vị tổ chức'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setSheetState(() => searchField = value);
+                  }
+                },
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => setSheetState(() {
+                      status = 'all';
+                      searchField = 'all';
+                    }),
+                    child: const Text('Xóa lọc'),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        _statusFilter = status;
+                        _searchField = searchField;
+                      });
+                      Navigator.pop(sheetContext);
+                    },
+                    child: const Text('Áp dụng'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -456,23 +571,40 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
       final events = controller.items;
       final query = _query.trim().toLowerCase();
       final searchedEvents = events.where((event) {
-        return [
-          event.id,
-          event.name,
-          event.org,
-          event.date,
-          event.eventStatus,
-        ].any((value) => value.toLowerCase().contains(query));
+        if (query.isEmpty) return true;
+        final fields = switch (_searchField) {
+          'name' => [event.name],
+          'location' => [event.location],
+          'faculty' => [event.org],
+          _ => [
+            event.id,
+            event.name,
+            event.org,
+            event.location,
+            event.date,
+            event.eventStatus,
+          ],
+        };
+        return fields.any((value) => value.toLowerCase().contains(query));
       }).toList();
       final filteredEvents =
           searchedEvents.where((event) {
             return switch (_statusFilter) {
-              'Sắp diễn ra' => event.eventStatus == 'Sắp diễn ra',
-              'Đang diễn ra' => event.eventStatus == 'Đang diễn ra',
-              'Đã kết thúc' => event.isEnded,
+              'closed' => event.eventStatus == 'Đã đóng',
+              'upcoming' => event.eventStatus == 'Sắp diễn ra',
+              'ongoing' => event.eventStatus == 'Đang diễn ra',
+              'ended' => event.eventStatus == 'Đã kết thúc',
               _ => true,
             };
           }).toList()..sort((a, b) {
+            if (_statusFilter == 'latest') {
+              final aStart = a.startTime;
+              final bStart = b.startTime;
+              if (aStart == null) return bStart == null ? 0 : 1;
+              if (bStart == null) return -1;
+              return bStart.compareTo(aStart);
+            }
+
             int rank(StudentEventSummary event) {
               if (event.eventStatus == 'Sắp diễn ra') return 0;
               if (event.eventStatus == 'Đang diễn ra') return 1;
@@ -524,24 +656,22 @@ class _StudentEventsPageState extends State<StudentEventsPage> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  AppSearchField(
-                    colors: c,
-                    hintText: 'Tìm tên sự kiện, đơn vị, ngày tổ chức...',
-                    onChanged: (value) => setState(() => _query = value),
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _eventStatusFilters
-                        .map(
-                          (status) => ChoiceChip(
-                            label: Text(status),
-                            selected: _statusFilter == status,
-                            onSelected: (_) =>
-                                setState(() => _statusFilter = status),
-                          ),
-                        )
-                        .toList(),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppSearchField(
+                          colors: c,
+                          hintText: 'Tìm sự kiện, địa điểm...',
+                          onChanged: (value) => setState(() => _query = value),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () => _showFilters(c),
+                        icon: const Icon(Icons.filter_list_rounded),
+                        label: const Text('Lọc'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   if (filteredEvents.isEmpty)
@@ -688,11 +818,12 @@ class _EventCard extends StatelessWidget {
               if (event.eventStatus.isNotEmpty)
                 AppBadge(
                   label: event.eventStatus,
-                  status: event.isEnded
-                      ? BadgeStatus.absent
-                      : event.eventStatus == 'Đang diễn ra'
-                      ? BadgeStatus.late
-                      : BadgeStatus.present,
+                  status: switch (event.eventStatus) {
+                    'Sắp diễn ra' || 'Mới' => BadgeStatus.blue,
+                    'Đang diễn ra' => BadgeStatus.late,
+                    'Đã đóng' || 'Đã kết thúc' => BadgeStatus.absent,
+                    _ => BadgeStatus.pending,
+                  },
                 ),
               if (event.registered && event.registeredAt != null)
                 Text(
@@ -709,9 +840,7 @@ class _EventCard extends StatelessWidget {
                   icon: const Icon(Icons.event_busy, size: 18),
                   label: const Text('Hủy đăng ký'),
                 ),
-              if (event.registered &&
-                  !event.isEnded &&
-                  event.isAttended)
+              if (event.registered && !event.isEnded && event.isAttended)
                 Text(
                   'Đã điểm danh, không thể hủy đăng ký',
                   style: AppTextStyles.bodyXs(c.mutedForeground),
@@ -726,14 +855,18 @@ class _EventCard extends StatelessWidget {
                       : 'Đã đến thời gian khóa đăng ký trước sự kiện ${event.registrationLockHours} giờ',
                   style: AppTextStyles.bodyXs(c.mutedForeground),
                 ),
-              if (!event.registered && !event.isEnded && event.registrationLocked)
+              if (!event.registered &&
+                  !event.isEnded &&
+                  event.registrationLocked)
                 Text(
                   event.registrationLockHours == null
                       ? 'Đã khóa đăng ký sự kiện'
                       : 'Đã khóa đăng ký trước sự kiện ${event.registrationLockHours} giờ',
                   style: AppTextStyles.bodyXs(c.mutedForeground),
                 ),
-              if (!event.registered && !event.isEnded && !event.registrationLocked)
+              if (!event.registered &&
+                  !event.isEnded &&
+                  !event.registrationLocked)
                 ElevatedButton(
                   onPressed: onRegister,
                   child: const Text('Đăng ký ngay'),

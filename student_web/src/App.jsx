@@ -3,7 +3,7 @@ import {
   Activity, ArrowLeft, ArrowRight, Bell, BookOpen,
   CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
   Clock3, Download, GraduationCap, Home, LogOut, MapPin, Menu, Moon,
-  Plus, Search, ShieldCheck, Sparkles, Sun, UserRound, Users, X,
+  Plus, Search, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserRound, Users, X,
 } from 'lucide-react';
 import { api, ApiError } from './api.js';
 import RolePortal from './RolePortal.jsx';
@@ -652,11 +652,34 @@ function EventsPage({ showNotice }) {
   const [busyId, setBusyId] = useState('');
   const [feedbackVersion, setFeedbackVersion] = useState(0);
   const [filter, setFilter] = useState('all');
-  const filtered = useMemo(() => events.filter((event) => {
-    const matchesQuery = `${event.name} ${event.organizerName} ${event.location}`.toLowerCase().includes(query.toLowerCase());
-    const matchesFilter = filter === 'all' || (filter === 'registered' ? event.registrationStatus !== 'notRegistered' : event.registrationStatus === 'notRegistered');
-    return matchesQuery && matchesFilter;
-  }), [events, query, filter]);
+  const [searchBy, setSearchBy] = useState('all');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filtered = useMemo(() => {
+    const statusLabels = {
+      closed: 'Đã đóng',
+      upcoming: 'Sắp diễn ra',
+      ended: 'Đã kết thúc',
+      ongoing: 'Đang diễn ra',
+    };
+    const normalizedQuery = query.trim().toLocaleLowerCase('vi');
+    const matches = events.filter((event) => {
+      const matchesStatus = filter === 'all' || filter === 'latest' || event.status === statusLabels[filter];
+      const searchFields = {
+        name: [event.name],
+        location: [event.location],
+        faculty: [event.facultyName, event.departmentName, event.organizerName],
+        all: [event.name, event.location, event.facultyName, event.departmentName, event.organizerName],
+      }[searchBy];
+      const matchesQuery = !normalizedQuery || searchFields
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase('vi').includes(normalizedQuery));
+      return matchesStatus && matchesQuery;
+    });
+    if (filter === 'latest') {
+      return matches.sort((first, second) => new Date(second.startTime) - new Date(first.startTime));
+    }
+    return matches;
+  }, [events, query, filter, searchBy]);
   const openEvent = async (event) => {
     setSelected(event); setDetails(null); setDetailsLoading(true);
     try { setDetails(await api(`/api/events/${encodeURIComponent(event.id)}`)); }
@@ -703,13 +726,46 @@ function EventsPage({ showNotice }) {
   return <>
     <PageHeading eyebrow="HOẠT ĐỘNG SINH VIÊN" title="Sự kiện & hoạt động" description="Khám phá hoạt động trong trường và đăng ký tham gia." actions={<button className="outline-button" onClick={refresh}><Activity size={16} /> Làm mới</button>} />
     <LoadError errors={errors} onRetry={refresh} />
-    <div className="toolbar event-toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sự kiện, địa điểm..." /></div><div className="filter-tabs"><button className={filter === 'all' ? 'selected' : ''} onClick={() => setFilter('all')}>Tất cả</button><button className={filter === 'registered' ? 'selected' : ''} onClick={() => setFilter('registered')}>Đã đăng ký</button><button className={filter === 'open' ? 'selected' : ''} onClick={() => setFilter('open')}>Có thể đăng ký</button></div></div>
+    <div className="toolbar event-toolbar">
+      <div className="search-box event-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sự kiện, địa điểm..." /></div>
+      <div className="event-filter-wrap">
+        <button
+          className={`outline-button event-filter-button${filter !== 'all' || searchBy !== 'all' ? ' active' : ''}`}
+          aria-expanded={filterOpen}
+          aria-haspopup="dialog"
+          onClick={() => setFilterOpen((open) => !open)}
+        >
+          <SlidersHorizontal size={16} /> Lọc
+        </button>
+        {filterOpen && <div className="event-filter-panel" role="dialog" aria-label="Lọc sự kiện">
+          <label>Trạng thái<select value={filter} onChange={(event) => setFilter(event.target.value)}>
+            <option value="all">Tất cả</option>
+            <option value="latest">Mới nhất</option>
+            <option value="closed">Đã đóng</option>
+            <option value="upcoming">Sắp diễn ra</option>
+            <option value="ended">Đã kết thúc</option>
+            <option value="ongoing">Đang diễn ra</option>
+          </select></label>
+          <label>Tìm theo<select value={searchBy} onChange={(event) => setSearchBy(event.target.value)}>
+            <option value="all">Tất cả</option>
+            <option value="name">Tên sự kiện</option>
+            <option value="location">Địa điểm</option>
+            <option value="faculty">Khoa/đơn vị tổ chức</option>
+          </select></label>
+          <div className="event-filter-actions">
+            <button className="text-button" onClick={() => { setFilter('all'); setSearchBy('all'); }}>Xóa lọc</button>
+            <button className="primary-button compact" onClick={() => setFilterOpen(false)}>Áp dụng</button>
+          </div>
+        </div>}
+      </div>
+    </div>
     {loading ? <LoadingGrid /> : filtered.length ? <div className="event-grid">{filtered.map((event, index) => {
       const registered = event.registrationStatus !== 'notRegistered';
       const ended = event.status === 'Đã đóng' || (event.endTime && new Date(event.endTime) < new Date());
+      const eventStatusClass = event.status === 'Sắp diễn ra' ? 'blue-tag' : event.status === 'Đang diễn ra' ? 'amber-tag' : ended ? 'red-tag' : 'blue-tag';
       const attended = event.attendanceStatus === 'Có mặt';
       const locked = Boolean(event.registrationLocked);
-      return <article className="event-card" key={event.id}><button className={`event-cover cover-${index % 4}${event.imageUrl ? ' has-image' : ''}`} aria-label={`Xem chi tiết: ${event.name}`} onClick={() => openEvent(event)}>{event.imageUrl && <img className="event-cover-image" src={event.imageUrl} alt="" loading="lazy" onError={(error) => { error.currentTarget.hidden = true; }} />}{event.imageUrl && <span className="event-cover-shade" />}<span className="event-cover-kicker">HUIT · HOẠT ĐỘNG SINH VIÊN</span>{!event.imageUrl && <Sparkles size={43} strokeWidth={1.1} />}<span className="event-date-label">{formatDate(event.startTime)}</span></button><div className="event-card-content"><div className="event-title-line"><h3>{event.name}</h3>{registered && <span className="status-tag green-tag">Đã đăng ký</span>}</div><p className="event-organizer">{event.organizerName || 'Đơn vị tổ chức HUIT'}</p><div className="event-meta"><span><Clock3 size={14} /> {formatTime(event.startTime)}</span><span><MapPin size={14} /> {event.location || 'Đang cập nhật địa điểm'}</span></div><div className="event-card-actions"><button className="text-button" onClick={() => openEvent(event)}>Xem chi tiết</button>{registered ? <button className="outline-button compact" onClick={() => cancel(event)} disabled={busyId === event.id || ended || attended || locked} title={attended ? 'Đã điểm danh, không thể hủy đăng ký' : locked ? 'Đã đến thời gian khóa đăng ký, không thể hủy' : undefined}>{busyId === event.id ? 'Đang xử lý...' : attended ? 'Đã điểm danh' : locked ? 'Đã khóa đăng ký' : 'Hủy đăng ký'}</button> : <button className="primary-button compact" onClick={() => register(event)} disabled={busyId === event.id || ended || locked}>{busyId === event.id ? 'Đang đăng ký...' : ended ? 'Đã kết thúc' : locked ? 'Đã khóa đăng ký' : 'Đăng ký'}</button>}</div></div></article>;
+      return <article className="event-card" key={event.id}><button className={`event-cover cover-${index % 4}${event.imageUrl ? ' has-image' : ''}`} aria-label={`Xem chi tiết: ${event.name}`} onClick={() => openEvent(event)}>{event.imageUrl && <img className="event-cover-image" src={event.imageUrl} alt="" loading="lazy" onError={(error) => { error.currentTarget.hidden = true; }} />}{event.imageUrl && <span className="event-cover-shade" />}<span className="event-cover-kicker">HUIT · HOẠT ĐỘNG SINH VIÊN</span>{!event.imageUrl && <Sparkles size={43} strokeWidth={1.1} />}<span className="event-date-label">{formatDate(event.startTime)}</span></button><div className="event-card-content"><div className="event-title-line"><h3>{event.name}</h3>{registered && <span className="status-tag green-tag">Đã đăng ký</span>}</div><p className="event-organizer">{event.organizerName || 'Đơn vị tổ chức HUIT'}</p>{event.status && <div className="event-status-line"><span className={`status-tag ${eventStatusClass}`}>{event.status}</span></div>}<div className="event-meta"><span><Clock3 size={14} /> {formatTime(event.startTime)}</span><span><MapPin size={14} /> {event.location || 'Đang cập nhật địa điểm'}</span></div><div className="event-card-actions"><button className="text-button" onClick={() => openEvent(event)}>Xem chi tiết</button>{registered ? <button className="outline-button compact" onClick={() => cancel(event)} disabled={busyId === event.id || ended || attended || locked} title={attended ? 'Đã điểm danh, không thể hủy đăng ký' : locked ? 'Đã đến thời gian khóa đăng ký, không thể hủy' : undefined}>{busyId === event.id ? 'Đang xử lý...' : attended ? 'Đã điểm danh' : locked ? 'Đã khóa đăng ký' : 'Hủy đăng ký'}</button> : <button className="primary-button compact" onClick={() => register(event)} disabled={busyId === event.id || ended || locked}>{busyId === event.id ? 'Đang đăng ký...' : ended ? 'Đã kết thúc' : locked ? 'Đã khóa đăng ký' : 'Đăng ký'}</button>}</div></div></article>;
     })}</div> : <EmptyState icon={Sparkles} title="Chưa có sự kiện phù hợp" text={query ? 'Thử điều chỉnh bộ lọc hoặc từ khóa.' : 'Các sự kiện mới sẽ xuất hiện tại đây.'} />}
     {selected && <Modal title="Thông tin sự kiện" onClose={() => setSelected(null)}><div className={`event-detail-cover${selected.imageUrl ? ' has-image' : ''}`}>{selected.imageUrl && <img className="event-detail-image" src={selected.imageUrl} alt="" onError={(error) => { error.currentTarget.hidden = true; }} />}{selected.imageUrl && <span className="event-detail-shade" />}{!selected.imageUrl && <Sparkles size={37} />}<span>{selected.id}</span></div>{detailsLoading ? <LoadingLine /> : details ? <><div className="event-detail-heading"><h3>{details.name || selected.name}</h3><span className={`status-tag ${selected.registrationStatus !== 'notRegistered' ? 'green-tag' : 'blue-tag'}`}>{selected.registrationStatus !== 'notRegistered' ? 'Đã đăng ký' : 'Chưa đăng ký'}</span></div><p className="event-description">{details.description || 'Chưa có mô tả cho sự kiện này.'}</p><div className="detail-grid"><Info label="Đơn vị tổ chức" value={details.organizerName || selected.organizerName || '—'} /><Info label="Thời gian" value={`${formatTime(details.startTime)} – ${formatDate(details.endTime, { hour: '2-digit', minute: '2-digit' })}`} /><Info label="Địa điểm" value={details.location || 'Chưa cập nhật'} /><Info label="Số lượng đăng ký" value={`${details.registeredCount || 0}${details.capacity ? ` / ${details.capacity}` : ''}`} /></div>{details.benefits?.length > 0 && <><h4 className="modal-section-title">Quyền lợi</h4>{details.benefits.map((benefit, index) => <div className="modal-list-row" key={index}><Check size={16} />{benefit.content || benefit.type}</div>)}</>}{details.rules?.length > 0 && <><h4 className="modal-section-title">Nội quy</h4>{details.rules.map((rule, index) => <div className="modal-list-row" key={index}><span className="rule-number">{index + 1}</span>{rule.text || rule.content}</div>)}</>}{selected.registrationStatus !== 'notRegistered' && <p className="modal-footnote"><Activity size={14} /> Điểm danh sự kiện chỉ thực hiện trên ứng dụng Android.</p>}{selected.attendanceStatus === 'Có mặt' && <p className="modal-footnote">Bạn đã điểm danh sự kiện này, không thể hủy đăng ký.</p>}{selected.registrationStatus !== 'notRegistered' && (selected.status === 'Đã đóng' || (selected.endTime && new Date(selected.endTime) <= new Date())) && <EventFeedback key={`${selected.id}-${feedbackVersion}`} eventId={selected.id} showNotice={showNotice} onSaved={() => setFeedbackVersion((version) => version + 1)} />}<div className="modal-actions">{selected.registrationStatus !== 'notRegistered' ? <button className="outline-button" onClick={() => cancel(selected)} disabled={busyId === selected.id || (selected.endTime && new Date(selected.endTime) <= new Date()) || selected.attendanceStatus === 'Có mặt'}>{busyId === selected.id ? 'Đang xử lý...' : selected.attendanceStatus === 'Có mặt' ? 'Đã điểm danh' : 'Hủy đăng ký'}</button> : <button className="primary-button" onClick={() => register(selected)} disabled={busyId === selected.id || (selected.endTime && new Date(selected.endTime) <= new Date())}>{busyId === selected.id ? 'Đang xử lý...' : (selected.endTime && new Date(selected.endTime) <= new Date()) ? 'Đã kết thúc' : 'Đăng ký sự kiện'}</button>}</div></> : <div className="muted-text">Không thể tải thông tin sự kiện.</div>}</Modal>}
   </>;
