@@ -411,6 +411,19 @@
 .rp-settings-card > div { flex: 1; }
 .rp-settings-card h2 { margin: 0 0 5px; font-family: Nunito, sans-serif; font-size: 16px; }
 .rp-settings-card p { margin: 0; color: var(--rp-muted); font-size: 12px; }
+.rp-account-card { max-width: 980px; margin-bottom: 16px; padding: 18px; }
+.rp-account-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.rp-account-card > header h2 { margin: 0 0 5px; font-family: Nunito, sans-serif; font-size: 16px; }
+.rp-account-card > header p { margin: 0; color: var(--rp-muted); font-size: 12px; }
+.rp-account-card > header > svg { flex: 0 0 auto; color: var(--rp-primary); }
+.rp-account-card .rp-form-grid label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--rp-muted); font-size: 12px; font-weight: 600; }
+.rp-account-card input,.rp-account-card select { width: 100%; min-width: 0; min-height: 39px; padding: 8px 10px; border: 1px solid var(--rp-border); border-radius: 7px; background: var(--rp-bg); color: var(--rp-text); font: inherit; font-size: 12px; }
+.rp-account-card input:disabled,.rp-account-card select:disabled { opacity: .65; }
+.rp-account-card .rp-form-hint { color: var(--rp-muted); font-size: 11px; font-weight: 400; }
+.rp-account-message { margin: 12px 0 0; font-size: 12px; font-weight: 600; }
+.rp-account-error { color: #b91c1c; }
+.rp-account-success { color: #168052; }
+.rp-account-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--rp-border); color: var(--rp-muted); font-size: 11px; }
 .rp-parameter-card { max-width: 980px; margin-top: 16px; padding: 18px; }
 .rp-parameter-card > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
 .rp-parameter-card > header h2 { margin:0 0 5px; font-family:Nunito,sans-serif; font-size:16px; }

@@ -4,7 +4,7 @@ import {
   Activity, Award, BarChart3, Bell, BookOpen, Building2, CalendarDays, Download, Eye,
   ChevronLeft, ChevronRight, ClipboardCheck, Home, LogOut,
   Menu, MessageSquare, Moon, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Settings, ShieldCheck,
-  QrCode, Sun, Trash2, Upload, Users, X,
+  QrCode, Sun, Trash2, Upload, UserPlus, Users, X,
 } from 'lucide-react';
 import { api } from './api.js';
 import { QRCodeSVG } from 'qrcode.react';
@@ -2496,6 +2496,16 @@ function SettingsView({ darkMode, setDarkMode }) {
 
   return <>
     <PageTitle title="Cài đặt" subtitle="Tùy chỉnh giao diện và các tham số vận hành." />
+    <section className="rp-card rp-account-card">
+      <header>
+        <div>
+          <h2>Tạo tài khoản</h2>
+          <p>Tạo tài khoản sinh viên, giảng viên hoặc cán bộ và chọn vai trò tương ứng.</p>
+        </div>
+        <UserPlus size={19} />
+      </header>
+      <AdminAccountCreationForm />
+    </section>
     <section className="rp-card rp-settings-card">
       <div>
         <h2>Giao diện</h2>
@@ -2537,6 +2547,87 @@ function SettingsView({ darkMode, setDarkMode }) {
       </>}
     </section>
   </>;
+}
+
+function AdminAccountCreationForm() {
+  const emptyForm = {
+    id: '',
+    name: '',
+    email: '',
+    password: '',
+    role: 'student',
+    className: '',
+    major: '',
+    subjectDepartment: '',
+    position: '',
+  };
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const updateField = (event) => {
+    const { name, value } = event.target;
+    setForm((current) => ({ ...current, [name]: value }));
+  };
+
+  const createAccount = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
+    const body = {
+      id: form.id.trim(),
+      name: form.name.trim(),
+      email: form.email.trim(),
+      password: form.password,
+      role: form.role,
+      ...(form.role === 'student' && {
+        className: form.className.trim(),
+        major: form.major.trim(),
+      }),
+      ...(form.role === 'lecturer' && {
+        subjectDepartment: form.subjectDepartment.trim(),
+      }),
+      ...(form.role === 'employee' && { position: form.position.trim() }),
+    };
+    try {
+      await api('/api/admin/users', { method: 'POST', body });
+      setForm(emptyForm);
+      setNotice(`Đã tạo tài khoản ${body.id}. Tài khoản đang hoạt động.`);
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : 'Không thể tạo tài khoản.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <form onSubmit={createAccount}>
+    <div className="rp-form-grid">
+      <label>Mã tài khoản<input name="id" value={form.id} onChange={updateField} required disabled={saving} /></label>
+      <label>Họ và tên<input name="name" value={form.name} onChange={updateField} required disabled={saving} /></label>
+      <label>Email<input name="email" type="email" autoComplete="email" value={form.email} onChange={updateField} required disabled={saving} /></label>
+      <label>Mật khẩu<input name="password" type="password" autoComplete="new-password" minLength={8} value={form.password} onChange={updateField} required disabled={saving} /><small className="rp-form-hint">Ít nhất 8 ký tự; mật khẩu được mã hóa trước khi lưu.</small></label>
+      <label>Phân quyền<select name="role" value={form.role} onChange={updateField} disabled={saving}>
+        <option value="student">Sinh viên</option>
+        <option value="lecturer">Giảng viên</option>
+        <option value="employee">Cán bộ</option>
+      </select></label>
+      {form.role === 'student' && <>
+        <label>Lớp<input name="className" value={form.className} onChange={updateField} required disabled={saving} /></label>
+        <label>Chuyên ngành<input name="major" value={form.major} onChange={updateField} required disabled={saving} /></label>
+      </>}
+      {form.role === 'lecturer' && <label>Bộ môn<input name="subjectDepartment" value={form.subjectDepartment} onChange={updateField} required disabled={saving} /></label>}
+      {form.role === 'employee' && <label>Chức vụ<input name="position" value={form.position} onChange={updateField} required disabled={saving} /></label>}
+    </div>
+    {error && <p className="rp-account-message rp-account-error" role="alert">{error}</p>}
+    {notice && <p className="rp-account-message rp-account-success" role="status">{notice}</p>}
+    <div className="rp-account-footer">
+      <span>Tài khoản mới mặc định được kích hoạt. Không hỗ trợ tạo tài khoản quản trị viên tại đây.</span>
+      <button className="rp-secondary-button" type="submit" disabled={saving}>
+        <UserPlus size={16} />{saving ? 'Đang tạo...' : 'Tạo tài khoản'}
+      </button>
+    </div>
+  </form>;
 }
 
 function GenericTable({ page, items }) {
