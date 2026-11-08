@@ -19,6 +19,7 @@ class ApiEndpoints {
   static const adminEarlyAttendance = '/api/admin/settings/early-attendance';
   static const attendance = '/api/attendance';
   static const attendanceSessions = '/api/attendance/sessions';
+  static const adminUsers = '/api/admin/users';
   static String closeAttendanceSession(String sessionId) =>
       '$attendanceSessions/${Uri.encodeComponent(sessionId)}/close';
   static const adminAttendanceSessions = '/api/admin/attendance/sessions';

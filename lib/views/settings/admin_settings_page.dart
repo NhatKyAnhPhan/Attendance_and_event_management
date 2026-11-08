@@ -19,18 +19,29 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   final _gpsController = TextEditingController();
   final _lockController = TextEditingController();
   final _qrController = TextEditingController();
+  final _userIdController = TextEditingController();
+  final _userNameController = TextEditingController();
+  final _userEmailController = TextEditingController();
+  final _userPasswordController = TextEditingController();
+  final _userClassController = TextEditingController();
+  final _userMajorController = TextEditingController();
+  final _userDepartmentController = TextEditingController();
+  final _userPositionController = TextEditingController();
   List<Map<String, dynamic>> _classes = [];
   List<Map<String, dynamic>> _events = [];
   String _scopeType = 'global';
   String _scopeId = '';
+  String _newUserRole = 'student';
   bool _inheritGps = false;
   bool _inheritLock = false;
   bool _inheritQr = false;
   bool _loading = true;
   bool _saving = false;
+  bool _creatingUser = false;
   bool _allowEarlyAttendance = false;
   bool _updatingEarlyAttendance = false;
   String? _error;
+  String? _createUserError;
 
   bool get _isSpecificScope => _scopeType == 'class' || _scopeType == 'event';
   bool get _isClassScope =>
@@ -47,6 +58,14 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     _gpsController.dispose();
     _lockController.dispose();
     _qrController.dispose();
+    _userIdController.dispose();
+    _userNameController.dispose();
+    _userEmailController.dispose();
+    _userPasswordController.dispose();
+    _userClassController.dispose();
+    _userMajorController.dispose();
+    _userDepartmentController.dispose();
+    _userPositionController.dispose();
     super.dispose();
   }
 
@@ -182,6 +201,81 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     }
   }
 
+  Future<void> _createUser() async {
+    final id = _userIdController.text.trim();
+    final name = _userNameController.text.trim();
+    final email = _userEmailController.text.trim();
+    final password = _userPasswordController.text;
+    final className = _userClassController.text.trim();
+    final major = _userMajorController.text.trim();
+    final subjectDepartment = _userDepartmentController.text.trim();
+    final position = _userPositionController.text.trim();
+
+    if (id.isEmpty || name.isEmpty || email.isEmpty || password.isEmpty) {
+      _showMessage('Vui lòng nhập đầy đủ mã, họ tên, email và mật khẩu.');
+      return;
+    }
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      _showMessage('Email không hợp lệ.');
+      return;
+    }
+    if (password.length < 8) {
+      _showMessage('Mật khẩu phải có ít nhất 8 ký tự.');
+      return;
+    }
+    if (_newUserRole == 'student' && (className.isEmpty || major.isEmpty)) {
+      _showMessage('Vui lòng nhập lớp và chuyên ngành của sinh viên.');
+      return;
+    }
+    if (_newUserRole == 'lecturer' && subjectDepartment.isEmpty) {
+      _showMessage('Vui lòng nhập bộ môn của giảng viên.');
+      return;
+    }
+    if (_newUserRole == 'employee' && position.isEmpty) {
+      _showMessage('Vui lòng nhập chức vụ của cán bộ.');
+      return;
+    }
+
+    setState(() {
+      _creatingUser = true;
+      _createUserError = null;
+    });
+    try {
+      await _client.post(
+        ApiEndpoints.adminUsers,
+        data: {
+          'id': id,
+          'name': name,
+          'email': email,
+          'password': password,
+          'role': _newUserRole,
+          if (_newUserRole == 'student') ...{
+            'className': className,
+            'major': major,
+          },
+          if (_newUserRole == 'lecturer')
+            'subjectDepartment': subjectDepartment,
+          if (_newUserRole == 'employee') 'position': position,
+        },
+      );
+      if (!mounted) return;
+      _userIdController.clear();
+      _userNameController.clear();
+      _userEmailController.clear();
+      _userPasswordController.clear();
+      _userClassController.clear();
+      _userMajorController.clear();
+      _userDepartmentController.clear();
+      _userPositionController.clear();
+      _showMessage('Đã tạo tài khoản $id.');
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _createUserError = error.message);
+    } finally {
+      if (mounted) setState(() => _creatingUser = false);
+    }
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
@@ -252,6 +346,13 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
               const SizedBox(height: 16),
               _section(
                 colors,
+                title: 'Tạo tài khoản',
+                icon: Icons.person_add_alt_1_outlined,
+                child: _buildCreateUser(colors),
+              ),
+              const SizedBox(height: 16),
+              _section(
+                colors,
                 title: 'Tham số hệ thống',
                 icon: Icons.tune_rounded,
                 child: _buildParameters(colors),
@@ -260,6 +361,100 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCreateUser(AppColors colors) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Tạo tài khoản sinh viên, giảng viên hoặc cán bộ và chọn vai trò tương ứng.',
+          style: AppTextStyles.bodySm(colors.mutedForeground),
+        ),
+        const SizedBox(height: 14),
+        _userTextField(_userIdController, 'Mã tài khoản'),
+        const SizedBox(height: 10),
+        _userTextField(_userNameController, 'Họ và tên'),
+        const SizedBox(height: 10),
+        _userTextField(
+          _userEmailController,
+          'Email',
+          keyboardType: TextInputType.emailAddress,
+        ),
+        const SizedBox(height: 10),
+        _userTextField(
+          _userPasswordController,
+          'Mật khẩu (ít nhất 8 ký tự)',
+          obscureText: true,
+        ),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<String>(
+          initialValue: _newUserRole,
+          decoration: const InputDecoration(labelText: 'Phân quyền'),
+          items: const [
+            DropdownMenuItem(value: 'student', child: Text('Sinh viên')),
+            DropdownMenuItem(value: 'lecturer', child: Text('Giảng viên')),
+            DropdownMenuItem(value: 'employee', child: Text('Cán bộ')),
+          ],
+          onChanged: _creatingUser
+              ? null
+              : (value) {
+                  if (value != null) setState(() => _newUserRole = value);
+                },
+        ),
+        if (_newUserRole == 'student') ...[
+          const SizedBox(height: 10),
+          _userTextField(_userClassController, 'Lớp'),
+          const SizedBox(height: 10),
+          _userTextField(_userMajorController, 'Chuyên ngành'),
+        ],
+        if (_newUserRole == 'lecturer') ...[
+          const SizedBox(height: 10),
+          _userTextField(_userDepartmentController, 'Bộ môn'),
+        ],
+        if (_newUserRole == 'employee') ...[
+          const SizedBox(height: 10),
+          _userTextField(_userPositionController, 'Chức vụ'),
+        ],
+        if (_createUserError != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _createUserError!,
+            style: AppTextStyles.bodySm(Colors.red.shade700),
+          ),
+        ],
+        const SizedBox(height: 14),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.icon(
+            onPressed: _creatingUser ? null : _createUser,
+            icon: _creatingUser
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.person_add_alt_1_outlined),
+            label: Text(_creatingUser ? 'Đang tạo...' : 'Tạo tài khoản'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _userTextField(
+    TextEditingController controller,
+    String label, {
+    TextInputType? keyboardType,
+    bool obscureText = false,
+  }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      obscureText: obscureText,
+      enabled: !_creatingUser,
+      decoration: InputDecoration(labelText: label),
     );
   }
 
@@ -310,7 +505,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         ),
         const SizedBox(height: 14),
         DropdownButtonFormField<String>(
-          value: _scopeType,
+          initialValue: _scopeType,
           decoration: const InputDecoration(labelText: 'Phạm vi cài đặt'),
           items: const [
             DropdownMenuItem(value: 'global', child: Text('Toàn hệ thống')),
@@ -330,7 +525,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         if (_isSpecificScope) ...[
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            value: _scopeId.isEmpty ? null : _scopeId,
+            key: ValueKey('$_scopeType:$_scopeId'),
+            initialValue: _scopeId.isEmpty ? null : _scopeId,
             decoration: InputDecoration(
               labelText: _scopeType == 'class' ? 'Lớp học phần' : 'Sự kiện',
             ),

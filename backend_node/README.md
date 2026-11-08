@@ -75,6 +75,16 @@ are not verified yet, so users should use an email they can access; before
 production, add email verification (or have an administrator confirm school
 addresses) and require verification when an email is changed.
 
+## Admin account creation
+
+Administrators can create accounts from **Settings → Create account**. The
+authenticated `POST /api/admin/users` endpoint accepts `id`, `name`, `email`,
+`password`, and `role`. Supported roles are `student`, `lecturer`, and
+`employee`; students also require `className` and `major`, lecturers require
+`subjectDepartment`, and employees require `position`. New accounts are active
+by default, and passwords are hashed before being stored. Creating administrator
+accounts is not supported by this endpoint.
+
 ## Firebase push notifications
 
 The Flutter Android app registers its FCM token after a student signs in. The

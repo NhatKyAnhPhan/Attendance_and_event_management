@@ -6636,6 +6636,111 @@ app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admi
   }
 });
 
+app.post('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  const body = request.body || {};
+  const id = String(body.id || '').trim();
+  const name = String(body.name || '').trim();
+  const email = String(body.email || '').trim().toLowerCase();
+  const password = String(body.password || '');
+  const roleByValue = new Map([
+    ['student', 'Sinh viên'],
+    ['sinhvien', 'Sinh viên'],
+    ['lecturer', 'Giảng viên'],
+    ['giangvien', 'Giảng viên'],
+    ['employee', 'Cán bộ'],
+    ['canbo', 'Cán bộ'],
+  ]);
+  const normalizeRequestedRole = (value) => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+  const role = roleByValue.get(normalizeRequestedRole(body.role));
+  const className = String(body.className || '').trim();
+  const major = String(body.major || '').trim();
+  const subjectDepartment = String(body.subjectDepartment || '').trim();
+  const position = String(body.position || '').trim();
+
+  if (!id || !name || !email || !password || !role) {
+    return response.status(400).json({
+      message: 'Vui lòng nhập mã, họ tên, email, mật khẩu và vai trò hợp lệ.',
+    });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8) {
+    return response.status(400).json({
+      message: 'Email không hợp lệ hoặc mật khẩu chưa đủ 8 ký tự.',
+    });
+  }
+  if (role === 'Sinh viên' && (!className || !major)) {
+    return response.status(400).json({
+      message: 'Sinh viên cần có lớp và chuyên ngành.',
+    });
+  }
+  if (role === 'Giảng viên' && !subjectDepartment) {
+    return response.status(400).json({ message: 'Giảng viên cần có bộ môn.' });
+  }
+  if (role === 'Cán bộ' && !position) {
+    return response.status(400).json({ message: 'Cán bộ cần có chức vụ.' });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [[duplicate]] = await connection.execute(
+      'SELECT Mand AS id FROM NguoiDung WHERE Mand = ? OR LOWER(Email) = ? LIMIT 1',
+      [id, email],
+    );
+    if (duplicate) {
+      await connection.rollback();
+      return response.status(409).json({
+        message: 'Mã tài khoản hoặc email đã tồn tại.',
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await connection.execute(
+      `INSERT INTO NguoiDung
+        (Mand, Hoten, Email, Matkhau, Vaitro, Trangthaind, SDT, DiaChi, NgaySinh, GioiTinh, QueQuan)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, name, email, passwordHash, role, 'Đang hoạt động', null, null, null, null, null],
+    );
+    if (role === 'Sinh viên') {
+      await connection.execute(
+        'INSERT INTO SinhVien (Masv, Lop, Chuyennganh) VALUES (?, ?, ?)',
+        [id, className, major],
+      );
+    } else if (role === 'Giảng viên') {
+      await connection.execute(
+        'INSERT INTO GiangVien (Magv, BoMon) VALUES (?, ?)',
+        [id, subjectDepartment],
+      );
+    } else {
+      await connection.execute(
+        'INSERT INTO CongNhanVien (Manv, Chucvu) VALUES (?, ?)',
+        [id, position],
+      );
+    }
+    await connection.commit();
+    return response.status(201).json({
+      user: { id, name, email, role, status: 'Đang hoạt động' },
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Admin user creation error:', error.message);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return response.status(409).json({
+        message: 'Mã tài khoản hoặc email đã tồn tại.',
+      });
+    }
+    return response.status(500).json({
+      message: 'Không thể tạo tài khoản.',
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const { units, users } = request.body || {};
   if (!Array.isArray(units) || !Array.isArray(users)
