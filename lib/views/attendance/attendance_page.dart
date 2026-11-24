@@ -398,7 +398,7 @@ class _AttendancePageState extends State<AttendancePage> {
         if (sessions.isNotEmpty) ...[
           const SizedBox(height: 20),
           StatisticsBarChart(
-            title: 'Kết quả theo mã học phần',
+            title: 'Kết quả theo tên lớp',
             colors: colors,
             verticalCategories: true,
             categories: classSummaries
@@ -438,23 +438,22 @@ class _AttendancePageState extends State<AttendancePage> {
     );
   }
 
-  /// Cộng số liệu API của các phiên theo mã học phần duy nhất.
+  /// Cộng số liệu API của các phiên theo lớp và giữ tên lớp để biểu đồ hiển thị.
   static List<Map<String, dynamic>> _aggregateByClass(
     List<Map<String, dynamic>> sessions,
   ) {
-    final grouped = <String, Map<String, int>>{};
-    final classNames = <String, String>{};
+    final grouped = <String, Map<String, dynamic>>{};
     for (final session in sessions) {
       final classId = session['classId']?.toString() ?? '';
       if (classId.isEmpty) continue;
       final className = session['className']?.toString().trim() ?? '';
-      if (className.isNotEmpty) {
-        classNames.putIfAbsent(classId, () => className);
-      }
       final counts = grouped.putIfAbsent(
         classId,
-        () => {'present': 0, 'late': 0, 'absent': 0},
+        () => {'className': className, 'present': 0, 'late': 0, 'absent': 0},
       );
+      if (counts['className'].toString().isEmpty && className.isNotEmpty) {
+        counts['className'] = className;
+      }
       counts['present'] = counts['present']! + _count(session['present']);
       counts['late'] = counts['late']! + _count(session['late']);
       counts['absent'] = counts['absent']! + _count(session['absent']);
@@ -463,7 +462,6 @@ class _AttendancePageState extends State<AttendancePage> {
         .map(
           (entry) => <String, dynamic>{
             'classId': entry.key,
-            'className': classNames[entry.key] ?? '',
             ...entry.value,
           },
         )

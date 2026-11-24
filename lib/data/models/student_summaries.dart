@@ -110,6 +110,13 @@ class StudentEventSummary {
     return 'Đang diễn ra';
   }
 
+  int get eventSortOrder => switch (eventStatus) {
+    'Sắp diễn ra' => 0,
+    'Đang diễn ra' => 1,
+    'Đã kết thúc' || 'Đã đóng' => 2,
+    _ => 3,
+  };
+
   /// Chuyển dữ liệu sự kiện trả về từ API thành model tóm tắt.
   factory StudentEventSummary.fromJson(Map<String, dynamic> json) {
     return StudentEventSummary(

@@ -175,7 +175,15 @@ class _StudentClassesPageState extends State<StudentClassesPage> {
                 child: StatisticsBarChart(
                   title: 'Kết quả điểm danh theo lớp',
                   colors: c,
-                  categories: filteredClasses.map((cls) => cls.name).toList(),
+                  categories: filteredClasses
+                      .map(
+                        (cls) => cls.name.trim().isNotEmpty
+                            ? cls.name.trim()
+                            : cls.code.isNotEmpty
+                            ? cls.code
+                            : cls.id,
+                      )
+                      .toList(),
                   series: [
                     StatisticsChartSeries(
                       label: 'Có mặt',

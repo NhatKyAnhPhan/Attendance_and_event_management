@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:get/get.dart';
 
 import 'dart:async';
@@ -103,6 +105,8 @@ class OrganizerEventsController extends GetxController {
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
     required List<Map<String, dynamic>> attendancePeriods,
+    String imageUrl = '',
+    String registrationFormUrl = '',
     bool allowHistoricalImport = false,
   }) async {
     await _repository.createOrganizerEvent(
@@ -119,6 +123,8 @@ class OrganizerEventsController extends GetxController {
       benefits: benefits,
       rules: rules,
       attendancePeriods: attendancePeriods,
+      imageUrl: imageUrl,
+      registrationFormUrl: registrationFormUrl,
       allowHistoricalImport: allowHistoricalImport,
     );
     await load();
@@ -139,6 +145,8 @@ class OrganizerEventsController extends GetxController {
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
     required List<Map<String, dynamic>> attendancePeriods,
+    String imageUrl = '',
+    String registrationFormUrl = '',
   }) async {
     await _repository.updateOrganizerEvent(
       id: id,
@@ -154,9 +162,19 @@ class OrganizerEventsController extends GetxController {
       benefits: benefits,
       rules: rules,
       attendancePeriods: attendancePeriods,
+      imageUrl: imageUrl,
+      registrationFormUrl: registrationFormUrl,
     );
     await load();
   }
+
+  Future<String> uploadEventImage(Uint8List bytes, String filename) =>
+      _repository.uploadEventImage(bytes, filename);
+
+  Future<String> uploadEventRegistrationForm(
+    Uint8List bytes,
+    String filename,
+  ) => _repository.uploadEventRegistrationForm(bytes, filename);
 
   // Xóa sự kiện rồi đồng bộ lại danh sách đang hiển thị.
   Future<void> deleteEvent(String id) async {

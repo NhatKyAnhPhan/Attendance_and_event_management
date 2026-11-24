@@ -33,4 +33,56 @@ void main() {
 
     expect(summary.certificateEnabled, isTrue);
   });
+
+  test('student events are ordered by upcoming, ongoing, and ended status', () {
+    final now = DateTime.now();
+    StudentEventSummary event({
+      required String id,
+      required DateTime start,
+      required DateTime end,
+    }) => StudentEventSummary(
+      id: id,
+      name: id,
+      date: start.toIso8601String(),
+      org: '',
+      startTime: start,
+      endTime: end,
+      registered: false,
+    );
+
+    final events =
+        [
+          event(
+            id: 'ended',
+            start: now.subtract(const Duration(days: 2)),
+            end: now.subtract(const Duration(days: 1)),
+          ),
+          event(
+            id: 'later',
+            start: now.add(const Duration(days: 2)),
+            end: now.add(const Duration(days: 2, hours: 1)),
+          ),
+          event(
+            id: 'ongoing',
+            start: now.subtract(const Duration(minutes: 30)),
+            end: now.add(const Duration(minutes: 30)),
+          ),
+          event(
+            id: 'sooner',
+            start: now.add(const Duration(days: 1)),
+            end: now.add(const Duration(days: 1, hours: 1)),
+          ),
+        ]..sort((a, b) {
+          final statusOrder = a.eventSortOrder.compareTo(b.eventSortOrder);
+          if (statusOrder != 0) return statusOrder;
+          return a.startTime!.compareTo(b.startTime!);
+        });
+
+    expect(events.map((event) => event.id), [
+      'sooner',
+      'later',
+      'ongoing',
+      'ended',
+    ]);
+  });
 }

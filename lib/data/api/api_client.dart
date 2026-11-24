@@ -141,8 +141,18 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> postMultipart(String path, FormData data) async {
-    return _request(() => _dio.post<Map<String, dynamic>>(path, data: data));
+  Future<Map<String, dynamic>> postMultipart(
+    String path,
+    FormData data, {
+    Duration? sendTimeout,
+  }) async {
+    return _request(
+      () => _dio.post<Map<String, dynamic>>(
+        path,
+        data: data,
+        options: sendTimeout == null ? null : Options(sendTimeout: sendTimeout),
+      ),
+    );
   }
 
   Future<Map<String, dynamic>> delete(String path) async {

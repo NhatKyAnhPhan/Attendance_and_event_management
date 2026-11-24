@@ -373,6 +373,47 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     );
   }
 
+  Future<PlatformFile?> _pickEventUpload(
+    BuildContext context, {
+    required String title,
+    required List<String> extensions,
+    required int maxSizeBytes,
+    required String label,
+  }) async {
+    try {
+      final selection = await FilePicker.pickFiles(
+        dialogTitle: title,
+        type: FileType.custom,
+        allowedExtensions: extensions,
+        allowMultiple: false,
+        withData: true,
+      );
+      if (selection == null || selection.files.isEmpty) return null;
+
+      final file = selection.files.single;
+      final extension = file.name.split('.').last.toLowerCase();
+      if (!extensions.contains(extension)) {
+        throw FormatException('Định dạng $label không được hỗ trợ.');
+      }
+      if (file.size > maxSizeBytes) {
+        throw FormatException(
+          '$label vượt quá giới hạn ${maxSizeBytes ~/ (1024 * 1024)} MB.',
+        );
+      }
+      if (file.bytes == null || file.bytes!.isEmpty) {
+        throw FormatException('Không đọc được nội dung $label.');
+      }
+      return file;
+    } on Exception catch (exception) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không thể chọn $label: $exception')),
+        );
+      }
+      return null;
+    }
+  }
+
   Future<void> _importStudentRosterFromExcel(
     BuildContext context,
     OrganizerEventsController controller,
@@ -747,26 +788,38 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
             ),
             const SizedBox(height: 12),
             if (_showArchived && canDeleteEvents && filteredItems.isNotEmpty)
-              Wrap(spacing: 8, children: [
-                OutlinedButton.icon(
-                  onPressed: () => setState(() {
-                    if (_selectedClosedEventIds.length == filteredItems.length) {
-                      _selectedClosedEventIds.clear();
-                    } else {
-                      _selectedClosedEventIds
-                        ..clear()
-                        ..addAll(filteredItems.map((event) => event.id));
-                    }
-                  }),
-                  icon: const Icon(Icons.check_box_outlined),
-                  label: Text(_selectedClosedEventIds.length == filteredItems.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'),
-                ),
-                FilledButton.icon(
-                  onPressed: _selectedClosedEventIds.isEmpty ? null : () => _confirmDeleteSelected(context, controller),
-                  icon: const Icon(Icons.delete_outline),
-                  label: Text('Xóa đã chọn (${_selectedClosedEventIds.length})'),
-                ),
-              ]),
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => setState(() {
+                      if (_selectedClosedEventIds.length ==
+                          filteredItems.length) {
+                        _selectedClosedEventIds.clear();
+                      } else {
+                        _selectedClosedEventIds
+                          ..clear()
+                          ..addAll(filteredItems.map((event) => event.id));
+                      }
+                    }),
+                    icon: const Icon(Icons.check_box_outlined),
+                    label: Text(
+                      _selectedClosedEventIds.length == filteredItems.length
+                          ? 'Bỏ chọn tất cả'
+                          : 'Chọn tất cả',
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: _selectedClosedEventIds.isEmpty
+                        ? null
+                        : () => _confirmDeleteSelected(context, controller),
+                    icon: const Icon(Icons.delete_outline),
+                    label: Text(
+                      'Xóa đã chọn (${_selectedClosedEventIds.length})',
+                    ),
+                  ),
+                ],
+              ),
             if (_showArchived && canDeleteEvents && filteredItems.isNotEmpty)
               const SizedBox(height: 12),
             AppSearchField(
@@ -907,9 +960,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                           ),
                           child: Text(
                             event.status,
-                            style: AppTextStyles.bodyXs(
-                              Colors.white,
-                            ).copyWith(fontWeight: FontWeight.w700),
+                            style: AppTextStyles.bodyXs(Colors.white)
+                                .copyWith(fontWeight: FontWeight.w700),
                           ),
                         ),
                         if (canManageEvents || canDeleteEvents)
@@ -975,10 +1027,18 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Xóa sự kiện đã chọn?'),
-        content: Text('Bạn có chắc muốn xóa ${ids.length} sự kiện đã đóng không?'),
+        content: Text(
+          'Bạn có chắc muốn xóa ${ids.length} sự kiện đã đóng không?',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Hủy')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Xác nhận xóa')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Xác nhận xóa'),
+          ),
         ],
       ),
     );
@@ -989,10 +1049,14 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       }
       if (mounted) setState(() => _selectedClosedEventIds.clear());
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã xóa ${ids.length} sự kiện.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã xóa ${ids.length} sự kiện.')),
+        );
       }
     } catch (exception) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(exception.toString())));
+      if (context.mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(exception.toString())));
     }
   }
 
@@ -2027,6 +2091,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
     final locationController = TextEditingController(
       text: event?.location ?? '',
     );
+    final imageUrlController = TextEditingController(
+      text: currentDetails['imageUrl']?.toString() ?? '',
+    );
+    var registrationFormUrl =
+        currentDetails['registrationFormUrl']?.toString() ?? '';
+    PlatformFile? selectedImageFile;
+    PlatformFile? selectedRegistrationFormFile;
     final capacityController = TextEditingController(
       text: event?.capacity.toString() ?? '100',
     );
@@ -2226,6 +2297,139 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                           'Chỉ bật nếu sự kiện này sẽ phát hành giấy chứng nhận.',
                         ),
                         controlAffinity: ListTileControlAffinity.leading,
+                      ),
+                      const SizedBox(height: 16),
+                      _eventFormSection(
+                        colors,
+                        Icons.image_outlined,
+                        'Ảnh sự kiện',
+                        [
+                          TextFormField(
+                            controller: imageUrlController,
+                            keyboardType: TextInputType.url,
+                            decoration: _eventInputDecoration(
+                              'Đường dẫn ảnh (không bắt buộc)',
+                            ),
+                            onChanged: (_) {
+                              if (selectedImageFile != null) {
+                                setState(() => selectedImageFile = null);
+                              }
+                            },
+                          ),
+                          Text(
+                            'Hoặc tải ảnh JPEG, PNG, WebP (tối đa 5 MB).',
+                            style: AppTextStyles.bodySm(colors.mutedForeground),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final file = await _pickEventUpload(
+                                context,
+                                title: 'Chọn ảnh sự kiện',
+                                extensions: const [
+                                  'jpg',
+                                  'jpeg',
+                                  'png',
+                                  'webp',
+                                ],
+                                maxSizeBytes: 5 * 1024 * 1024,
+                                label: 'ảnh sự kiện',
+                              );
+                              if (file != null && context.mounted) {
+                                setState(() => selectedImageFile = file);
+                              }
+                            },
+                            icon: const Icon(Icons.upload_file_outlined),
+                            label: Text(
+                              selectedImageFile == null
+                                  ? 'Tải ảnh lên'
+                                  : 'Chọn ảnh khác',
+                            ),
+                          ),
+                          if (selectedImageFile != null)
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.image_outlined),
+                              title: Text(
+                                selectedImageFile!.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: IconButton(
+                                tooltip: 'Bỏ ảnh đã chọn',
+                                onPressed: () =>
+                                    setState(() => selectedImageFile = null),
+                                icon: const Icon(Icons.close),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _eventFormSection(
+                        colors,
+                        Icons.picture_as_pdf_outlined,
+                        'Đơn đăng ký',
+                        [
+                          Text(
+                            'Đính kèm đơn đăng ký có mộc dưới dạng PDF, tối đa '
+                            '10 MB. Bắt buộc khi tạo sự kiện mới.',
+                            style: AppTextStyles.bodySm(colors.mutedForeground),
+                          ),
+                          if (registrationFormUrl.isNotEmpty)
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(
+                                Icons.picture_as_pdf_outlined,
+                              ),
+                              title: const Text('Đã có đơn đăng ký'),
+                              subtitle: Text(
+                                registrationFormUrl,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final file = await _pickEventUpload(
+                                context,
+                                title: 'Chọn đơn đăng ký PDF',
+                                extensions: const ['pdf'],
+                                maxSizeBytes: 10 * 1024 * 1024,
+                                label: 'đơn đăng ký PDF',
+                              );
+                              if (file != null && context.mounted) {
+                                setState(
+                                  () => selectedRegistrationFormFile = file,
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.upload_file_outlined),
+                            label: Text(
+                              selectedRegistrationFormFile == null
+                                  ? 'Tải đơn đăng ký lên'
+                                  : 'Chọn PDF khác',
+                            ),
+                          ),
+                          if (selectedRegistrationFormFile != null)
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(
+                                Icons.picture_as_pdf_outlined,
+                              ),
+                              title: Text(
+                                selectedRegistrationFormFile!.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: IconButton(
+                                tooltip: 'Bỏ PDF đã chọn',
+                                onPressed: () => setState(
+                                  () => selectedRegistrationFormFile = null,
+                                ),
+                                icon: const Icon(Icons.close),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       _eventFormSection(
@@ -2577,6 +2781,16 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ),
               FilledButton(
                 onPressed: () async {
+                  if (!isEditing && selectedRegistrationFormFile == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Vui lòng đính kèm đơn đăng ký PDF có mộc khi tạo sự kiện.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
                   final timeError = _eventTimeError(
                     startTime,
                     endTime,
@@ -2614,6 +2828,32 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                     final eventAttendancePeriods = attendancePeriods
                         .map((period) => period.toJson())
                         .toList();
+                    var imageUrl = imageUrlController.text.trim();
+                    if (selectedImageFile != null) {
+                      final bytes = selectedImageFile!.bytes;
+                      if (bytes == null || bytes.isEmpty) {
+                        throw const FormatException(
+                          'Không đọc được nội dung ảnh sự kiện.',
+                        );
+                      }
+                      imageUrl = await controller.uploadEventImage(
+                        bytes,
+                        selectedImageFile!.name,
+                      );
+                    }
+                    if (selectedRegistrationFormFile != null) {
+                      final bytes = selectedRegistrationFormFile!.bytes;
+                      if (bytes == null || bytes.isEmpty) {
+                        throw const FormatException(
+                          'Không đọc được nội dung đơn đăng ký PDF.',
+                        );
+                      }
+                      registrationFormUrl = await controller
+                          .uploadEventRegistrationForm(
+                            bytes,
+                            selectedRegistrationFormFile!.name,
+                          );
+                    }
                     if (isEditing) {
                       await controller.updateEvent(
                         id: event.id,
@@ -2629,6 +2869,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         benefits: eventBenefits,
                         rules: eventRules,
                         attendancePeriods: eventAttendancePeriods,
+                        imageUrl: imageUrl,
+                        registrationFormUrl: registrationFormUrl,
                       );
                     } else {
                       await controller.createEvent(
@@ -2644,6 +2886,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                         benefits: eventBenefits,
                         rules: eventRules,
                         attendancePeriods: eventAttendancePeriods,
+                        imageUrl: imageUrl,
+                        registrationFormUrl: registrationFormUrl,
                       );
                     }
                   } catch (exception) {
@@ -2673,6 +2917,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
       period.dispose();
     }
     locationController.dispose();
+    imageUrlController.dispose();
     capacityController.dispose();
     organizerController.dispose();
   }

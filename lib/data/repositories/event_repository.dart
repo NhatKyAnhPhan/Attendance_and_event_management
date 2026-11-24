@@ -1,3 +1,7 @@
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+
 import '../../core/utils/date_time_serialization.dart';
 import '../api/api_client.dart';
 import '../api/endpoints.dart';
@@ -142,6 +146,8 @@ class EventRepository {
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
     required List<Map<String, dynamic>> attendancePeriods,
+    String imageUrl = '',
+    String registrationFormUrl = '',
     bool allowHistoricalImport = false,
   }) async {
     await _client.post(
@@ -160,6 +166,8 @@ class EventRepository {
         'benefits': benefits,
         'rules': rules,
         'attendancePeriods': attendancePeriods,
+        'imageUrl': imageUrl,
+        'registrationFormUrl': registrationFormUrl,
         if (allowHistoricalImport) 'allowHistoricalImport': true,
       },
     );
@@ -180,6 +188,8 @@ class EventRepository {
     required List<Map<String, dynamic>> benefits,
     required List<String> rules,
     required List<Map<String, dynamic>> attendancePeriods,
+    String imageUrl = '',
+    String registrationFormUrl = '',
   }) async {
     await _client.put(
       '/api/organizer/events/$id',
@@ -196,8 +206,63 @@ class EventRepository {
         'benefits': benefits,
         'rules': rules,
         'attendancePeriods': attendancePeriods,
+        'imageUrl': imageUrl,
+        'registrationFormUrl': registrationFormUrl,
       },
     );
+  }
+
+  Future<String> uploadEventImage(Uint8List bytes, String filename) async {
+    final extension = filename.split('.').last.toLowerCase();
+    final mediaType = switch (extension) {
+      'jpg' || 'jpeg' => DioMediaType('image', 'jpeg'),
+      'png' => DioMediaType('image', 'png'),
+      'webp' => DioMediaType('image', 'webp'),
+      _ => throw const FormatException(
+        'Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP.',
+      ),
+    };
+    final body = await _client.postMultipart(
+      '/api/organizer/event-images',
+      FormData.fromMap({
+        'image': MultipartFile.fromBytes(
+          bytes,
+          filename: filename,
+          contentType: mediaType,
+        ),
+      }),
+      sendTimeout: const Duration(seconds: 30),
+    );
+    final imageUrl = body['imageUrl']?.toString().trim() ?? '';
+    if (imageUrl.isEmpty) {
+      throw const FormatException('Máy chủ không trả về đường dẫn ảnh.');
+    }
+    return imageUrl;
+  }
+
+  Future<String> uploadEventRegistrationForm(
+    Uint8List bytes,
+    String filename,
+  ) async {
+    final body = await _client.postMultipart(
+      '/api/organizer/event-registration-forms',
+      FormData.fromMap({
+        'registrationForm': MultipartFile.fromBytes(
+          bytes,
+          filename: filename,
+          contentType: DioMediaType('application', 'pdf'),
+        ),
+      }),
+      sendTimeout: const Duration(seconds: 60),
+    );
+    final registrationFormUrl =
+        body['registrationFormUrl']?.toString().trim() ?? '';
+    if (registrationFormUrl.isEmpty) {
+      throw const FormatException(
+        'Máy chủ không trả về đường dẫn đơn đăng ký PDF.',
+      );
+    }
+    return registrationFormUrl;
   }
 
   // Xóa sự kiện theo mã định danh.
