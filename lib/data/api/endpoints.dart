@@ -17,6 +17,8 @@ class ApiEndpoints {
   static const adminParameterOptions = '/api/admin/settings/parameters/options';
   static const adminParameters = '/api/admin/settings/parameters';
   static const adminEarlyAttendance = '/api/admin/settings/early-attendance';
+  static const adminOverlappingEventAttendance =
+      '/api/admin/settings/overlapping-event-attendance';
   static const attendance = '/api/attendance';
   static const attendanceSessions = '/api/attendance/sessions';
   static const adminUsers = '/api/admin/users';

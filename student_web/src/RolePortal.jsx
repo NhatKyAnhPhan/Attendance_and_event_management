@@ -2367,11 +2367,13 @@ function SettingsView({ darkMode, setDarkMode }) {
   const [classes, setClasses] = useState([]);
   const [events, setEvents] = useState([]);
   const [allowEarlyAttendance, setAllowEarlyAttendance] = useState(false);
+  const [allowOverlappingEventAttendance, setAllowOverlappingEventAttendance] = useState(false);
   const [parameters, setParameters] = useState({ gpsRadiusMeters: '100', eventRegistrationLockHours: '0', qrDurationMinutes: '15' });
   const [inherit, setInherit] = useState({ gpsRadiusMeters: false, eventRegistrationLockHours: false, qrDurationMinutes: false });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingEarlyAttendance, setSavingEarlyAttendance] = useState(false);
+  const [savingOverlappingEventAttendance, setSavingOverlappingEventAttendance] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const isSpecificScope = (type) => type === 'class' || type === 'event';
@@ -2390,6 +2392,7 @@ function SettingsView({ darkMode, setDarkMode }) {
         : `?scopeType=${type}`;
       const result = await api(`/api/admin/settings/parameters${query}`);
       setAllowEarlyAttendance(Boolean(result.global?.allowEarlyAttendance));
+      setAllowOverlappingEventAttendance(Boolean(result.global?.allowOverlappingEventAttendance));
       const keys = ['gpsRadiusMeters', 'eventRegistrationLockHours', 'qrDurationMinutes'];
       const nextParameters = {};
       const nextInherit = {};
@@ -2482,6 +2485,26 @@ function SettingsView({ darkMode, setDarkMode }) {
     }
   };
 
+  const updateOverlappingEventAttendance = async (enabled) => {
+    setSavingOverlappingEventAttendance(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await api('/api/admin/settings/overlapping-event-attendance', {
+        method: 'PUT',
+        body: { allowOverlappingEventAttendance: enabled },
+      });
+      setAllowOverlappingEventAttendance(Boolean(result.allowOverlappingEventAttendance));
+      setNotice(enabled
+        ? 'Đã cho phép đăng ký và điểm danh các sự kiện trùng lịch.'
+        : 'Đã tắt cho phép đăng ký sự kiện trùng lịch.');
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : 'Không thể lưu cài đặt sự kiện trùng lịch.');
+    } finally {
+      setSavingOverlappingEventAttendance(false);
+    }
+  };
+
   const updateParameter = (key, value) => setParameters((current) => ({ ...current, [key]: value }));
   const toggleInheritance = (key, value) => setInherit((current) => ({ ...current, [key]: value }));
   const parameterField = (key, label, unit, min, max) => (
@@ -2535,6 +2558,16 @@ function SettingsView({ darkMode, setDarkMode }) {
             />
             <span>Cho phép mở phiên và điểm danh sự kiện trước giờ bắt đầu</span>
             <small>Cho phép ban tổ chức mở phiên sớm và sinh viên điểm danh sự kiện trước giờ bắt đầu. Áp dụng toàn hệ thống; phù hợp khi demo.{savingEarlyAttendance ? ' Đang lưu...' : ''}</small>
+          </label>
+          <label className="rp-form-wide rp-checkbox-field">
+            <input
+              type="checkbox"
+              checked={allowOverlappingEventAttendance}
+              disabled={savingOverlappingEventAttendance}
+              onChange={(event) => updateOverlappingEventAttendance(event.target.checked)}
+            />
+            <span>Cho phép đăng ký và điểm danh sự kiện trùng lịch</span>
+            <small>Sinh viên có thể đăng ký và điểm danh nhiều sự kiện có thời gian diễn ra chồng lấn. Áp dụng toàn hệ thống.{savingOverlappingEventAttendance ? ' Đang lưu...' : ''}</small>
           </label>
         </div>
         <div className="rp-parameter-grid">

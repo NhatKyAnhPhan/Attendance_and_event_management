@@ -39,7 +39,9 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   bool _saving = false;
   bool _creatingUser = false;
   bool _allowEarlyAttendance = false;
+  bool _allowOverlappingEventAttendance = false;
   bool _updatingEarlyAttendance = false;
+  bool _updatingOverlappingEventAttendance = false;
   String? _error;
   String? _createUserError;
 
@@ -111,6 +113,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       final global = Map<String, dynamic>.from(body['global'] as Map);
       setState(() {
         _allowEarlyAttendance = global['allowEarlyAttendance'] == true;
+        _allowOverlappingEventAttendance =
+            global['allowOverlappingEventAttendance'] == true;
         _inheritGps =
             _scopeType != 'global' && overrides['gpsRadiusMeters'] == null;
         _inheritLock =
@@ -198,6 +202,27 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _updatingEarlyAttendance = false);
+    }
+  }
+
+  Future<void> _setOverlappingEventAttendance(bool enabled) async {
+    setState(() => _updatingOverlappingEventAttendance = true);
+    try {
+      final body = await _client.put(
+        ApiEndpoints.adminOverlappingEventAttendance,
+        data: {'allowOverlappingEventAttendance': enabled},
+      );
+      if (!mounted) return;
+      setState(() => _allowOverlappingEventAttendance =
+          body['allowOverlappingEventAttendance'] == true);
+      _showMessage(enabled
+          ? 'Đã cho phép đăng ký và điểm danh các sự kiện trùng lịch.'
+          : 'Đã tắt cho phép đăng ký sự kiện trùng lịch.');
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _updatingOverlappingEventAttendance = false);
     }
   }
 
@@ -496,6 +521,28 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : Icon(Icons.schedule_outlined, color: colors.primary),
+        ),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          value: _allowOverlappingEventAttendance,
+          onChanged: _loading || _updatingOverlappingEventAttendance
+              ? null
+              : _setOverlappingEventAttendance,
+          title: Text(
+            'Cho phép đăng ký và điểm danh sự kiện trùng lịch',
+            style: AppTextStyles.bodyMd(colors.foreground),
+          ),
+          subtitle: Text(
+            'Sinh viên có thể đăng ký và điểm danh nhiều sự kiện có thời gian diễn ra chồng lấn. Áp dụng toàn hệ thống.',
+            style: AppTextStyles.bodySm(colors.mutedForeground),
+          ),
+          secondary: _updatingOverlappingEventAttendance
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(Icons.event_repeat_outlined, color: colors.primary),
         ),
         const Divider(),
         const SizedBox(height: 8),

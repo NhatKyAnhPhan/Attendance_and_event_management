@@ -761,6 +761,7 @@ async function ensureSystemParametersTable() {
        qr_duration_minutes INT NULL,
        attendance_threshold_percent INT NULL,
        allow_early_attendance TINYINT(1) NOT NULL DEFAULT 0,
+       allow_overlapping_event_attendance TINYINT(1) NOT NULL DEFAULT 0,
        updated_by VARCHAR(30) NULL,
        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
          ON UPDATE CURRENT_TIMESTAMP,
@@ -774,6 +775,11 @@ async function ensureSystemParametersTable() {
   if (!columns.some((column) => column.Field === 'allow_early_attendance')) {
     await pool.query(
       'ALTER TABLE system_parameters ADD COLUMN allow_early_attendance TINYINT(1) NOT NULL DEFAULT 0 AFTER attendance_threshold_percent',
+    );
+  }
+  if (!columns.some((column) => column.Field === 'allow_overlapping_event_attendance')) {
+    await pool.query(
+      'ALTER TABLE system_parameters ADD COLUMN allow_overlapping_event_attendance TINYINT(1) NOT NULL DEFAULT 0 AFTER allow_early_attendance',
     );
   }
   await pool.execute(
@@ -2488,7 +2494,11 @@ app.post('/api/events/:eventId/register', requireAuth, async (request, response)
       return response.status(409).json({ message: 'Sự kiện đã đủ số lượng đăng ký.' });
     }
 
-    const [eventConflicts] = await connection.execute(
+    const { global: globalAttendanceParameters } =
+      await getEffectiveAttendanceParameters('global', '', connection);
+    const [eventConflicts] = globalAttendanceParameters.allowOverlappingEventAttendance
+      ? [[]]
+      : await connection.execute(
       `SELECT sk.Tensukien AS name
        FROM DangKySuKien dk
        INNER JOIN SuKien sk ON sk.Masukien = dk.Masukien
@@ -2876,6 +2886,7 @@ const defaultAttendanceParameters = {
   qrDurationMinutes: 15,
   attendanceThresholdPercent: 100,
   allowEarlyAttendance: false,
+  allowOverlappingEventAttendance: false,
 };
 
 async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = '', executor = pool) {
@@ -2885,7 +2896,8 @@ async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = 
               event_registration_lock_hours AS eventRegistrationLockHours,
               qr_duration_minutes AS qrDurationMinutes,
               attendance_threshold_percent AS attendanceThresholdPercent,
-              allow_early_attendance AS allowEarlyAttendance
+              allow_early_attendance AS allowEarlyAttendance,
+              allow_overlapping_event_attendance AS allowOverlappingEventAttendance
        FROM system_parameters WHERE scope_type = ? AND scope_id = ? LIMIT 1`,
       [type, id],
     );
@@ -2900,6 +2912,9 @@ async function getEffectiveAttendanceParameters(scopeType = 'global', scopeId = 
     ),
     allowEarlyAttendance: Boolean(
       Number(globalRow?.allowEarlyAttendance ?? defaultAttendanceParameters.allowEarlyAttendance),
+    ),
+    allowOverlappingEventAttendance: Boolean(
+      Number(globalRow?.allowOverlappingEventAttendance ?? defaultAttendanceParameters.allowOverlappingEventAttendance),
     ),
   };
   const isGroupScope = ['all_classes', 'all_events'].includes(scopeType);
@@ -6927,8 +6942,9 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
 
 // Lấy danh sách lớp học phần cho khu vực quản trị.
 app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
+  const isAdmin = isAdminAuth(request.auth);
   try {
-    const [rows] = await pool.query(
+    const [rows] = await pool.execute(
       `SELECT lhp.Malop AS id, lhp.Malop AS code, lhp.Tenlop AS name,
               lhp.Magv AS lecturerId, lhp.Madv AS departmentId,
               mh.Mabomon AS majorId, bm.Tenbomon AS majorName,
@@ -6947,13 +6963,13 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
        LEFT JOIN GiangVien gv ON gv.Magv = lhp.Magv
        LEFT JOIN NguoiDung nd ON nd.Mand = gv.Magv
        LEFT JOIN ThanhVienLop tvl ON tvl.Malop = lhp.Malop
-       WHERE (? IN ('Quản trị viên', 'admin') OR lhp.Magv = ?)
+       ${isAdmin ? '' : 'WHERE lhp.Magv = ?'}
        GROUP BY lhp.Malop, lhp.Tenlop, lhp.Magv, lhp.Madv, mh.Mabomon,
                 bm.Tenbomon, bm.Maloptat, lhp.Makhoa, lhp.Mamon, mh.Mamon,
                 mh.Tenmon, lhp.Tinchi, lhp.Soluongtoida,
                 lhp.Thoigianbatdau, lhp.Hocky, lhp.Trangthailop, nd.Hoten
        ORDER BY lhp.Malop`,
-      [request.auth.role, request.auth.sub],
+      isAdmin ? [] : [request.auth.sub],
     );
     return response.json({ items: rows });
   } catch (error) {
@@ -6963,7 +6979,7 @@ app.get('/api/admin/classes', requireAuth, requireRole('Quản trị viên', 'ad
 });
 
 app.get('/api/admin/classes/:classId/students', requireAuth, requireRole('Quản trị viên', 'admin', 'Giảng viên'), async (request, response) => {
-  const isAdmin = ['Quản trị viên', 'admin'].includes(request.auth.role);
+  const isAdmin = isAdminAuth(request.auth);
   try {
     const [[classInfo]] = await pool.execute(
       'SELECT Malop AS id, Magv AS lecturerId FROM LopHocPhan WHERE Malop = ? LIMIT 1',
@@ -7411,6 +7427,32 @@ app.put('/api/admin/settings/early-attendance', requireAuth, requireRole('Quản
     console.error('Save early attendance setting error:', error.message);
     return response.status(500).json({
       message: 'Không thể lưu cài đặt mở điểm danh sớm.',
+    });
+  }
+});
+
+app.put('/api/admin/settings/overlapping-event-attendance', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
+  const { allowOverlappingEventAttendance } = request.body || {};
+  if (typeof allowOverlappingEventAttendance !== 'boolean') {
+    return response.status(400).json({
+      message: 'Trạng thái cho phép điểm danh sự kiện trùng lịch không hợp lệ.',
+    });
+  }
+  try {
+    await pool.execute(
+      `INSERT INTO system_parameters
+         (scope_type, scope_id, allow_overlapping_event_attendance, updated_by)
+       VALUES ('global', '', ?, ?)
+       ON DUPLICATE KEY UPDATE
+         allow_overlapping_event_attendance = VALUES(allow_overlapping_event_attendance),
+         updated_by = VALUES(updated_by)`,
+      [allowOverlappingEventAttendance ? 1 : 0, request.auth.sub],
+    );
+    return response.json({ allowOverlappingEventAttendance });
+  } catch (error) {
+    console.error('Save overlapping event attendance setting error:', error.message);
+    return response.status(500).json({
+      message: 'Không thể lưu cài đặt điểm danh sự kiện trùng lịch.',
     });
   }
 });
