@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
 import '../core/constants/role.dart';
-import '../core/routes/app_routes.dart';
 import '../data/api/api_client.dart';
+import '../views/notifications/notifications_page.dart';
 import 'auth_controller.dart';
 
 class PushNotificationService extends GetxController {
@@ -53,7 +53,14 @@ class PushNotificationService extends GetxController {
       _messageSubscription = FirebaseMessaging.onMessage.listen((message) {
         final title = message.notification?.title ?? 'Thông báo mới';
         final body = message.notification?.body ?? '';
-        Get.snackbar(title, body, snackPosition: SnackPosition.TOP);
+        Get.snackbar(
+          title,
+          body,
+          snackPosition: SnackPosition.TOP,
+          onTap: (_) => Get.to<void>(
+            () => const NotificationsPage(role: Role.student),
+          ),
+        );
       });
       _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen(_openMessage);
       final initialMessage = await _messaging.getInitialMessage();
@@ -84,7 +91,7 @@ class PushNotificationService extends GetxController {
 
   void _openMessage(RemoteMessage message) {
     if (Get.find<AuthController>().isAuthed.value) {
-      Get.toNamed(AppRoutes.studentHome);
+      Get.to<void>(() => const NotificationsPage(role: Role.student));
     }
   }
 

@@ -20,8 +20,13 @@ import '../../data/face/temporary_image_cleanup.dart';
 /// Success, Expired QR, Invalid QR, Already checked in".
 class StudentCheckinPage extends StatefulWidget {
   final bool isActive;
+  final bool showBackButton;
 
-  const StudentCheckinPage({super.key, this.isActive = true});
+  const StudentCheckinPage({
+    super.key,
+    this.isActive = true,
+    this.showBackButton = false,
+  });
 
   @override
   State<StudentCheckinPage> createState() => _StudentCheckinPageState();
@@ -534,6 +539,15 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                             tooltip: 'Thoát quét',
                             onPressed: _reset,
                             icon: const Icon(Icons.close, color: Colors.white),
+                          )
+                        : widget.showBackButton
+                        ? IconButton(
+                            tooltip: 'Quay lại thông báo',
+                            onPressed: () => Navigator.of(context).maybePop(),
+                            icon: const Icon(
+                              Icons.arrow_back,
+                              color: Colors.white,
+                            ),
                           )
                         : null,
                   ),

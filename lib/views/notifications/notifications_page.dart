@@ -8,6 +8,7 @@ import '../../core/constants/role.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../data/models/notification_model.dart';
+import '../student/student_checkin_page.dart';
 
 // Đánh dấu thông báo đã đọc và hiển thị nội dung cùng thao tác liên quan.
 Future<void> showNotificationDetails(BuildContext context, AppNotificationItem item) async {
@@ -44,7 +45,14 @@ Future<void> showNotificationDetails(BuildContext context, AppNotificationItem i
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  if (item.type == NotificationType.attendance) {
+                    Get.to<void>(
+                      () => const StudentCheckinPage(showBackButton: true),
+                    );
+                  }
+                },
                 child: Text(item.actionLabel!),
               ),
             ),
