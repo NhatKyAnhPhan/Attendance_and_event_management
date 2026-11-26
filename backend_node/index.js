@@ -6652,6 +6652,35 @@ app.get('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admi
   }
 });
 
+async function resolveStudentCohortCode(executor, className, requestedCode) {
+  const explicitCode = String(requestedCode || '').trim();
+  const classPrefix = /(?:^|[^A-Z0-9])(?:K)?(\d{2})(?=[^0-9]|$)/i.exec(
+    String(className || '').trim(),
+  );
+  const candidate = explicitCode || (classPrefix ? `K${classPrefix[1]}` : '');
+  if (!candidate) {
+    const error = new Error(
+      'Sinh viên cần mã khóa hợp lệ ở cột MaKhoa, hoặc cột Lop phải bắt đầu bằng mã khóa hai chữ số (ví dụ 26DHKTPM01).',
+    );
+    error.code = 'INVALID_STUDENT_COHORT';
+    throw error;
+  }
+
+  const [[cohort]] = await executor.execute(
+    `SELECT MaKhoa AS code FROM QuyUocKhoa WHERE UPPER(MaKhoa) = UPPER(?)
+     UNION
+     SELECT MaKhoa AS code FROM SinhVien WHERE UPPER(MaKhoa) = UPPER(?)
+     LIMIT 1`,
+    [candidate, candidate],
+  );
+  if (!cohort) {
+    const error = new Error(`Không tìm thấy mã khóa "${candidate}" trong QuyUocKhoa.`);
+    error.code = 'INVALID_STUDENT_COHORT';
+    throw error;
+  }
+  return String(cohort.code);
+}
+
 app.post('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'admin'), async (request, response) => {
   const body = request.body || {};
   const id = String(body.id || '').trim();
@@ -6674,6 +6703,7 @@ app.post('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'adm
   const role = roleByValue.get(normalizeRequestedRole(body.role));
   const className = String(body.className || '').trim();
   const major = String(body.major || '').trim();
+  const cohortCode = String(body.cohortCode || '').trim();
   const subjectDepartment = String(body.subjectDepartment || '').trim();
   const position = String(body.position || '').trim();
 
@@ -6722,9 +6752,14 @@ app.post('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'adm
       [id, name, email, passwordHash, role, 'Đang hoạt động', null, null, null, null, null],
     );
     if (role === 'Sinh viên') {
+      const resolvedCohortCode = await resolveStudentCohortCode(
+        connection,
+        className,
+        cohortCode,
+      );
       await connection.execute(
-        'INSERT INTO SinhVien (Masv, Lop, Chuyennganh) VALUES (?, ?, ?)',
-        [id, className, major],
+        'INSERT INTO SinhVien (Masv, Lop, Chuyennganh, MaKhoa) VALUES (?, ?, ?, ?)',
+        [id, className, major, resolvedCohortCode],
       );
     } else if (role === 'Giảng viên') {
       await connection.execute(
@@ -6744,6 +6779,9 @@ app.post('/api/admin/users', requireAuth, requireRole('Quản trị viên', 'adm
   } catch (error) {
     if (connection) await connection.rollback();
     console.error('Admin user creation error:', error.message);
+    if (error.code === 'INVALID_STUDENT_COHORT') {
+      return response.status(400).json({ message: error.message });
+    }
     if (error.code === 'ER_DUP_ENTRY') {
       return response.status(409).json({
         message: 'Mã tài khoản hoặc email đã tồn tại.',
@@ -6880,9 +6918,14 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
       );
 
       if (normalizedRole === 'Sinh viên') {
+        const resolvedCohortCode = await resolveStudentCohortCode(
+          connection,
+          user.className,
+          user.cohortCode,
+        );
         await connection.execute(
-          'INSERT INTO SinhVien (Masv, Lop, Chuyennganh) VALUES (?, ?, ?)',
-          [id.trim(), String(user.className).trim(), String(user.major).trim()],
+          'INSERT INTO SinhVien (Masv, Lop, Chuyennganh, MaKhoa) VALUES (?, ?, ?, ?)',
+          [id.trim(), String(user.className).trim(), String(user.major).trim(), resolvedCohortCode],
         );
       } else if (normalizedRole === 'Giảng viên') {
         await connection.execute(

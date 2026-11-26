@@ -114,6 +114,7 @@ ExcelMasterDataImport extractAdminMasterDataFromWorkbook(Excel workbook) {
         'gender': {'gioitinh', 'gender'},
         'hometown': {'quequan', 'hometown'},
         'className': {'lop', 'class'},
+        'cohortCode': {'makhoa', 'cohort', 'cohortcode'},
         'major': {'chuyennganh', 'major'},
         'subjectDepartment': {'bomon', 'subjectdepartment'},
         'position': {'chucvu', 'position'},

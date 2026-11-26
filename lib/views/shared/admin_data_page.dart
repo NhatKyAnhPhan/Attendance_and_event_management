@@ -80,6 +80,7 @@ class _AdminDataPageState extends State<AdminDataPage> {
                 TextCellValue('GioiTinh'),
                 TextCellValue('QueQuan'),
                 TextCellValue('Lop'),
+                TextCellValue('MaKhoa'),
                 TextCellValue('ChuyenNganh'),
                 TextCellValue('BoMon'),
                 TextCellValue('ChucVu'),
@@ -94,7 +95,7 @@ class _AdminDataPageState extends State<AdminDataPage> {
           : [
               'Sheet NguoiDung: MaND, HoTen, Email, MatKhau và VaiTro bắt buộc.',
               'VaiTro hợp lệ: Sinh viên, Giảng viên, Cán bộ. Không hỗ trợ tạo tài khoản Admin.',
-              'Sinh viên cần Lop và ChuyenNganh; Giảng viên cần BoMon; Cán bộ cần ChucVu.',
+              'Sinh viên cần Lop và ChuyenNganh; MaKhoa có thể để trống nếu Lop bắt đầu bằng mã khóa (ví dụ 26DHKTPM01). Giảng viên cần BoMon; Cán bộ cần ChucVu.',
               'MatKhau tối thiểu 8 ký tự; mật khẩu được mã hóa trước khi lưu. Trạng thái trống mặc định là Đang hoạt động.',
               'Định dạng MaND là Văn bản để giữ số 0 ở đầu. NgaySinh dùng dạng YYYY-MM-DD.',
               'Mã tài khoản và email phải chưa tồn tại trong hệ thống.',

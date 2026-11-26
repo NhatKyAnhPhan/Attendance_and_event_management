@@ -7,7 +7,7 @@ const HEADERS = {
   users: [
     'MaND', 'HoTen', 'Email', 'MatKhau', 'VaiTro', 'TrangThai',
     'SDT', 'DiaChi', 'NgaySinh', 'GioiTinh', 'QueQuan',
-    'Lop', 'ChuyenNganh', 'BoMon', 'ChucVu',
+    'Lop', 'MaKhoa', 'ChuyenNganh', 'BoMon', 'ChucVu',
   ],
 };
 
@@ -53,6 +53,7 @@ function parseSheet(sheet, kind, warnings) {
     gender: ['gioitinh', 'gender'],
     hometown: ['quequan', 'hometown'],
     className: ['lop', 'class'],
+    cohortCode: ['makhoa', 'cohort', 'cohortcode'],
     major: ['chuyennganh', 'major'],
     subjectDepartment: ['bomon', 'subjectdepartment'],
     position: ['chucvu', 'position'],
@@ -175,7 +176,7 @@ export default function AdminMasterDataImport({ kind, onImported, showNotice }) 
           ] : [
             ['Sheet NguoiDung: MaND, HoTen, Email, MatKhau và VaiTro bắt buộc.'],
             ['VaiTro hợp lệ: Sinh viên, Giảng viên, Cán bộ. Không hỗ trợ tạo tài khoản Admin.'],
-            ['Sinh viên cần điền Lop và ChuyenNganh; Giảng viên cần điền BoMon; Cán bộ cần điền ChucVu.'],
+            ['Sinh viên cần điền Lop và ChuyenNganh; MaKhoa có thể để trống nếu Lop bắt đầu bằng mã khóa (ví dụ 26DHKTPM01). Giảng viên cần điền BoMon; Cán bộ cần điền ChucVu.'],
             ['MatKhau tối thiểu 8 ký tự; mật khẩu được mã hóa trước khi lưu. Trạng thái trống mặc định là Đang hoạt động.'],
             ['Định dạng MaND là Văn bản để giữ số 0 ở đầu. NgaySinh dùng dạng YYYY-MM-DD.'],
             ['Mã tài khoản và email phải chưa tồn tại trong hệ thống.'],
@@ -247,7 +248,7 @@ export default function AdminMasterDataImport({ kind, onImported, showNotice }) 
         {kind === 'users' && <p className="rp-modal-muted">Mật khẩu không hiển thị trong bản xem trước và sẽ được mã hóa trước khi lưu. Import tài khoản Admin không được hỗ trợ.</p>}
         {draft.warnings.length > 0 && <div className="rp-import-warning" role="alert"><strong>{draft.warnings.length} dòng sẽ bị bỏ qua</strong>{draft.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
         {draft.units.length > 0 && <div className="rp-import-preview"><strong>Đơn vị tổ chức</strong>{draft.units.map((unit) => <div key={unit.id}><strong>{unit.name}</strong><span>Mã {unit.id} · Nhân viên phụ trách: {unit.managerId || 'Chưa phân công'}</span></div>)}</div>}
-        {draft.users.length > 0 && <div className="rp-import-preview"><strong>Tài khoản người dùng</strong>{draft.users.map((user) => <div key={user.id}><strong>{user.name}</strong><span>{user.id} · {user.email} · {user.role}</span><span>{'*'.repeat(Math.min(user.passwordLength, 12))} · {user.status || 'Đang hoạt động'}</span></div>)}</div>}
+        {draft.users.length > 0 && <div className="rp-import-preview"><strong>Tài khoản người dùng</strong>{draft.users.map((user) => <div key={user.id}><strong>{user.name}</strong><span>{user.id} · {user.email} · {user.role}{user.cohortCode ? ` · Khóa ${user.cohortCode}` : ''}</span><span>{'*'.repeat(Math.min(user.passwordLength, 12))} · {user.status || 'Đang hoạt động'}</span></div>)}</div>}
         {error && <div className="rp-detail-error" role="alert">{error}</div>}
         <footer><button type="button" className="rp-secondary-button" onClick={() => setDraft(null)} disabled={busy}>Hủy</button><button type="button" className="rp-secondary-button" onClick={confirmImport} disabled={busy}>{busy ? 'Đang nhập...' : 'Xác nhận import'}</button></footer>
       </section>
