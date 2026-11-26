@@ -29,6 +29,7 @@ class AdminDataPage extends StatefulWidget {
 class _AdminDataPageState extends State<AdminDataPage> {
   late Future<Map<String, dynamic>> _dataFuture;
   String _query = '';
+  String _userRoleFilter = 'all';
   bool _importingMasterData = false;
 
   @override
@@ -42,6 +43,7 @@ class _AdminDataPageState extends State<AdminDataPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.endpoint != widget.endpoint) {
       _query = '';
+      _userRoleFilter = 'all';
       _dataFuture = ApiClient().get(widget.endpoint);
     }
   }
@@ -53,6 +55,21 @@ class _AdminDataPageState extends State<AdminDataPage> {
       : null;
 
   bool get _supportsMasterDataImport => _masterDataKind != null;
+
+  String _userCategory(Object? rawRole) {
+    final role = (rawRole ?? '').toString().trim().toLowerCase()
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ');
+    if (role == 'sinh viên' || role == 'student') return 'student';
+    if (role == 'giảng viên' || role == 'lecturer' || role == 'teacher') {
+      return 'lecturer';
+    }
+    if ({'cán bộ', 'nhân viên', 'employee', 'staff', 'organizer',
+      'event organizer', 'ban tổ chức'}.contains(role)) {
+      return 'employee';
+    }
+    return 'other';
+  }
 
   Future<void> _downloadMasterDataTemplate() async {
     try {
@@ -301,7 +318,10 @@ class _AdminDataPageState extends State<AdminDataPage> {
         final keys = columnKeys;
         final isUsers = widget.endpoint.endsWith('/users');
         final query = _query.trim().toLowerCase();
-        final filteredItems = items.where((item) {
+        final roleFilteredItems = !isUsers || _userRoleFilter == 'all'
+            ? items
+            : items.where((item) => _userCategory(item['role']) == _userRoleFilter).toList();
+        final filteredItems = roleFilteredItems.where((item) {
           return query.isEmpty ||
               keys.any(
                 (key) =>
@@ -354,6 +374,59 @@ class _AdminDataPageState extends State<AdminDataPage> {
               hintText: 'Tìm trong ${widget.title.toLowerCase()}...',
               onChanged: (value) => setState(() => _query = value),
             ),
+            if (isUsers) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: 360,
+                child: DropdownButtonFormField<String>(
+                  initialValue: _userRoleFilter,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Lọc theo vai trò',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'all', child: Text('Tất cả tài khoản')),
+                    DropdownMenuItem(value: 'student', child: Text('Sinh viên')),
+                    DropdownMenuItem(value: 'lecturer', child: Text('Giảng viên')),
+                    DropdownMenuItem(value: 'employee', child: Text('Nhân viên')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setState(() => _userRoleFilter = value);
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ('Tổng người dùng', filteredItems.length),
+                  ('Sinh viên', filteredItems.where((item) => _userCategory(item['role']) == 'student').length),
+                  ('Giảng viên', filteredItems.where((item) => _userCategory(item['role']) == 'lecturer').length),
+                  ('Nhân viên', filteredItems.where((item) => _userCategory(item['role']) == 'employee').length),
+                  ('Vai trò khác', filteredItems.where((item) => _userCategory(item['role']) == 'other').length),
+                ].map((stat) => Container(
+                  constraints: const BoxConstraints(minWidth: 118),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: c.card,
+                    border: Border.all(color: c.border),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(stat.$1, style: AppTextStyles.bodyXs(c.mutedForeground)),
+                      const SizedBox(height: 3),
+                      Text('${stat.$2}', style: AppTextStyles.displaySm(c.foreground)),
+                    ],
+                  ),
+                )).toList(),
+              ),
+            ],
             const SizedBox(height: 16),
             if (filteredItems.isEmpty)
               Padding(

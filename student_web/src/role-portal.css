@@ -328,6 +328,9 @@
 .notification-copy small { color: var(--rp-muted); font-size: 12px; }
 .rp-card { min-width: 0; border: 1px solid var(--rp-border); border-radius: 12px; background: var(--rp-card); }
 .rp-metrics-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.rp-users-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 14px; }
+.rp-user-role-filter { display: flex; width: min(100%, 340px); flex-direction: column; gap: 6px; margin: 14px 0; color: var(--rp-muted); font-size: 12px; font-weight: 600; }
+.rp-user-role-filter select { width: 100%; min-height: 39px; padding: 8px 10px; border: 1px solid var(--rp-border); border-radius: 7px; background: var(--rp-card); color: var(--rp-text); font: inherit; font-size: 12px; }
 .rp-metrics-compact { margin-bottom: 16px; }
 .rp-metric-card { display: flex; min-height: 96px; align-items: center; gap: 13px; padding: 15px; border: 1px solid var(--rp-border); border-radius: 9px; background: var(--rp-card); }
 .rp-metric-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--rp-primary) 12%, transparent); color: var(--rp-primary); }
@@ -536,6 +539,7 @@
   .rp-page-title h1 { font-size: 21px; }
   .rp-page-actions { align-self: stretch; justify-content: flex-end; }
   .rp-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .rp-users-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rp-metric-card { min-height: 78px; gap: 9px; padding: 10px; }
   .rp-metric-icon { width: 34px; height: 34px; }
   .rp-metric-card > div span { font-size: 12px; }

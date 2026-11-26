@@ -214,6 +214,7 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
         page === 'events' ? <EventsView items={rows} />
           : page === 'notifications' ? <EmptyPanel title="Không có thông báo" message="Hiện chưa có thông báo dành cho vai trò này." />
             : page === 'certificates' ? <StaffCertificateTable items={rows} showNotice={showNotice} />
+              : page === 'users' ? <AdminUsersTable items={rows} />
             : <GenericTable page={page} items={rows} />
       )}
       {certificateTemplateOpen && <CertificateSignatureDialog onClose={() => setCertificateTemplateOpen(false)} showNotice={showNotice} />}
@@ -2862,6 +2863,41 @@ function GenericTable({ page, items }) {
         : page === 'feedback' ? [['Loại', 'sourceType'], ['Sinh viên', 'studentName'], ['Nội dung', 'content'], ['Sự kiện / lớp', 'eventName'], ['Thời gian', 'sentAt']]
           : [['Mã', 'id'], ['Nội dung', 'title'], ['Thời gian', 'createdAt']];
   return <>{items.length ? <div className="rp-table-wrap"><table className="rp-table"><thead><tr>{columns.map(([label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{items.map((item, index) => <tr key={item.id || index} className={page === 'feedback' ? 'rp-clickable-row' : ''} onClick={() => page === 'feedback' && setSelected(item)}>{columns.map(([label, key]) => <td key={key}>{formatCell(item[key])}</td>)}</tr>)}</tbody></table></div> : <EmptyPanel title="Chưa có dữ liệu" message="Danh sách sẽ hiển thị khi hệ thống có bản ghi." />}{selected && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>Chi tiết {selected.rating != null ? 'đánh giá' : 'phản hồi'}</h2><p>{selected.studentName || selected.studentId || 'Sinh viên'}</p></div><button className="rp-icon-button" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></header><div className="rp-detail-grid"><div><small>Đối tượng</small><strong>{selected.eventName || selected.className || selected.sourceType || '—'}</strong></div><div><small>Thời gian</small><strong>{formatDate(selected.sentAt || selected.createdAt)}</strong></div>{selected.rating != null && <div><small>Đánh giá</small><strong>{selected.rating} / 5 ★</strong></div>}</div><div className="rp-feedback-content">{selected.content || selected.comment || 'Không có nội dung.'}</div></section></div>}</>;
+}
+
+function adminUserCategory(role) {
+  const value = normalizeMatchText(role).replace(/\s+/g, '');
+  if (['sinhvien', 'student'].includes(value)) return 'student';
+  if (['giangvien', 'lecturer', 'teacher'].includes(value)) return 'lecturer';
+  if (['canbo', 'nhanvien', 'employee', 'staff', 'organizer', 'eventorganizer', 'bantochuc'].includes(value)) return 'employee';
+  return 'other';
+}
+
+function AdminUsersTable({ items }) {
+  const [roleFilter, setRoleFilter] = useState('all');
+  const filtered = roleFilter === 'all'
+    ? items
+    : items.filter((item) => adminUserCategory(item.role) === roleFilter);
+  const counts = {
+    'Tổng người dùng': filtered.length,
+    'Sinh viên': filtered.filter((item) => adminUserCategory(item.role) === 'student').length,
+    'Giảng viên': filtered.filter((item) => adminUserCategory(item.role) === 'lecturer').length,
+    'Nhân viên': filtered.filter((item) => adminUserCategory(item.role) === 'employee').length,
+    'Vai trò khác': filtered.filter((item) => adminUserCategory(item.role) === 'other').length,
+  };
+  const columns = [['Mã', 'id'], ['Họ tên', 'name'], ['Email', 'email'], ['Vai trò', 'role'], ['Trạng thái', 'status']];
+  return <>
+    <label className="rp-user-role-filter">Lọc theo vai trò
+      <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+        <option value="all">Tất cả tài khoản</option>
+        <option value="student">Sinh viên</option>
+        <option value="lecturer">Giảng viên</option>
+        <option value="employee">Nhân viên</option>
+      </select>
+    </label>
+    <div className="rp-metrics-grid rp-users-metrics">{Object.entries(counts).map(([label, value], index) => <article className="rp-metric-card" key={label}><span className={`rp-metric-icon tone-${index % 5}`}><Users size={19} /></span><div><span>{label}</span><strong>{value}</strong></div></article>)}</div>
+    {filtered.length ? <div className="rp-table-wrap"><table className="rp-table"><thead><tr>{columns.map(([label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{filtered.map((item, index) => <tr key={item.id || index}>{columns.map(([label, key]) => <td key={key}>{formatCell(item[key])}</td>)}</tr>)}</tbody></table></div> : <EmptyPanel title="Không tìm thấy tài khoản" message="Thử chọn vai trò khác hoặc thay đổi từ khóa tìm kiếm." />}
+  </>;
 }
 
 function StaffCertificateTable({ items, showNotice }) {
