@@ -24,6 +24,7 @@ class ClassesPage extends StatefulWidget {
 class _ClassesPageState extends State<ClassesPage> {
   String _query = '';
   bool _showArchived = false;
+  bool _showFilters = false;
   String? _cohortFilter;
   String? _lecturerFilter;
   String? _subjectFilter;
@@ -185,6 +186,15 @@ class _ClassesPageState extends State<ClassesPage> {
               hintText: 'Tìm tên lớp, mã lớp, giảng viên...',
               onChanged: (value) => setState(() => _query = value),
             ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() => _showFilters = !_showFilters),
+                icon: const Icon(Icons.filter_list),
+                label: Text(_showFilters ? 'Ẩn bộ lọc' : 'Bộ lọc'),
+              ),
+            ),
+            if (_showFilters) ...[
             const SizedBox(height: 12),
             Wrap(
               spacing: 12,
@@ -195,6 +205,7 @@ class _ClassesPageState extends State<ClassesPage> {
                 _classFilterDropdown('Môn học', 'Tất cả môn học', _subjectFilter, subjects.keys.toList()..sort(), (v) => setState(() => _subjectFilter = v), labels: subjects),
               ],
             ),
+            ],
             const SizedBox(height: 12),
             TotalCountCard(
               label: 'Số lớp đang hiển thị',

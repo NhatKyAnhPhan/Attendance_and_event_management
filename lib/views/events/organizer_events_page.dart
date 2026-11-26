@@ -75,6 +75,7 @@ List<int> _eventAttendanceThresholdOptions(int periodCount) => periodCount <= 0
 class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   String _query = '';
   bool _showArchived = false;
+  bool _showFilters = false;
   final Set<String> _selectedClosedEventIds = {};
   bool _sendingCertificates = false;
   bool _issuingCertificatesInApp = false;
@@ -795,40 +796,6 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ],
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                SizedBox(
-                  width: 240,
-                  child: DropdownButtonFormField<String>(
-                    value: organizerIds.contains(_organizerFilter) ? _organizerFilter! : '',
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Đơn vị tổ chức', border: OutlineInputBorder()),
-                    items: [
-                      const DropdownMenuItem(value: '', child: Text('Tất cả đơn vị')),
-                      ...organizerIds.map((id) => DropdownMenuItem(value: id, child: Text(organizerNames[id] ?? id, overflow: TextOverflow.ellipsis))),
-                    ],
-                    onChanged: (value) => setState(() => _organizerFilter = value == null || value.isEmpty ? null : value),
-                  ),
-                ),
-                SizedBox(
-                  width: 240,
-                  child: DropdownButtonFormField<String>(
-                    value: _certificateFilter,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Chứng nhận', border: OutlineInputBorder()),
-                    items: const [
-                      DropdownMenuItem(value: '', child: Text('Tất cả')),
-                      DropdownMenuItem(value: 'yes', child: Text('Có cấp chứng nhận')),
-                      DropdownMenuItem(value: 'no', child: Text('Không cấp chứng nhận')),
-                    ],
-                    onChanged: (value) => setState(() => _certificateFilter = value ?? ''),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
             if (_showArchived && canDeleteEvents && filteredItems.isNotEmpty)
               Wrap(
                 spacing: 8,
@@ -869,6 +836,49 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               hintText: 'Tìm tên sự kiện, địa điểm, trạng thái...',
               onChanged: (value) => setState(() => _query = value),
             ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() => _showFilters = !_showFilters),
+                icon: const Icon(Icons.filter_list),
+                label: Text(_showFilters ? 'Ẩn bộ lọc' : 'Bộ lọc'),
+              ),
+            ),
+            if (_showFilters) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                SizedBox(
+                  width: 240,
+                  child: DropdownButtonFormField<String>(
+                    value: organizerIds.contains(_organizerFilter) ? _organizerFilter! : '',
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Đơn vị tổ chức', border: OutlineInputBorder()),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('Tất cả đơn vị')),
+                      ...organizerIds.map((id) => DropdownMenuItem(value: id, child: Text(organizerNames[id] ?? id, overflow: TextOverflow.ellipsis))),
+                    ],
+                    onChanged: (value) => setState(() => _organizerFilter = value == null || value.isEmpty ? null : value),
+                  ),
+                ),
+                SizedBox(
+                  width: 240,
+                  child: DropdownButtonFormField<String>(
+                    value: _certificateFilter,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Chứng nhận', border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(value: '', child: Text('Tất cả')),
+                      DropdownMenuItem(value: 'yes', child: Text('Có cấp chứng nhận')),
+                      DropdownMenuItem(value: 'no', child: Text('Không cấp chứng nhận')),
+                    ],
+                    onChanged: (value) => setState(() => _certificateFilter = value ?? ''),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -881,8 +891,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   label: Text(
                     _dateRange == null
                         ? 'Lọc theo ngày'
-                        : '${DateFormat('dd/MM/yyyy').format(_dateRange!.start)}'
-                              ' - ${DateFormat('dd/MM/yyyy').format(_dateRange!.end)}',
+                        : '${DateFormat('dd/MM/yyyy').format(_dateRange!.start)} - ${DateFormat('dd/MM/yyyy').format(_dateRange!.end)}',
                   ),
                 ),
                 if (_dateRange != null)
@@ -893,6 +902,7 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                   ),
               ],
             ),
+            ],
             const SizedBox(height: 12),
             TotalCountCard(
               label: 'Số sự kiện đang hiển thị',

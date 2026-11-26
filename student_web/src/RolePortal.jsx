@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Activity, Award, BarChart3, Bell, BookOpen, Building2, CalendarDays, Download, Eye,
+  Activity, Award, BarChart3, Bell, BookOpen, Building2, CalendarDays, Download, Eye, Filter,
   ChevronLeft, ChevronRight, ClipboardCheck, Home, LogOut,
   Menu, MessageSquare, Moon, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Settings, ShieldCheck,
   QrCode, Sun, Trash2, Upload, UserPlus, Users, X,
@@ -615,6 +615,7 @@ function weekdayName(value) {
 
 function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelect, selectedId, detail, detailError, detailLoading, onCloseDetail, role, user, showNotice }) {
   const [showArchived, setShowArchived] = useState(false);
+  const [showClassFilters, setShowClassFilters] = useState(false);
   const [cohortFilter, setCohortFilter] = useState('');
   const [lecturerFilter, setLecturerFilter] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
@@ -839,11 +840,12 @@ function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelec
         </form>
       </div>}
       <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên lớp, mã lớp, giảng viên..." />
-      <div className="rp-form-grid rp-class-filters">
+      <button type="button" className="rp-secondary-button rp-filter-toggle" aria-expanded={showClassFilters} onClick={() => setShowClassFilters((open) => !open)}><Filter size={15} /> Bộ lọc</button>
+      {showClassFilters && <div className="rp-form-grid rp-class-filters">
         <label>Khóa<select value={cohortFilter} onChange={(event) => setCohortFilter(event.target.value)}><option value="">Tất cả khóa</option>{classOptions('cohortCode', 'cohortCode').map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label>Giảng viên<select value={lecturerFilter} onChange={(event) => setLecturerFilter(event.target.value)}><option value="">Tất cả giảng viên</option>{classOptions('lecturerId', 'lecturerName').map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label>Môn học<select value={subjectFilter} onChange={(event) => setSubjectFilter(event.target.value)}><option value="">Tất cả môn học</option>{classOptions('subjectId', 'subjectName', 'subjectCode').map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      </div>
+      </div>}
       <TotalCountCard label="Số lớp đang hiển thị" count={classes.length} />
       <div className="rp-class-status-tabs" role="tablist" aria-label="Lọc trạng thái lớp">
         <button type="button" role="tab" aria-selected={!showArchived} className={!showArchived ? 'selected' : ''} onClick={() => setShowArchived(false)}>Lớp đang mở ({allClasses.filter((item) => !isArchivedClass(item)).length})</button>
@@ -1357,6 +1359,7 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
   const [certificateBusy, setCertificateBusy] = useState('');
   const [certificateError, setCertificateError] = useState('');
   const [showClosedEvents, setShowClosedEvents] = useState(false);
+  const [showEventFilters, setShowEventFilters] = useState(false);
   const [eventOrganizerFilter, setEventOrganizerFilter] = useState('');
   const [eventCertificateFilter, setEventCertificateFilter] = useState('');
   const [eventDateFrom, setEventDateFrom] = useState('');
@@ -1966,12 +1969,13 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
       <button type="button" className="rp-secondary-button" onClick={deleteSelectedClosedEvents} disabled={!selectedClosedEventIds.size || busyAction === 'delete-selected'}><Trash2 size={15} /> {busyAction === 'delete-selected' ? 'Đang xóa...' : `Xóa đã chọn (${selectedClosedEventIds.size})`}</button>
     </div>}
     <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên sự kiện, địa điểm, trạng thái..." />
-    <div className="rp-form-grid rp-event-filters">
+    <button type="button" className="rp-secondary-button rp-filter-toggle" aria-expanded={showEventFilters} onClick={() => setShowEventFilters((open) => !open)}><Filter size={15} /> Bộ lọc</button>
+    {showEventFilters && <div className="rp-form-grid rp-event-filters">
       <label>Đơn vị tổ chức<select value={eventOrganizerFilter} onChange={(event) => setEventOrganizerFilter(event.target.value)}><option value="">Tất cả đơn vị</option>{organizerOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>Chứng nhận<select value={eventCertificateFilter} onChange={(event) => setEventCertificateFilter(event.target.value)}><option value="">Tất cả</option><option value="yes">Có cấp chứng nhận</option><option value="no">Không cấp chứng nhận</option></select></label>
       <label>Từ ngày<input type="date" value={eventDateFrom} onChange={(event) => setEventDateFrom(event.target.value)} /></label>
       <label>Đến ngày<input type="date" value={eventDateTo} onChange={(event) => setEventDateTo(event.target.value)} /></label>
-    </div>
+    </div>}
     <TotalCountCard label="Số sự kiện đang hiển thị" count={events.length} />
     {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : events.length ? <div className="rp-event-grid">{events.map((item) => {
       const eventEnded = item.displayStatus === 'Đã đóng' || item.displayStatus === 'Đã kết thúc';
