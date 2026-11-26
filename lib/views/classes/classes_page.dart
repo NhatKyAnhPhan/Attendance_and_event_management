@@ -39,7 +39,13 @@ class _ClassesPageState extends State<ClassesPage> {
         return const Center(child: CircularProgressIndicator());
       }
       final query = _query.trim().toLowerCase();
+      final auth = Get.find<AuthController>();
+      final lecturerId = auth.currentUser.value?['id']?.toString();
       final filteredItems = controller.items.where((item) {
+        if (role == Role.lecturer &&
+            (lecturerId == null || item.lecturerId != lecturerId)) {
+          return false;
+        }
         if (item.isArchived != _showArchived) return false;
         return [
           item.id,
@@ -87,7 +93,25 @@ class _ClassesPageState extends State<ClassesPage> {
                     label: Text(
                       _importingClassIds.contains('__excel__')
                           ? 'Đang nhập...'
-                          : 'Thêm lớp Excel',
+                          : 'Nhập sinh viên Excel',
+                    ),
+                  ),
+                if (canManage)
+                  OutlinedButton.icon(
+                    onPressed: _importingClassIds.contains('__create_classes__')
+                        ? null
+                        : () => _importClassesFromExcel(context, controller),
+                    icon: _importingClassIds.contains('__create_classes__')
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.library_add_outlined),
+                    label: Text(
+                      _importingClassIds.contains('__create_classes__')
+                          ? 'Đang tạo lớp...'
+                          : 'Tạo lớp Excel',
                     ),
                   ),
                 if (canManage)
@@ -475,6 +499,136 @@ class _ClassesPageState extends State<ClassesPage> {
     }
   }
 
+  Future<void> _importClassesFromExcel(
+    BuildContext context,
+    AdminClassesController controller,
+  ) async {
+    await Future.wait([
+      controller.loadClassOptions(),
+      controller.loadLecturers(),
+    ]);
+    if (!context.mounted) return;
+
+    FilePickerResult? selection;
+    try {
+      selection = await FilePicker.pickFiles(
+        dialogTitle: 'Chọn file Excel chứa dữ liệu lớp',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        allowMultiple: false,
+        withData: true,
+      );
+    } on Exception catch (exception) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không thể mở file Excel: $exception')),
+        );
+      }
+      return;
+    }
+    if (selection == null || selection.files.isEmpty || !context.mounted) {
+      return;
+    }
+    final bytes = selection.files.single.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      await _showExcelError(context, 'Không đọc được nội dung file Excel.');
+      return;
+    }
+
+    setState(() => _importingClassIds.add('__create_classes__'));
+    try {
+      final rows = extractClassCreationRows(decodeExcelWorkbook(bytes));
+      final preview = rows.map((row) {
+        final subjects = controller.subjects.where(
+          (subject) =>
+              subject.id.toUpperCase() == row.subjectId.toUpperCase() ||
+              subject.code.toUpperCase() == row.subjectId.toUpperCase(),
+        );
+        final subject = subjects.length == 1 ? subjects.single : null;
+        final cohortExists = controller.cohorts.any(
+          (cohort) => cohort.code.toUpperCase() == row.cohortCode.toUpperCase(),
+        );
+        final lecturerExists = row.lecturerId.isEmpty ||
+            controller.lecturers.any(
+              (lecturer) =>
+                  lecturer.id.toUpperCase() == row.lecturerId.toUpperCase(),
+            );
+        final issue = subject == null
+            ? (subjects.isEmpty ? 'Không tìm thấy mã môn học' : 'Mã môn học bị trùng')
+            : !cohortExists
+            ? 'Không tìm thấy mã khóa sinh viên'
+            : !lecturerExists
+            ? 'Không tìm thấy mã giảng viên'
+            : null;
+        return (row: row, subject: subject, issue: issue);
+      }).toList();
+      final validRows = preview.where((entry) => entry.issue == null).toList();
+      if (validRows.isEmpty) {
+        await _showExcelError(
+          context,
+          'Không có dòng lớp hợp lệ. Kiểm tra mã môn, mã khóa và mã giảng viên.',
+        );
+        return;
+      }
+      final confirmed = await _confirmExcelImport(
+        context,
+        title: 'Xác nhận tạo lớp từ Excel',
+        subtitle:
+            '${validRows.length} lớp sẽ được tạo; ${preview.length - validRows.length} dòng sẽ bị bỏ qua.',
+        lines: preview.map((entry) {
+          final row = entry.row;
+          final status = entry.issue == null ? '' : ' - Bỏ qua: ${entry.issue}';
+          return '${row.name} | ${row.subjectId} | khóa ${row.cohortCode}\n'
+              '${row.startTime.toIso8601String().replaceFirst('T', ' ')} | ${row.capacity} sinh viên | '
+              '${row.semester.isEmpty ? semesterForDate(row.startTime) : row.semester}$status';
+        }).toList(),
+      );
+      if (confirmed != true || !context.mounted) return;
+
+      var createdCount = 0;
+      var failedCount = 0;
+      for (final entry in validRows) {
+        final row = entry.row;
+        try {
+          await controller.createClass(
+            name: row.name,
+            subjectId: entry.subject!.id,
+            cohortCode: row.cohortCode,
+            semester: row.semester.isEmpty
+                ? semesterForDate(row.startTime)
+                : row.semester,
+            startTime: _formatDateTime(row.startTime),
+            lecturerId: row.lecturerId.isEmpty ? null : row.lecturerId,
+            capacity: row.capacity,
+            reloadAfterCreate: false,
+          );
+          createdCount++;
+        } catch (_) {
+          failedCount++;
+        }
+      }
+      if (createdCount > 0) await controller.load();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Đã tạo $createdCount lớp; $failedCount lớp tạo không thành công.',
+            ),
+          ),
+        );
+      }
+    } on FormatException catch (exception) {
+      if (context.mounted) {
+        await _showExcelError(context, exception.message.toString());
+      }
+    } catch (exception) {
+      if (context.mounted) await _showExcelError(context, exception.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _importingClassIds.remove('__create_classes__'));
+      }
+    }
+  }
   Future<void> _importRosterFromExcel(
     BuildContext context,
     AdminClassesController controller,

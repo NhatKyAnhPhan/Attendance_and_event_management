@@ -73,6 +73,7 @@ class AdminClassesController extends GetxController {
     required String startTime,
     required String? lecturerId,
     required int capacity,
+    bool reloadAfterCreate = true,
   }) async {
     await _repository.createClass(
       name: name,
@@ -83,7 +84,7 @@ class AdminClassesController extends GetxController {
       lecturerId: lecturerId,
       capacity: capacity,
     );
-    await load();
+    if (reloadAfterCreate) await load();
   }
 
   Future<void> updateClass({

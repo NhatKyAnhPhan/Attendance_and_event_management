@@ -378,6 +378,9 @@
 .rp-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--rp-text); font-size: 12px; }
 .rp-search button { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--rp-muted); cursor: pointer; }
 .rp-class-grid,.rp-event-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.rp-class-status-tabs { display: flex; width: fit-content; max-width: 100%; gap: 4px; margin: 14px 0; padding: 4px; border: 1px solid var(--rp-border); border-radius: 10px; background: var(--rp-card); }
+.rp-class-status-tabs button { min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--rp-muted); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.rp-class-status-tabs button.selected { background: var(--rp-primary); color: #fff; }
 .rp-class-card { display: block; padding: 18px; color: var(--rp-text); cursor: pointer; text-align: left; transition: border-color .16s, box-shadow .16s; }
 .rp-class-card:hover,.rp-event-card:hover { border-color: var(--rp-primary); box-shadow: 0 5px 18px rgb(30 86 160 / 8%); }
 .rp-class-code,.rp-event-id { color: var(--rp-primary); font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; }

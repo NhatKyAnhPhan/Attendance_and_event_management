@@ -178,9 +178,9 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
 
   if (page === 'dashboard') return <Dashboard data={data} loading={loading} error={error} onRefresh={load} role={role} onNavigate={onNavigate} />;
   if (page === 'calendar') return <CalendarView data={data} loading={loading} error={error} onRefresh={load} selectedDate={selectedDate} setSelectedDate={setSelectedDate} role={role} />;
-  if (page === 'classes') return <ClassesView data={data} loading={loading} error={error} query={query} setQuery={setQuery} onRefresh={load} onSelect={loadDetail} selectedId={selectedId} detail={detail} detailError={detailError} detailLoading={detailLoading} onCloseDetail={() => { setSelectedId(''); setDetail(null); setDetailError(''); }} role={role} showNotice={showNotice} />;
+  if (page === 'classes') return <ClassesView data={data} loading={loading} error={error} query={query} setQuery={setQuery} onRefresh={load} onSelect={loadDetail} selectedId={selectedId} detail={detail} detailError={detailError} detailLoading={detailLoading} onCloseDetail={() => { setSelectedId(''); setDetail(null); setDetailError(''); }} role={role} user={user} showNotice={showNotice} />;
   if (page === 'attendance') return <AttendanceView data={data} loading={loading} error={error} query={query} setQuery={setQuery} onRefresh={load} role={role} />;
-  if (page === 'reports') return <ReportsView data={data} loading={loading} error={error} onRefresh={load} role={role} />;
+  if (page === 'reports') return <ReportsView data={data} loading={loading} error={error} onRefresh={load} role={role} user={user} />;
   if (page === 'profile') return <ProfileView data={data?.user || user} loading={loading} error={error} onRefresh={load} role={role} onUserChange={onUserChange} showNotice={showNotice} />;
   if (page === 'settings') return <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} />;
   if (page === 'events') return <ManagedEventsView data={data} loading={loading} error={error} query={query} setQuery={setQuery} onRefresh={load} role={role} showNotice={showNotice} />;
@@ -611,15 +611,116 @@ function weekdayName(value) {
   return ({ 1: 'Thứ 2', 2: 'Thứ 3', 3: 'Thứ 4', 4: 'Thứ 5', 5: 'Thứ 6', 6: 'Thứ 7', 7: 'Chủ nhật' })[day] || 'Chưa xếp lịch';
 }
 
-function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelect, selectedId, detail, detailError, detailLoading, onCloseDetail, role, showNotice }) {
-  const allClasses = itemsOf(data);
-  const classes = allClasses.filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
+function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelect, selectedId, detail, detailError, detailLoading, onCloseDetail, role, user, showNotice }) {
+  const [showArchived, setShowArchived] = useState(false);
+  const lecturerId = String(user?.id || '');
+  const allClasses = itemsOf(data).filter((item) => isAdminRole(role) || (lecturerId && String(item.lecturerId || '') === lecturerId));
+  const isArchivedClass = (item) => {
+    if (String(item.status || '').trim().toLowerCase() === 'đã đóng') return true;
+    const start = item.startTime ? new Date(item.startTime) : null;
+    if (!start || Number.isNaN(start.valueOf())) return false;
+    const now = new Date();
+    const cutoff = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    return start < cutoff;
+  };
+  const classes = allClasses.filter((item) =>
+    isArchivedClass(item) === showArchived
+      && JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
   const canManage = isAdminRole(role);
   const [importingWorkbook, setImportingWorkbook] = useState(false);
   const workbookInput = useRef(null);
   const [classWorkbookDraft, setClassWorkbookDraft] = useState(null);
   const [classWorkbookError, setClassWorkbookError] = useState('');
+  const [creatingClassWorkbook, setCreatingClassWorkbook] = useState(false);
+  const classCreationInput = useRef(null);
+  const [classCreationDraft, setClassCreationDraft] = useState(null);
+  const [classCreationError, setClassCreationError] = useState('');
   const selectedClass = classes.find((item) => String(item.id) === String(selectedId));
+
+  const prepareClassCreationWorkbook = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setClassCreationError('');
+    setCreatingClassWorkbook(true);
+    try {
+      const [rows, classOptions, lecturerResult] = await Promise.all([
+        readClassCreationRowsFromWorkbook(file),
+        api('/api/admin/class-options'),
+        api('/api/admin/lecturers'),
+      ]);
+      const subjects = classOptions.subjects || [];
+      const cohorts = classOptions.cohorts || [];
+      const lecturers = itemsOf(lecturerResult);
+      const prepared = rows.map((row) => {
+        const matches = subjects.filter((subject) =>
+          String(subject.id || subject.code).trim().toLowerCase() === row.subjectId.toLowerCase());
+        const subject = matches.length === 1 ? matches[0] : null;
+        const cohortExists = cohorts.some((cohort) =>
+          String(cohort.code).trim().toLowerCase() === row.cohortCode.toLowerCase());
+        const lecturerExists = !row.lecturerId || lecturers.some((lecturer) =>
+          String(lecturer.id).trim().toLowerCase() === row.lecturerId.toLowerCase());
+        const issue = !subject
+          ? matches.length ? 'Mã môn học bị trùng.' : 'Không tìm thấy mã môn học.'
+          : !cohortExists ? 'Không tìm thấy mã khóa sinh viên.'
+            : !lecturerExists ? 'Không tìm thấy mã giảng viên.' : '';
+        return { ...row, subject, issue };
+      });
+      setClassCreationDraft(prepared);
+    } catch (exception) {
+      const message = exception instanceof Error ? exception.message : 'Không thể đọc file Excel.';
+      setClassCreationError(message);
+      showNotice('error', `Không thể chuẩn bị tạo lớp từ Excel: ${message}`);
+    } finally {
+      setCreatingClassWorkbook(false);
+    }
+  };
+
+  const createClassesFromWorkbook = async (event) => {
+    event.preventDefault();
+    if (!classCreationDraft) return;
+    const validRows = classCreationDraft.filter((row) => !row.issue);
+    if (!validRows.length) return;
+    setCreatingClassWorkbook(true);
+    let created = 0;
+    const failures = classCreationDraft.filter((row) => row.issue)
+      .map((row) => `${row.name}: ${row.issue}`);
+    try {
+      for (const row of validRows) {
+        try {
+          const localTime = toDateTimeInput(row.startTime);
+          const month = row.startTime.getMonth() + 1;
+          const semester = row.semester || (month >= 9 ? 'HK1' : month >= 6 ? 'HK3' : 'HK2');
+          await api('/api/admin/classes', {
+            method: 'POST',
+            body: {
+              name: row.name,
+              subjectId: row.subject.id,
+              cohortCode: row.cohortCode,
+              semester,
+              startTime: `${localTime.replace('T', ' ')}:00`,
+              lecturerId: row.lecturerId || null,
+              capacity: row.capacity,
+            },
+          });
+          created++;
+        } catch (exception) {
+          failures.push(`${row.name}: ${exception instanceof Error ? exception.message : 'Không thể tạo lớp.'}`);
+        }
+      }
+      await onRefresh();
+      const summary = `Đã tạo ${created}/${validRows.length} lớp từ Excel.`
+        + (failures.length ? ` Bỏ qua hoặc tạo lỗi ${failures.length} dòng: ${failures.slice(0, 5).join(' | ')}${failures.length > 5 ? ' | ...' : ''}` : '');
+      showNotice(failures.length ? 'error' : 'success', summary);
+      setClassCreationDraft(null);
+    } catch (exception) {
+      const message = exception instanceof Error ? exception.message : 'Không thể tải lại danh sách lớp.';
+      setClassCreationError(message);
+      showNotice('error', `Đã gửi yêu cầu tạo lớp nhưng không thể tải lại danh sách: ${message}`);
+    } finally {
+      setCreatingClassWorkbook(false);
+    }
+  };
 
   const prepareClassWorkbook = async (event) => {
     const file = event.target.files?.[0];
@@ -700,10 +801,22 @@ function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelec
       <PageTitle title="Quản lý lớp học" subtitle="Lớp được phân quyền theo tài khoản đang đăng nhập." onRefresh={onRefresh} loading={loading} action={canManage && <>
         <input ref={workbookInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={prepareClassWorkbook} hidden />
         <button className="rp-secondary-button" onClick={() => workbookInput.current?.click()} disabled={importingWorkbook}>
-          <Upload size={16} /> {importingWorkbook ? 'Đang nhập...' : 'Thêm lớp Excel'}
+          <Upload size={16} /> {importingWorkbook ? 'Đang nhập...' : 'Nhập sinh viên Excel'}
+        </button>
+        <input ref={classCreationInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={prepareClassCreationWorkbook} hidden />
+        <button type="button" className="rp-secondary-button" onClick={() => classCreationInput.current?.click()} disabled={creatingClassWorkbook}>
+          <Upload size={16} /> {creatingClassWorkbook ? 'Đang đọc/tạo lớp...' : 'Tạo lớp Excel'}
         </button>
         <ClassAdminActions createOnly onRefresh={onRefresh} showNotice={showNotice} />
       </>} />
+      {classCreationDraft && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creatingClassWorkbook) setClassCreationDraft(null); }}>
+        <form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={createClassesFromWorkbook}>
+          <header><div><h2>Xác nhận tạo lớp từ Excel</h2><p>{classCreationDraft.filter((row) => !row.issue).length} lớp hợp lệ; {classCreationDraft.filter((row) => row.issue).length} dòng sẽ bị bỏ qua.</p></div><button type="button" className="rp-icon-button" onClick={() => setClassCreationDraft(null)} aria-label="Đóng" disabled={creatingClassWorkbook}><X size={18} /></button></header>
+          {classCreationError && <ErrorPanel message={classCreationError} />}
+          <div className="rp-import-preview">{classCreationDraft.map((row, index) => <div key={`${row.subjectId}:${row.cohortCode}:${index}`}><strong>{row.name} · {row.subject?.name || row.subjectId}</strong><span>{row.cohortCode} · {formatDate(row.startTime)} · {row.capacity} sinh viên · {row.semester || 'Học kỳ theo ngày bắt đầu'}{row.lecturerId ? ` · GV ${row.lecturerId}` : ''}{row.issue ? ` · Bỏ qua: ${row.issue}` : ''}</span></div>)}</div>
+          <footer><button type="button" className="rp-secondary-button" onClick={() => setClassCreationDraft(null)} disabled={creatingClassWorkbook}>Hủy</button><button className="rp-secondary-button" disabled={creatingClassWorkbook || !classCreationDraft.some((row) => !row.issue)}>{creatingClassWorkbook ? 'Đang tạo lớp...' : 'Tạo lớp hợp lệ'}</button></footer>
+        </form>
+      </div>}
       {classWorkbookDraft && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !importingWorkbook) setClassWorkbookDraft(null); }}>
         <form className="rp-modal rp-form-modal" role="dialog" aria-modal="true" onSubmit={importClassWorkbook}>
           <header><div><h2>Xác nhận nhập sinh viên vào lớp</h2><p>{classWorkbookDraft.length} mã lớp, {classWorkbookDraft.reduce((total, group) => total + group.studentIds.length, 0)} mã sinh viên được đọc từ file.</p></div><button type="button" className="rp-icon-button" onClick={() => setClassWorkbookDraft(null)} aria-label="Đóng" disabled={importingWorkbook}><X size={18} /></button></header>
@@ -714,9 +827,20 @@ function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelec
         </form>
       </div>}
       <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên lớp, mã lớp, giảng viên..." />
+      <div className="rp-class-status-tabs" role="tablist" aria-label="Lọc trạng thái lớp">
+        <button type="button" role="tab" aria-selected={!showArchived} className={!showArchived ? 'selected' : ''} onClick={() => setShowArchived(false)}>Lớp đang mở ({allClasses.filter((item) => !isArchivedClass(item)).length})</button>
+        <button type="button" role="tab" aria-selected={showArchived} className={showArchived ? 'selected' : ''} onClick={() => setShowArchived(true)}>Lớp đã đóng ({allClasses.filter(isArchivedClass).length})</button>
+      </div>
       {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : classes.length ? (
-        <div className="rp-class-grid">{classes.map((item) => <article className="rp-card rp-class-card" key={item.id}><button className="rp-class-open" onClick={() => onSelect(item)}><span className="rp-class-code">{item.code || item.id}</span><h2>{item.name || 'Lớp học phần'}</h2><p>{item.subjectName || item.subjectCode || 'Môn học'} · {item.lecturerName || 'Giảng viên'}</p><div className="rp-class-meta"><span><Users size={15} /> {item.studentCount ?? 0} sinh viên</span><span>{item.status || item.semester || 'Đang mở'}</span></div></button>{canManage && <ClassAdminActions item={item} onRefresh={onRefresh} showNotice={showNotice} />}</article>)}</div>
-      ) : <EmptyPanel title="Chưa có lớp học" message="Không tìm thấy lớp học phù hợp." />}
+        <div className="rp-class-grid">{classes.map((item) => {
+          const archived = isArchivedClass(item);
+          const status = String(item.status || '').trim();
+          const statusLabel = archived
+            ? status.toLowerCase() === 'đã đóng' ? status : 'Đã mở quá 1 năm'
+            : status || item.semester || 'Đang mở';
+          return <article className="rp-card rp-class-card" key={item.id}><button className="rp-class-open" onClick={() => onSelect(item)}><span className="rp-class-code">{item.code || item.id}</span><h2>{item.name || 'Lớp học phần'}</h2><p>{item.subjectName || item.subjectCode || 'Môn học'} · {item.lecturerName || 'Giảng viên'}</p><div className="rp-class-meta"><span><Users size={15} /> {item.studentCount ?? 0} sinh viên</span><span>{statusLabel}</span></div></button>{canManage && <ClassAdminActions item={item} onRefresh={onRefresh} showNotice={showNotice} />}</article>;
+        })}</div>
+      ) : <EmptyPanel title={showArchived ? 'Chưa có lớp đã đóng' : 'Chưa có lớp đang mở'} message="Không tìm thấy lớp học phù hợp." />}
       {selectedId && <div className="rp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCloseDetail(); }}><section className="rp-modal" role="dialog" aria-modal="true"><header><div><h2>{selectedClass?.name || 'Chi tiết lớp học'}</h2><p>{selectedClass?.code || selectedId} · {selectedClass?.status || 'Thông tin lớp học phần'}</p></div><button className="rp-icon-button" onClick={onCloseDetail} aria-label="Đóng"><X size={18} /></button></header>{selectedClass && <><section className="rp-detail-intro"><span className="rp-detail-eyebrow">GIỚI THIỆU LỚP HỌC</span><p>Lớp học phần {selectedClass.name || selectedClass.code || selectedId}{selectedClass.subjectName ? ` thuộc học phần ${selectedClass.subjectName}` : ''}{selectedClass.lecturerName ? `, do giảng viên ${selectedClass.lecturerName} phụ trách` : ''}. Thông tin dưới đây giúp bạn theo dõi học phần, sĩ số và danh sách thành viên lớp.</p></section><div className="rp-profile-grid rp-class-detail-grid"><div><span>Môn học</span><strong>{selectedClass.subjectName || selectedClass.subjectCode || 'Chưa cập nhật'}</strong></div><div><span>Giảng viên</span><strong>{selectedClass.lecturerName || 'Chưa cập nhật'}</strong></div><div><span>Học kỳ</span><strong>{selectedClass.semester || 'Chưa cập nhật'}</strong></div><div><span>Số tín chỉ</span><strong>{selectedClass.credits ?? 'Chưa cập nhật'}</strong></div><div><span>Sĩ số</span><strong>{selectedClass.studentCount ?? 0}{selectedClass.capacity ? ` / ${selectedClass.capacity}` : ''} sinh viên</strong></div><div><span>Trạng thái</span><strong>{selectedClass.status || 'Đang mở'}</strong></div></div></>}<h3 className="rp-modal-section-title">Danh sách sinh viên ({detail?.length ?? selectedClass?.studentCount ?? 0})</h3>{detailLoading ? <LoadingPanel /> : detailError ? <div className="rp-detail-error" role="alert">Không thể tải danh sách sinh viên: {detailError}</div> : detail?.length ? <DataTable items={detail} columns={[['Mã sinh viên', 'studentId'], ['Họ tên', 'studentName'], ['Email', 'email'], ['Trạng thái', 'status']]} /> : <EmptyPanel title="Chưa có sinh viên" message="Lớp hiện chưa có sinh viên." />}</section></div>}
     </>
   );
@@ -918,6 +1042,72 @@ async function readWorkbookRows(file) {
   const rows = Array.isArray(workbook[0]) ? workbook : workbook[0]?.data;
   if (!Array.isArray(rows) || !rows.length) throw new Error('Không tìm thấy dữ liệu trong file Excel.');
   return rows;
+}
+
+async function readClassCreationRowsFromWorkbook(file) {
+  const rows = await readWorkbookRows(file);
+  const columns = {
+    subject: new Set(['mamonhoc', 'subjectid', 'subjectcode']),
+    name: new Set(['tenlop', 'tenlophocphan', 'classname']),
+    cohort: new Set(['makhoasinhvien', 'makhoa', 'cohortcode']),
+    start: new Set(['ngaygiobatdau', 'thoigianbatdau', 'starttime']),
+    capacity: new Set(['sisotoida', 'soluongtoida', 'capacity']),
+    semester: new Set(['hocky', 'semester']),
+    lecturer: new Set(['magiangvien', 'lecturerid']),
+  };
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeWorkbookHeader);
+    return ['subject', 'name', 'cohort', 'start', 'capacity']
+      .every((key) => headers.some((header) => columns[key].has(header)));
+  });
+  if (headerIndex < 0) {
+    throw new Error('File cần có các cột MaMonHoc, TenLop, MaKhoaSinhVien, NgayGioBatDau, SiSoToiDa.');
+  }
+  const headers = rows[headerIndex].map(normalizeWorkbookHeader);
+  const column = (key) => headers.findIndex((header) => columns[key].has(header));
+  const indexes = Object.fromEntries(Object.keys(columns).map((key) => [key, column(key)]));
+  const parsedRows = [];
+  for (const [offset, row] of rows.slice(headerIndex + 1).entries()) {
+    if (!row.some((value) => String(value ?? '').trim())) continue;
+    const rowNumber = headerIndex + offset + 2;
+    const value = (key) => String(row[indexes[key]] ?? '').trim();
+    const subjectId = value('subject');
+    const name = value('name');
+    const cohortCode = value('cohort');
+    if (!subjectId || !name || !cohortCode) {
+      throw new Error(`Thiếu mã môn, tên lớp hoặc mã khóa ở dòng ${rowNumber}.`);
+    }
+
+    let startTime;
+    const rawStart = row[indexes.start];
+    if (rawStart instanceof Date) startTime = rawStart;
+    else if (typeof rawStart === 'number' && rawStart > 0) {
+      startTime = new Date(1899, 11, 30);
+      startTime.setTime(startTime.getTime() + rawStart * 86400000);
+    } else {
+      const text = String(rawStart ?? '').trim();
+      const normalized = text.includes('T') ? text : text.replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T');
+      startTime = new Date(normalized);
+    }
+    if (!startTime || Number.isNaN(startTime.valueOf())) {
+      throw new Error(`Ngày giờ bắt đầu không hợp lệ ở dòng ${rowNumber}.`);
+    }
+    const capacity = Number(row[indexes.capacity]);
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      throw new Error(`Sĩ số tối đa phải là số nguyên dương ở dòng ${rowNumber}.`);
+    }
+    const semester = value('semester').toUpperCase();
+    if (semester && !['HK1', 'HK2', 'HK3'].includes(semester)) {
+      throw new Error(`Học kỳ phải là HK1, HK2 hoặc HK3 ở dòng ${rowNumber}.`);
+    }
+    parsedRows.push({
+      subjectId, name, cohortCode, startTime, capacity, semester,
+      lecturerId: value('lecturer'),
+    });
+  }
+  if (!parsedRows.length) throw new Error('Không tìm thấy dòng lớp nào trong file Excel.');
+  if (parsedRows.length > 200) throw new Error('Mỗi file chỉ được chứa tối đa 200 lớp.');
+  return parsedRows;
 }
 
 async function readStudentRosterGroupsFromWorkbook(file, { targetIdHeaders, targetNameHeaders }) {
@@ -2266,12 +2456,13 @@ function ClassQrGenerator({ onCreated }) {
   </>;
 }
 
-function ReportsView({ data, loading, error, onRefresh, role }) {
+function ReportsView({ data, loading, error, onRefresh, role, user }) {
   const [selectedClassId, setSelectedClassId] = useState('');
   const [report, setReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const classes = itemsOf(data);
+  const lecturerId = String(user?.id || '');
+  const classes = itemsOf(data).filter((item) => isAdminRole(role) || (lecturerId && String(item.lecturerId || '') === lecturerId));
   useEffect(() => {
     setSelectedClassId('');
     setReport(null);

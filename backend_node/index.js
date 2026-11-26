@@ -3763,6 +3763,7 @@ app.get('/api/reports/attendance/classes', requireAuth, requireRole('Quáº£n trá»
   try {
     const [rows] = await pool.execute(
       `SELECT lhp.Malop AS id, COALESCE(lhp.Tenlop, '') AS name,
+              lhp.Magv AS lecturerId,
               COUNT(DISTINCT tvl.Masv) AS studentCount
        FROM LopHocPhan lhp
        LEFT JOIN ThanhVienLop tvl ON tvl.Malop = lhp.Malop

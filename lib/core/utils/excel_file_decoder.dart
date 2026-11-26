@@ -39,6 +39,16 @@ typedef ExcelStudentRosterGroup = ({
   int duplicateRows,
 });
 
+typedef ExcelClassImportRow = ({
+  String subjectId,
+  String name,
+  String cohortCode,
+  DateTime startTime,
+  int capacity,
+  String semester,
+  String lecturerId,
+});
+
 typedef ExcelEventImportRow = ({
   String sourceId,
   String name,
@@ -372,6 +382,92 @@ List<ExcelStudentRosterGroup> extractStudentRosterGroups(
       .toList();
 }
 
+List<ExcelClassImportRow> extractClassCreationRows(Excel workbook) {
+  final rows = _firstSheetRows(workbook);
+  const subjectHeaders = {'mamonhoc', 'subjectid', 'subjectcode'};
+  const nameHeaders = {'tenlop', 'tenlophocphan', 'classname'};
+  const cohortHeaders = {'makhoasinhvien', 'makhoa', 'cohortcode'};
+  const startHeaders = {'ngaygiobatdau', 'thoigianbatdau', 'starttime'};
+  const capacityHeaders = {'sisotoida', 'soluongtoida', 'capacity'};
+  const semesterHeaders = {'hocky', 'semester'};
+  const lecturerHeaders = {'magiangvien', 'lecturerid'};
+
+  final headerIndex = rows.indexWhere((row) {
+    final headers = row.map((cell) => _normalizeHeader(_excelCellText(cell)));
+    return headers.any(subjectHeaders.contains) &&
+        headers.any(nameHeaders.contains) &&
+        headers.any(cohortHeaders.contains) &&
+        headers.any(startHeaders.contains) &&
+        headers.any(capacityHeaders.contains);
+  });
+  if (headerIndex < 0) {
+    throw const FormatException(
+      'Thiếu cột bắt buộc: MaMonHoc, TenLop, MaKhoaSinhVien, NgayGioBatDau, SiSoToiDa.',
+    );
+  }
+
+  final headers = rows[headerIndex]
+      .map((cell) => _normalizeHeader(_excelCellText(cell)))
+      .toList();
+  final subjectColumn = headers.indexWhere(subjectHeaders.contains);
+  final nameColumn = headers.indexWhere(nameHeaders.contains);
+  final cohortColumn = headers.indexWhere(cohortHeaders.contains);
+  final startColumn = headers.indexWhere(startHeaders.contains);
+  final capacityColumn = headers.indexWhere(capacityHeaders.contains);
+  final semesterColumn = headers.indexWhere(semesterHeaders.contains);
+  final lecturerColumn = headers.indexWhere(lecturerHeaders.contains);
+  final result = <ExcelClassImportRow>[];
+
+  for (var index = headerIndex + 1; index < rows.length; index++) {
+    final row = rows[index];
+    if (row.every((cell) => _excelCellText(cell).trim().isEmpty)) continue;
+    final rowNumber = index + 1;
+    final subjectId = _cellTextAt(row, subjectColumn).trim();
+    final name = _cellTextAt(row, nameColumn).trim();
+    final cohortCode = _cellTextAt(row, cohortColumn).trim();
+    if (subjectId.isEmpty || name.isEmpty || cohortCode.isEmpty) {
+      throw FormatException(
+        'Thiếu mã môn, tên lớp hoặc mã khóa ở dòng $rowNumber.',
+      );
+    }
+
+    final startTime = _excelDateTimeAt(row, startColumn);
+    if (startTime == null) {
+      throw FormatException('Ngày giờ bắt đầu không hợp lệ ở dòng $rowNumber.');
+    }
+    final capacityText = _cellTextAt(row, capacityColumn).trim();
+    final capacity = int.tryParse(capacityText);
+    if (capacity == null || capacity < 1) {
+      throw FormatException(
+        'Sĩ số tối đa phải là số nguyên dương ở dòng $rowNumber.',
+      );
+    }
+    final semester = _cellTextAt(row, semesterColumn).trim().toUpperCase();
+    if (semester.isNotEmpty &&
+        !const {'HK1', 'HK2', 'HK3'}.contains(semester)) {
+      throw FormatException(
+        'Học kỳ phải là HK1, HK2 hoặc HK3 ở dòng $rowNumber.',
+      );
+    }
+    result.add((
+      subjectId: subjectId,
+      name: name,
+      cohortCode: cohortCode,
+      startTime: startTime,
+      capacity: capacity,
+      semester: semester,
+      lecturerId: _cellTextAt(row, lecturerColumn).trim(),
+    ));
+  }
+
+  if (result.isEmpty) {
+    throw const FormatException('Không tìm thấy dòng lớp nào trong file Excel.');
+  }
+  if (result.length > 200) {
+    throw const FormatException('Mỗi file chỉ được chứa tối đa 200 lớp.');
+  }
+  return result;
+}
 ExcelEventsImport extractEventsFromWorkbook(Excel workbook) {
   final rows = _firstSheetRows(workbook);
   const eventIdHeaders = {'masukien', 'mãsựkiện'};
@@ -481,6 +577,30 @@ DateTime? _excelDateAt(List<Data?> row, int column) {
   return parsed == null
       ? null
       : DateTime(parsed.year, parsed.month, parsed.day);
+}
+
+DateTime? _excelDateTimeAt(List<Data?> row, int column) {
+  if (column < 0 || column >= row.length) return null;
+  final value = row[column]?.value;
+  if (value is DateTimeCellValue) {
+    return DateTime(
+      value.year,
+      value.month,
+      value.day,
+      value.hour,
+      value.minute,
+      value.second,
+    );
+  }
+  if (value is DateCellValue) return value.asDateTimeLocal();
+  if (value is DoubleCellValue || value is IntCellValue) {
+    final serial = double.tryParse(_excelCellText(row[column]));
+    if (serial == null || serial < 1) return null;
+    return DateTime(1899, 12, 30).add(
+      Duration(seconds: (serial * Duration.secondsPerDay).round()),
+    );
+  }
+  return DateTime.tryParse(_excelCellText(row[column]).trim());
 }
 
 int? _excelTimeMinutesAt(List<Data?> row, int column) {
