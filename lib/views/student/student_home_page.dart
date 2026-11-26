@@ -365,7 +365,7 @@ class _HomeTabContent extends StatelessWidget {
                     user['name']?.toString() ?? 'Người dùng',
                     style: TextStyle(
                       color: Colors.white,
-                      fontFamily: 'Nunito',
+                      fontFamily: 'Inter',
                       fontWeight: FontWeight.w800,
                       fontSize: 22,
                     ),
@@ -441,7 +441,7 @@ class _HomeTabContent extends StatelessWidget {
                         s['val']!,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontFamily: 'Nunito',
+                          fontFamily: 'Inter',
                           fontWeight: FontWeight.w800,
                           fontSize: 20,
                         ),
@@ -493,7 +493,7 @@ class _HomeTabContent extends StatelessWidget {
                           'Quét QR',
                           style: TextStyle(
                             color: Colors.white,
-                            fontFamily: 'Nunito',
+                            fontFamily: 'Inter',
                             fontWeight: FontWeight.w700,
                             fontSize: 14,
                           ),

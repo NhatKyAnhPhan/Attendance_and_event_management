@@ -2,33 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 /// Tương ứng với 3 font trong index.css:
-/// - Nunito  → tiêu đề (h1..h6, .font-display)
+/// - Inter   → tiêu đề và nội dung
 /// - Inter   → nội dung (body)
 /// - JetBrains Mono → mã lớp, mã sinh viên, số liệu (.font-mono, <code>)
 class AppTextStyles {
   AppTextStyles._();
 
-  // ----- Display / tiêu đề (Nunito, weight 700–800) -----
-  static TextStyle displayLg(Color color) => GoogleFonts.nunito(
+  // ----- Display / tiêu đề (Inter, weight 700–800) -----
+  static TextStyle displayLg(Color color) => GoogleFonts.inter(
         fontSize: 24,
         fontWeight: FontWeight.w800,
         color: color,
         height: 1.2,
       );
 
-  static TextStyle displayMd(Color color) => GoogleFonts.nunito(
+  static TextStyle displayMd(Color color) => GoogleFonts.inter(
         fontSize: 20,
         fontWeight: FontWeight.w800,
         color: color,
       );
 
-  static TextStyle displaySm(Color color) => GoogleFonts.nunito(
+  static TextStyle displaySm(Color color) => GoogleFonts.inter(
         fontSize: 16,
         fontWeight: FontWeight.w700,
         color: color,
       );
 
-  static TextStyle displayXs(Color color) => GoogleFonts.nunito(
+  static TextStyle displayXs(Color color) => GoogleFonts.inter(
         fontSize: 13,
         fontWeight: FontWeight.w800,
         color: color,

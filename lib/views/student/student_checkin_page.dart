@@ -545,7 +545,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontFamily: 'Nunito',
+                        fontFamily: 'Inter',
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
                       ),
@@ -1098,7 +1098,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             'Điểm danh thành công!',
             style: TextStyle(
               color: Colors.white,
-              fontFamily: 'Nunito',
+              fontFamily: 'Inter',
               fontWeight: FontWeight.w800,
               fontSize: 24,
             ),
@@ -1182,7 +1182,7 @@ class _StudentCheckinPageState extends State<StudentCheckinPage>
             _failureTitle,
             style: TextStyle(
               color: Colors.white,
-              fontFamily: 'Nunito',
+              fontFamily: 'Inter',
               fontWeight: FontWeight.w800,
               fontSize: 24,
             ),

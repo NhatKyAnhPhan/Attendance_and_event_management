@@ -676,7 +676,7 @@ class _LeftPanelState extends State<_LeftPanel> {
                     Text(
                       'HUIT',
                       style: TextStyle(
-                        fontFamily: 'Nunito',
+                        fontFamily: 'Inter',
                         fontWeight: FontWeight.w800,
                         color: Colors.white,
                         fontSize: 16,
@@ -694,7 +694,7 @@ class _LeftPanelState extends State<_LeftPanel> {
             const Text(
               'Hệ thống Quản lý Điểm danh',
               style: TextStyle(
-                fontFamily: 'Nunito',
+                fontFamily: 'Inter',
                 fontWeight: FontWeight.w800,
                 fontSize: 30,
                 height: 1.2,
@@ -757,7 +757,7 @@ class _LeftPanelState extends State<_LeftPanel> {
                         Text(
                           s['n']!,
                           style: const TextStyle(
-                            fontFamily: 'Nunito',
+                            fontFamily: 'Inter',
                             fontWeight: FontWeight.w800,
                             color: Colors.white,
                             fontSize: 22,

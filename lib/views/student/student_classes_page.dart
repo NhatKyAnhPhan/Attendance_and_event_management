@@ -447,7 +447,7 @@ class _ClassCard extends StatelessWidget {
                             Text(
                               s['v'] as String,
                               style: TextStyle(
-                                fontFamily: 'Nunito',
+                                fontFamily: 'Inter',
                                 fontWeight: FontWeight.w800,
                                 fontSize: 16,
                                 color: s['c'] as Color,
