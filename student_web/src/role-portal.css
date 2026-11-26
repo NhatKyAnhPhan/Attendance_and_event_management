@@ -332,6 +332,7 @@
 .rp-user-role-filter { display: flex; width: min(100%, 340px); flex-direction: column; gap: 6px; margin: 14px 0; color: var(--rp-muted); font-size: 12px; font-weight: 600; }
 .rp-user-role-filter select { width: 100%; min-height: 39px; padding: 8px 10px; border: 1px solid var(--rp-border); border-radius: 7px; background: var(--rp-card); color: var(--rp-text); font: inherit; font-size: 12px; }
 .rp-metrics-compact { margin-bottom: 16px; }
+.rp-total-count-grid { grid-template-columns: minmax(0, 260px); margin: 12px 0 16px; }
 .rp-metric-card { display: flex; min-height: 96px; align-items: center; gap: 13px; padding: 15px; border: 1px solid var(--rp-border); border-radius: 9px; background: var(--rp-card); }
 .rp-metric-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--rp-primary) 12%, transparent); color: var(--rp-primary); }
 .rp-metric-icon.tone-1 { background: #dcfce7; color: #16a34a; }

@@ -215,6 +215,7 @@ function RolePortalPage({ page, role, user, onUserChange, onNavigate, showNotice
           : page === 'notifications' ? <EmptyPanel title="Không có thông báo" message="Hiện chưa có thông báo dành cho vai trò này." />
             : page === 'certificates' ? <StaffCertificateTable items={rows} showNotice={showNotice} />
               : page === 'users' ? <AdminUsersTable items={rows} />
+              : page === 'orgUnits' ? <><TotalCountCard label="Số đơn vị đang hiển thị" count={rows.length} /><GenericTable page={page} items={rows} /></>
             : <GenericTable page={page} items={rows} />
       )}
       {certificateTemplateOpen && <CertificateSignatureDialog onClose={() => setCertificateTemplateOpen(false)} showNotice={showNotice} />}
@@ -614,6 +615,9 @@ function weekdayName(value) {
 
 function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelect, selectedId, detail, detailError, detailLoading, onCloseDetail, role, user, showNotice }) {
   const [showArchived, setShowArchived] = useState(false);
+  const [cohortFilter, setCohortFilter] = useState('');
+  const [lecturerFilter, setLecturerFilter] = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
   const lecturerId = String(user?.id || '');
   const allClasses = itemsOf(data).filter((item) => isAdminRole(role) || (lecturerId && String(item.lecturerId || '') === lecturerId));
   const isArchivedClass = (item) => {
@@ -624,8 +628,15 @@ function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelec
     const cutoff = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
     return start < cutoff;
   };
+  const classOptions = (idKey, labelKey, fallbackKey = idKey) => [...new Map(allClasses.filter((item) => item[idKey] || item[fallbackKey]).map((item) => {
+    const value = String(item[idKey] || item[fallbackKey]);
+    return [value, String(item[labelKey] || value)];
+  })).entries()];
   const classes = allClasses.filter((item) =>
     isArchivedClass(item) === showArchived
+      && (!cohortFilter || String(item.cohortCode || '') === cohortFilter)
+      && (!lecturerFilter || String(item.lecturerId || '') === lecturerFilter)
+      && (!subjectFilter || String(item.subjectId || item.subjectCode || '') === subjectFilter)
       && JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()));
   const canManage = isAdminRole(role);
   const [importingWorkbook, setImportingWorkbook] = useState(false);
@@ -828,6 +839,12 @@ function ClassesView({ data, loading, error, query, setQuery, onRefresh, onSelec
         </form>
       </div>}
       <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên lớp, mã lớp, giảng viên..." />
+      <div className="rp-form-grid rp-class-filters">
+        <label>Khóa<select value={cohortFilter} onChange={(event) => setCohortFilter(event.target.value)}><option value="">Tất cả khóa</option>{classOptions('cohortCode', 'cohortCode').map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Giảng viên<select value={lecturerFilter} onChange={(event) => setLecturerFilter(event.target.value)}><option value="">Tất cả giảng viên</option>{classOptions('lecturerId', 'lecturerName').map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Môn học<select value={subjectFilter} onChange={(event) => setSubjectFilter(event.target.value)}><option value="">Tất cả môn học</option>{classOptions('subjectId', 'subjectName', 'subjectCode').map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      </div>
+      <TotalCountCard label="Số lớp đang hiển thị" count={classes.length} />
       <div className="rp-class-status-tabs" role="tablist" aria-label="Lọc trạng thái lớp">
         <button type="button" role="tab" aria-selected={!showArchived} className={!showArchived ? 'selected' : ''} onClick={() => setShowArchived(false)}>Lớp đang mở ({allClasses.filter((item) => !isArchivedClass(item)).length})</button>
         <button type="button" role="tab" aria-selected={showArchived} className={showArchived ? 'selected' : ''} onClick={() => setShowArchived(true)}>Lớp đã đóng ({allClasses.filter(isArchivedClass).length})</button>
@@ -1340,6 +1357,10 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
   const [certificateBusy, setCertificateBusy] = useState('');
   const [certificateError, setCertificateError] = useState('');
   const [showClosedEvents, setShowClosedEvents] = useState(false);
+  const [eventOrganizerFilter, setEventOrganizerFilter] = useState('');
+  const [eventCertificateFilter, setEventCertificateFilter] = useState('');
+  const [eventDateFrom, setEventDateFrom] = useState('');
+  const [eventDateTo, setEventDateTo] = useState('');
   const [selectedClosedEventIds, setSelectedClosedEventIds] = useState(new Set());
   const [imagePreview, setImagePreview] = useState('');
   const [imageInputVersion, setImageInputVersion] = useState(0);
@@ -1351,8 +1372,17 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
     const status = closed ? 'Đã đóng' : Number.isFinite(end) && end <= now ? 'Đã kết thúc' : Number.isFinite(start) && start > now ? 'Sắp diễn ra' : 'Đang diễn ra';
     return { ...item, displayStatus: status };
   });
+  const organizerOptions = [...new Map(allEvents.filter((item) => item.organizerId).map((item) => [String(item.organizerId), String(item.organizerName || item.organizerId)])).entries()];
   const events = allEvents
     .filter((item) => (item.displayStatus === 'Đã đóng') === showClosedEvents)
+    .filter((item) => !eventOrganizerFilter || String(item.organizerId || '') === eventOrganizerFilter)
+    .filter((item) => !eventCertificateFilter || (Boolean(item.certificateEnabled === true || Number(item.certificateEnabled) === 1) === (eventCertificateFilter === 'yes')))
+    .filter((item) => {
+      const start = new Date(item.startTime || 0);
+      const end = new Date(item.endTime || item.startTime || 0);
+      return (!eventDateFrom || end >= new Date(`${eventDateFrom}T00:00:00`))
+        && (!eventDateTo || start < new Date(`${eventDateTo}T23:59:59.999`));
+    })
     .filter((item) => JSON.stringify(item).toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => {
       const rank = (item) => item.displayStatus === 'Sắp diễn ra' ? 0 : item.displayStatus === 'Đang diễn ra' ? 1 : item.displayStatus === 'Đã kết thúc' ? 2 : 3;
@@ -1936,6 +1966,13 @@ function ManagedEventsView({ data, loading, error, query, setQuery, onRefresh, r
       <button type="button" className="rp-secondary-button" onClick={deleteSelectedClosedEvents} disabled={!selectedClosedEventIds.size || busyAction === 'delete-selected'}><Trash2 size={15} /> {busyAction === 'delete-selected' ? 'Đang xóa...' : `Xóa đã chọn (${selectedClosedEventIds.size})`}</button>
     </div>}
     <SearchBox value={query} onChange={setQuery} placeholder="Tìm tên sự kiện, địa điểm, trạng thái..." />
+    <div className="rp-form-grid rp-event-filters">
+      <label>Đơn vị tổ chức<select value={eventOrganizerFilter} onChange={(event) => setEventOrganizerFilter(event.target.value)}><option value="">Tất cả đơn vị</option>{organizerOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>Chứng nhận<select value={eventCertificateFilter} onChange={(event) => setEventCertificateFilter(event.target.value)}><option value="">Tất cả</option><option value="yes">Có cấp chứng nhận</option><option value="no">Không cấp chứng nhận</option></select></label>
+      <label>Từ ngày<input type="date" value={eventDateFrom} onChange={(event) => setEventDateFrom(event.target.value)} /></label>
+      <label>Đến ngày<input type="date" value={eventDateTo} onChange={(event) => setEventDateTo(event.target.value)} /></label>
+    </div>
+    <TotalCountCard label="Số sự kiện đang hiển thị" count={events.length} />
     {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : loading ? <LoadingPanel /> : events.length ? <div className="rp-event-grid">{events.map((item) => {
       const eventEnded = item.displayStatus === 'Đã đóng' || item.displayStatus === 'Đã kết thúc';
       const statusClass = item.displayStatus === 'Sắp diễn ra' ? 'rp-event-status-new' : item.displayStatus === 'Đang diễn ra' ? 'rp-event-status-live' : 'rp-event-status-ended';
@@ -2871,6 +2908,10 @@ function adminUserCategory(role) {
   if (['giangvien', 'lecturer', 'teacher'].includes(value)) return 'lecturer';
   if (['canbo', 'nhanvien', 'employee', 'staff', 'organizer', 'eventorganizer', 'bantochuc'].includes(value)) return 'employee';
   return 'other';
+}
+
+function TotalCountCard({ label, count }) {
+  return <div className="rp-metrics-grid rp-total-count-grid"><article className="rp-metric-card"><span className="rp-metric-icon"><BarChart3 size={19} /></span><div><span>{label}</span><strong>{count}</strong></div></article></div>;
 }
 
 function AdminUsersTable({ items }) {

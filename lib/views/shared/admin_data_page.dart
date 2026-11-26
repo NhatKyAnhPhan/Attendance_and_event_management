@@ -9,6 +9,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../data/api/api_client.dart';
 import '../../core/utils/excel_file_decoder.dart';
 import '../../widgets/app_search_field.dart';
+import '../../widgets/total_count_card.dart';
 
 class AdminDataPage extends StatefulWidget {
   final String title;
@@ -374,6 +375,13 @@ class _AdminDataPageState extends State<AdminDataPage> {
               hintText: 'Tìm trong ${widget.title.toLowerCase()}...',
               onChanged: (value) => setState(() => _query = value),
             ),
+            if (!isUsers && widget.endpoint.endsWith('/units')) ...[
+              const SizedBox(height: 12),
+              TotalCountCard(
+                label: 'Số đơn vị đang hiển thị',
+                count: filteredItems.length,
+              ),
+            ],
             if (isUsers) ...[
               const SizedBox(height: 12),
               SizedBox(

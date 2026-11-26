@@ -15,6 +15,7 @@ import '../../core/utils/excel_file_decoder.dart';
 import '../../data/models/event_model.dart';
 import '../../widgets/app_search_field.dart';
 import '../../widgets/student_roster_list.dart';
+import '../../widgets/total_count_card.dart';
 
 class OrganizerEventsPage extends StatefulWidget {
   const OrganizerEventsPage({super.key});
@@ -80,6 +81,8 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
   bool _importingEventsFromExcel = false;
   bool _importingStudentsFromExcel = false;
   DateTimeRange? _dateRange;
+  String? _organizerFilter;
+  String _certificateFilter = '';
   final Set<String> _importingEventIds = {};
   final Map<String, String> _activeQrSessionIds = {};
 
@@ -613,8 +616,13 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
           RoleX.isEmployee(currentRole);
       final canDeleteEvents = canManageEvents;
       final query = _query.trim().toLowerCase();
+      final organizerIds = controller.items.map((event) => event.organizerId).where((id) => id.isNotEmpty).toSet().toList()..sort();
+      final organizerNames = {for (final unit in controller.units) unit.id: unit.name};
       final filteredItems = controller.items.where((event) {
         if (event.isArchived != _showArchived) return false;
+        if (_organizerFilter != null && event.organizerId != _organizerFilter) return false;
+        if (_certificateFilter == 'yes' && !event.certificateEnabled) return false;
+        if (_certificateFilter == 'no' && event.certificateEnabled) return false;
         final dateRange = _dateRange;
         if (dateRange != null) {
           final rangeStart = DateTime(
@@ -787,6 +795,40 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
               ],
             ),
             const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                SizedBox(
+                  width: 240,
+                  child: DropdownButtonFormField<String>(
+                    value: organizerIds.contains(_organizerFilter) ? _organizerFilter! : '',
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Đơn vị tổ chức', border: OutlineInputBorder()),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('Tất cả đơn vị')),
+                      ...organizerIds.map((id) => DropdownMenuItem(value: id, child: Text(organizerNames[id] ?? id, overflow: TextOverflow.ellipsis))),
+                    ],
+                    onChanged: (value) => setState(() => _organizerFilter = value == null || value.isEmpty ? null : value),
+                  ),
+                ),
+                SizedBox(
+                  width: 240,
+                  child: DropdownButtonFormField<String>(
+                    value: _certificateFilter,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Chứng nhận', border: OutlineInputBorder()),
+                    items: const [
+                      DropdownMenuItem(value: '', child: Text('Tất cả')),
+                      DropdownMenuItem(value: 'yes', child: Text('Có cấp chứng nhận')),
+                      DropdownMenuItem(value: 'no', child: Text('Không cấp chứng nhận')),
+                    ],
+                    onChanged: (value) => setState(() => _certificateFilter = value ?? ''),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             if (_showArchived && canDeleteEvents && filteredItems.isNotEmpty)
               Wrap(
                 spacing: 8,
@@ -850,6 +892,11 @@ class _OrganizerEventsPageState extends State<OrganizerEventsPage> {
                     icon: const Icon(Icons.close),
                   ),
               ],
+            ),
+            const SizedBox(height: 12),
+            TotalCountCard(
+              label: 'Số sự kiện đang hiển thị',
+              count: filteredItems.length,
             ),
             const SizedBox(height: 16),
             if (controller.error.value.isNotEmpty)

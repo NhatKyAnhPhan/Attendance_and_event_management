@@ -12,6 +12,7 @@ import '../../core/utils/semester.dart';
 import '../../data/models/class_model.dart';
 import '../../widgets/student_roster_list.dart';
 import '../../widgets/app_search_field.dart';
+import '../../widgets/total_count_card.dart';
 
 class ClassesPage extends StatefulWidget {
   const ClassesPage({super.key});
@@ -23,6 +24,9 @@ class ClassesPage extends StatefulWidget {
 class _ClassesPageState extends State<ClassesPage> {
   String _query = '';
   bool _showArchived = false;
+  String? _cohortFilter;
+  String? _lecturerFilter;
+  String? _subjectFilter;
   final Set<String> _importingClassIds = {};
 
   @override
@@ -41,12 +45,21 @@ class _ClassesPageState extends State<ClassesPage> {
       final query = _query.trim().toLowerCase();
       final auth = Get.find<AuthController>();
       final lecturerId = auth.currentUser.value?['id']?.toString();
+      final visibleItems = controller.items.where((item) =>
+          role != Role.lecturer ||
+          (lecturerId != null && item.lecturerId == lecturerId));
+      final cohorts = visibleItems.map((item) => item.cohortCode).where((v) => v.isNotEmpty).toSet().toList()..sort();
+      final lecturers = {for (final item in visibleItems) if (item.lecturerId.isNotEmpty) item.lecturerId: item.lecturerName.isEmpty ? item.lecturerId : item.lecturerName};
+      final subjects = {for (final item in visibleItems) if ((item.subjectId.isNotEmpty ? item.subjectId : item.subjectCode).isNotEmpty) (item.subjectId.isNotEmpty ? item.subjectId : item.subjectCode): item.subjectName.isEmpty ? item.subjectCode : item.subjectName};
       final filteredItems = controller.items.where((item) {
         if (role == Role.lecturer &&
             (lecturerId == null || item.lecturerId != lecturerId)) {
           return false;
         }
         if (item.isArchived != _showArchived) return false;
+        if (_cohortFilter != null && item.cohortCode != _cohortFilter) return false;
+        if (_lecturerFilter != null && item.lecturerId != _lecturerFilter) return false;
+        if (_subjectFilter != null && (item.subjectId.isNotEmpty ? item.subjectId : item.subjectCode) != _subjectFilter) return false;
         return [
           item.id,
           item.code,
@@ -171,6 +184,21 @@ class _ClassesPageState extends State<ClassesPage> {
               colors: c,
               hintText: 'Tìm tên lớp, mã lớp, giảng viên...',
               onChanged: (value) => setState(() => _query = value),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                _classFilterDropdown('Khóa', 'Tất cả khóa', _cohortFilter, cohorts, (v) => setState(() => _cohortFilter = v)),
+                _classFilterDropdown('Giảng viên', 'Tất cả giảng viên', _lecturerFilter, lecturers.keys.toList()..sort(), (v) => setState(() => _lecturerFilter = v), labels: lecturers),
+                _classFilterDropdown('Môn học', 'Tất cả môn học', _subjectFilter, subjects.keys.toList()..sort(), (v) => setState(() => _subjectFilter = v), labels: subjects),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TotalCountCard(
+              label: 'Số lớp đang hiển thị',
+              count: filteredItems.length,
             ),
             const SizedBox(height: 16),
             if (controller.error.value.isNotEmpty)
@@ -359,6 +387,32 @@ class _ClassesPageState extends State<ClassesPage> {
         ),
       );
     });
+  }
+
+  Widget _classFilterDropdown(
+    String label,
+    String allLabel,
+    String? value,
+    List<String> options,
+    ValueChanged<String?> onChanged, {
+    Map<String, String> labels = const {},
+  }) {
+    return SizedBox(
+      width: 220,
+      child: DropdownButtonFormField<String>(
+        value: value != null && options.contains(value) ? value : '',
+        isExpanded: true,
+        decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
+        items: [
+          DropdownMenuItem<String>(value: '', child: Text(allLabel)),
+          ...options.map((option) => DropdownMenuItem<String>(
+                value: option,
+                child: Text(labels[option] ?? option, overflow: TextOverflow.ellipsis),
+              )),
+        ],
+        onChanged: (next) => onChanged(next == null || next.isEmpty ? null : next),
+      ),
+    );
   }
 
   Widget _classMetaLine(AppColors colors, IconData icon, String value) {
