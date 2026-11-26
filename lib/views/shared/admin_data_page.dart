@@ -201,12 +201,22 @@ class _AdminDataPageState extends State<AdminDataPage> {
       setState(() {
         _dataFuture = ApiClient().get(widget.endpoint);
       });
+      final existingUsers = (result['existingUsers'] as List? ?? [])
+          .map((user) => Map<String, dynamic>.from(user as Map))
+          .toList();
+      final existingSummary = existingUsers.isEmpty
+          ? ''
+          : ' Người dùng ${existingUsers.take(10).map((user) {
+              final name = (user['name'] ?? user['id'] ?? '').toString();
+              final email = (user['email'] ?? '').toString();
+              return email.isEmpty ? name : '$name ($email)';
+            }).join(', ')} đã tồn tại${existingUsers.length > 10 ? ' và ${existingUsers.length - 10} người dùng khác' : ''}.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             isUnits
                 ? 'Đã thêm ${result['importedUnits'] ?? 0} đơn vị.'
-                : 'Đã thêm ${result['importedUsers'] ?? 0} tài khoản.',
+                : 'Đã thêm ${result['importedUsers'] ?? 0} tài khoản.$existingSummary',
           ),
         ),
       );

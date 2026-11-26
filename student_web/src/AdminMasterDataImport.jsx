@@ -221,11 +221,15 @@ export default function AdminMasterDataImport({ kind, onImported, showNotice }) 
         body: { units: draft.units, users: draft.users },
       });
       setDraft(null);
+      const existingUsers = Array.isArray(result.existingUsers) ? result.existingUsers : [];
+      const existingSummary = existingUsers.length
+        ? ` Người dùng ${existingUsers.slice(0, 10).map((user) => `${user.name || user.id}${user.email ? ` (${user.email})` : ''}`).join(', ')} đã tồn tại${existingUsers.length > 10 ? ` và ${existingUsers.length - 10} người dùng khác` : ''}.`
+        : '';
       showNotice(
         'success',
         kind === 'units'
           ? `Đã thêm ${result.importedUnits} đơn vị.`
-          : `Đã thêm ${result.importedUsers} tài khoản.`,
+          : `Đã thêm ${result.importedUsers} tài khoản.${existingSummary}`,
       );
       await onImported();
     } catch (exception) {

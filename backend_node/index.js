@@ -6820,8 +6820,6 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
     unitIds.add(id.toLocaleLowerCase());
   }
 
-  const userIds = new Set();
-  const userEmails = new Set();
   const allowedRoles = new Map([
     ['sinhvien', 'Sinh viên'],
     ['student', 'Sinh viên'],
@@ -6852,13 +6850,6 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
         message: `Tài khoản ở dòng ${index + 2} cần email hợp lệ và mật khẩu từ 8 ký tự.`,
       });
     }
-    if (userIds.has(id.toLocaleLowerCase()) || userEmails.has(email)) {
-      return response.status(400).json({
-        message: `Mã tài khoản hoặc email bị lặp ở dòng ${index + 2}.`,
-      });
-    }
-    userIds.add(id.toLocaleLowerCase());
-    userEmails.add(email);
     if (role === 'Sinh viên' && (!String(user.className || '').trim() || !String(user.major || '').trim())) {
       return response.status(400).json({
         message: `Sinh viên ở dòng ${index + 2} cần có lớp và chuyên ngành.`,
@@ -6879,6 +6870,8 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
   }
 
   const connection = await pool.getConnection();
+  const existingUsers = [];
+  let importedUsers = 0;
   try {
     await connection.beginTransaction();
     for (const [index, user] of users.entries()) {
@@ -6890,11 +6883,18 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
       }
 
       const [[duplicate]] = await connection.execute(
-        'SELECT Mand AS id FROM NguoiDung WHERE Mand = ? OR LOWER(Email) = ? LIMIT 1',
+        'SELECT Mand AS id, Email AS email FROM NguoiDung WHERE Mand = ? OR LOWER(Email) = ? LIMIT 1',
         [id.trim(), email],
       );
       if (duplicate) {
-        throw new Error(`Mã tài khoản hoặc email đã tồn tại: ${id.trim()} / ${email}.`);
+        existingUsers.push({
+          id: id.trim(),
+          name: String(user.name || '').trim(),
+          email,
+          existingId: duplicate.id,
+          existingEmail: duplicate.email,
+        });
+        continue;
       }
 
       const passwordHash = await bcrypt.hash(password, 10);
@@ -6938,6 +6938,7 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
           [id.trim(), String(user.position || '').trim() || null],
         );
       }
+      importedUsers += 1;
     }
 
     for (const [index, unit] of units.entries()) {
@@ -6970,7 +6971,8 @@ app.post('/api/admin/master-data/import', requireAuth, requireRole('Quản trị
     await connection.commit();
     return response.json({
       importedUnits: units.length,
-      importedUsers: users.length,
+      importedUsers,
+      existingUsers,
     });
   } catch (error) {
     if (connection) await connection.rollback();
